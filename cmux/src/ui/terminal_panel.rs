@@ -34,6 +34,13 @@ fn create_terminal_widget(
     }
 
     let gl_surface = state.terminal_surface_for(panel.id, panel.directory.as_deref());
+    {
+        let state = Rc::clone(state);
+        let panel_id = panel.id;
+        gl_surface.set_close_handler(move |process_alive| {
+            let _ = state.close_panel(panel_id, process_alive);
+        });
+    }
     if let Some(parent) = gl_surface.parent() {
         if let Ok(parent_box) = parent.downcast::<gtk4::Box>() {
             parent_box.remove(&gl_surface);

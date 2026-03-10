@@ -15,6 +15,7 @@ use std::cell::{Cell, RefCell};
 use std::os::raw::c_char;
 use std::os::raw::c_void;
 use std::ptr;
+use std::rc::Rc;
 
 use crate::callbacks::ClipboardContent;
 use crate::keys;
@@ -62,11 +63,13 @@ mod imp {
     pub struct GhosttyGlSurface {
         pub(super) surface: Cell<ghostty_surface_t>,
         pub(super) app: Cell<ghostty_app_t>,
+        pub(super) callback_userdata: RefCell<Option<Box<crate::callbacks::SurfaceUserdata>>>,
         pub(super) title: RefCell<String>,
         pub(super) im_context: RefCell<Option<gtk4::IMMulticontext>>,
         pub(super) im_composing: Cell<bool>,
         pub(super) in_keyevent: Cell<ImeKeyEventState>,
         pub(super) im_commit_text: RefCell<Vec<u8>>,
+        pub(super) close_handler: RefCell<Option<Rc<dyn Fn(bool)>>>,
         pub(super) focused: Cell<bool>,
         pub(super) focus_idle_queued: Cell<bool>,
         pub(super) focus_restore_armed: Cell<bool>,
@@ -121,6 +124,8 @@ mod imp {
                 }
                 self.surface.set(ptr::null_mut());
             }
+            self.callback_userdata.borrow_mut().take();
+            self.close_handler.borrow_mut().take();
         }
     }
 
@@ -263,6 +268,7 @@ impl GhosttyGlSurface {
         #[cfg(feature = "link-ghostty")]
         {
             let mut config = unsafe { ghostty_surface_config_new() };
+            let callback_userdata = Box::new(crate::callbacks::SurfaceUserdata::new(self));
 
             // Set platform to Linux with our GtkGLArea
             config.platform_tag = ghostty_platform_e::GHOSTTY_PLATFORM_LINUX;
@@ -290,7 +296,8 @@ impl GhosttyGlSurface {
             }
 
             config.context = ghostty_surface_context_e::GHOSTTY_SURFACE_CONTEXT_SPLIT;
-            config.userdata = self.as_ptr() as *mut c_void;
+            config.userdata =
+                (&*callback_userdata as *const crate::callbacks::SurfaceUserdata) as *mut c_void;
 
             let surface = unsafe { ghostty_surface_new(app, &config) };
             if surface.is_null() {
@@ -298,6 +305,7 @@ impl GhosttyGlSurface {
                 return;
             }
 
+            *self.imp().callback_userdata.borrow_mut() = Some(callback_userdata);
             self.imp().surface.set(surface);
         }
     }
@@ -728,8 +736,19 @@ impl GhosttyGlSurface {
         }
     }
 
+    pub fn set_close_handler<F>(&self, handler: F)
+    where
+        F: Fn(bool) + 'static,
+    {
+        *self.imp().close_handler.borrow_mut() = Some(Rc::new(handler));
+    }
+
     pub fn close_requested(&self, process_alive: bool) {
         tracing::debug!(process_alive, "ghostty requested surface close");
+        let handler = self.imp().close_handler.borrow().clone();
+        if let Some(handler) = handler {
+            handler(process_alive);
+        }
     }
 
     fn setup_ime(&self) {

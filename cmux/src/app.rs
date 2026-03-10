@@ -4,12 +4,12 @@ use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::mpsc::Sender;
 use std::sync::{Arc, Mutex};
 
 use ghostty_sys::*;
 use gtk4::prelude::*;
 use libadwaita as adw;
+use tokio::sync::mpsc::UnboundedSender;
 
 use crate::model::TabManager;
 use crate::notifications::NotificationStore;
@@ -69,6 +69,32 @@ impl AppState {
         true
     }
 
+    pub fn close_panel(&self, panel_id: Uuid, process_alive: bool) -> bool {
+        let empty_workspace_id = {
+            let mut tab_manager = self.shared.tab_manager.lock().unwrap();
+            let Some(workspace) = tab_manager.find_workspace_with_panel_mut(panel_id) else {
+                return false;
+            };
+            if !workspace.remove_panel(panel_id) {
+                return false;
+            }
+            workspace.is_empty().then_some(workspace.id)
+        };
+
+        if let Some(workspace_id) = empty_workspace_id {
+            self.shared
+                .tab_manager
+                .lock()
+                .unwrap()
+                .remove_by_id(workspace_id);
+        }
+
+        self.terminal_cache.borrow_mut().remove(&panel_id);
+        self.shared.notify_ui_refresh();
+        tracing::debug!(%panel_id, process_alive, "closed terminal panel");
+        true
+    }
+
     pub fn prune_terminal_cache(&self) {
         let live_panels: HashSet<Uuid> = {
             let tab_manager = self.shared.tab_manager.lock().unwrap();
@@ -99,7 +125,7 @@ pub enum UiEvent {
 pub struct SharedState {
     pub tab_manager: Mutex<TabManager>,
     pub notifications: Mutex<NotificationStore>,
-    ui_event_tx: Mutex<Option<Sender<UiEvent>>>,
+    ui_event_tx: Mutex<Option<UnboundedSender<UiEvent>>>,
 }
 
 impl SharedState {
@@ -111,7 +137,7 @@ impl SharedState {
         }
     }
 
-    pub fn install_ui_event_sender(&self, sender: Sender<UiEvent>) {
+    pub fn install_ui_event_sender(&self, sender: UnboundedSender<UiEvent>) {
         *self.ui_event_tx.lock().unwrap() = Some(sender);
     }
 
@@ -173,7 +199,7 @@ fn activate(app: &adw::Application, state: &Rc<AppState>) {
         return;
     }
 
-    let (ui_event_tx, ui_event_rx) = std::sync::mpsc::channel();
+    let (ui_event_tx, ui_event_rx) = tokio::sync::mpsc::unbounded_channel();
     state.shared.install_ui_event_sender(ui_event_tx);
 
     init_ghostty(state);
@@ -216,8 +242,7 @@ struct CmuxCallbackHandler;
 
 impl ghostty_gtk::callbacks::GhosttyCallbackHandler for CmuxCallbackHandler {
     fn on_wakeup(&self) {
-        let app_ptr = *GHOSTTY_APP_PTR.lock().unwrap();
-        if app_ptr.is_null() {
+        if (*GHOSTTY_APP_PTR.lock().unwrap()).is_null() {
             return;
         }
 
@@ -227,13 +252,17 @@ impl ghostty_gtk::callbacks::GhosttyCallbackHandler for CmuxCallbackHandler {
 
         glib::MainContext::default().invoke_with_priority(glib::Priority::DEFAULT, move || {
             GHOSTTY_TICK_PENDING.store(false, Ordering::Release);
+            let app_ptr = *GHOSTTY_APP_PTR.lock().unwrap();
+            if app_ptr.is_null() {
+                return;
+            }
 
             #[cfg(feature = "link-ghostty")]
             unsafe {
                 ghostty_app_tick(app_ptr.get());
             }
             #[cfg(not(feature = "link-ghostty"))]
-            let _ = app_ptr;
+            let _ = ();
         });
     }
 
@@ -247,11 +276,7 @@ impl ghostty_gtk::callbacks::GhosttyCallbackHandler for CmuxCallbackHandler {
                         #[cfg(feature = "link-ghostty")]
                         unsafe {
                             let userdata = ghostty_surface_userdata(surface_ptr);
-                            if !userdata.is_null() {
-                                let widget: gtk4::GLArea =
-                                    glib::translate::from_glib_none(userdata as *mut _);
-                                widget.queue_render();
-                            }
+                            let _ = ghostty_gtk::callbacks::queue_render_from_userdata(userdata);
                         }
                     }
                 }
@@ -285,3 +310,30 @@ impl SendAppPtr {
 
 static GHOSTTY_APP_PTR: Mutex<SendAppPtr> = Mutex::new(SendAppPtr(std::ptr::null_mut()));
 static GHOSTTY_TICK_PENDING: AtomicBool = AtomicBool::new(false);
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn close_panel_removes_last_workspace() {
+        let shared = Arc::new(SharedState::new());
+        let state = AppState::new(shared.clone());
+        let panel_id = shared
+            .tab_manager
+            .lock()
+            .unwrap()
+            .selected()
+            .and_then(|workspace| workspace.focused_panel_id)
+            .expect("workspace should have a focused panel");
+
+        assert!(state.close_panel(panel_id, false));
+        assert!(shared.tab_manager.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn close_panel_returns_false_for_unknown_panel() {
+        let state = AppState::new(Arc::new(SharedState::new()));
+        assert!(!state.close_panel(Uuid::new_v4(), true));
+    }
+}

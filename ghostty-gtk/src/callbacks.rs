@@ -11,7 +11,8 @@
 
 use ghostty_sys::*;
 use gtk4::glib;
-use gtk4::glib::translate::from_glib_none;
+use gtk4::prelude::GLAreaExt;
+use gtk4::prelude::ObjectExt;
 use std::os::raw::{c_char, c_void};
 
 use crate::surface::GhosttyGlSurface;
@@ -37,6 +38,26 @@ pub struct RuntimeCallbacks {
     /// Pointer to a heap-allocated raw fat pointer to the handler.
     /// This is `Box<*mut dyn GhosttyCallbackHandler>`.
     handler_ptr: *mut *mut dyn GhosttyCallbackHandler,
+}
+
+/// Stable userdata stored on each ghostty surface.
+///
+/// We keep only a weak reference so callbacks can safely noop if the GTK
+/// widget has already been destroyed before the main-loop handoff runs.
+pub struct SurfaceUserdata {
+    surface: glib::SendWeakRef<GhosttyGlSurface>,
+}
+
+impl SurfaceUserdata {
+    pub fn new(surface: &GhosttyGlSurface) -> Self {
+        Self {
+            surface: surface.downgrade().into(),
+        }
+    }
+
+    fn weak_surface(&self) -> glib::SendWeakRef<GhosttyGlSurface> {
+        self.surface.clone()
+    }
 }
 
 impl RuntimeCallbacks {
@@ -93,6 +114,54 @@ unsafe fn handler_from_userdata<'a>(
     Some(&*inner)
 }
 
+unsafe fn surface_userdata_from_ptr<'a>(userdata: *mut c_void) -> Option<&'a SurfaceUserdata> {
+    if userdata.is_null() {
+        return None;
+    }
+
+    Some(&*(userdata as *const SurfaceUserdata))
+}
+
+unsafe fn weak_surface_from_userdata(
+    userdata: *mut c_void,
+) -> Option<glib::SendWeakRef<GhosttyGlSurface>> {
+    surface_userdata_from_ptr(userdata).map(SurfaceUserdata::weak_surface)
+}
+
+pub unsafe fn surface_from_callback_userdata(userdata: *mut c_void) -> Option<GhosttyGlSurface> {
+    surface_userdata_from_ptr(userdata).and_then(|userdata| userdata.surface.upgrade())
+}
+
+pub unsafe fn queue_render_from_userdata(userdata: *mut c_void) -> bool {
+    let Some(surface) = weak_surface_from_userdata(userdata) else {
+        return false;
+    };
+
+    glib::MainContext::default().invoke(move || {
+        let Some(surface) = surface.upgrade() else {
+            return;
+        };
+        surface.queue_render();
+    });
+    true
+}
+
+fn invoke_surface_callback<F>(userdata: *mut c_void, callback: F)
+where
+    F: FnOnce(GhosttyGlSurface) + Send + 'static,
+{
+    let Some(surface) = (unsafe { weak_surface_from_userdata(userdata) }) else {
+        return;
+    };
+
+    glib::MainContext::default().invoke(move || {
+        let Some(surface) = surface.upgrade() else {
+            return;
+        };
+        callback(surface);
+    });
+}
+
 // -----------------------------------------------------------------------
 // C callback trampolines
 // -----------------------------------------------------------------------
@@ -126,10 +195,8 @@ unsafe extern "C" fn read_clipboard_trampoline(
     clipboard: ghostty_clipboard_e,
     context: *mut c_void,
 ) {
-    let userdata = userdata as usize;
     let context = context as usize;
-    glib::MainContext::default().invoke(move || {
-        let surface = surface_from_userdata(userdata as *mut c_void);
+    invoke_surface_callback(userdata, move |surface| {
         surface.read_clipboard_request(clipboard, context as *mut c_void);
     });
 }
@@ -140,7 +207,6 @@ unsafe extern "C" fn confirm_read_clipboard_trampoline(
     context: *mut c_void,
     request: ghostty_clipboard_request_e,
 ) {
-    let userdata = userdata as usize;
     let context = context as usize;
     let content = if content.is_null() {
         String::new()
@@ -149,8 +215,7 @@ unsafe extern "C" fn confirm_read_clipboard_trampoline(
             .to_string_lossy()
             .into_owned()
     };
-    glib::MainContext::default().invoke(move || {
-        let surface = surface_from_userdata(userdata as *mut c_void);
+    invoke_surface_callback(userdata, move |surface| {
         surface.confirm_clipboard_read(&content, context as *mut c_void, request);
     });
 }
@@ -173,24 +238,15 @@ unsafe extern "C" fn write_clipboard_trampoline(
             })
             .collect()
     };
-    let userdata = userdata as usize;
-    glib::MainContext::default().invoke(move || {
-        let surface = surface_from_userdata(userdata as *mut c_void);
+    invoke_surface_callback(userdata, move |surface| {
         surface.write_clipboard(clipboard, &entries, confirm);
     });
 }
 
 unsafe extern "C" fn close_surface_trampoline(userdata: *mut c_void, process_alive: bool) {
-    let userdata = userdata as usize;
-    glib::MainContext::default().invoke(move || {
-        let surface = surface_from_userdata(userdata as *mut c_void);
+    invoke_surface_callback(userdata, move |surface| {
         surface.close_requested(process_alive);
     });
-}
-
-fn surface_from_userdata(userdata: *mut c_void) -> GhosttyGlSurface {
-    debug_assert!(!userdata.is_null());
-    unsafe { from_glib_none(userdata as *mut _) }
 }
 
 fn c_string(ptr: *const c_char) -> Option<String> {
@@ -213,7 +269,7 @@ pub struct ClipboardContent {
 
 #[cfg(test)]
 mod tests {
-    use super::{c_string, handler_from_userdata};
+    use super::{c_string, handler_from_userdata, surface_from_callback_userdata};
 
     #[test]
     fn c_string_returns_none_for_null() {
@@ -223,5 +279,10 @@ mod tests {
     #[test]
     fn handler_from_userdata_returns_none_for_null() {
         assert!(unsafe { handler_from_userdata(std::ptr::null_mut()) }.is_none());
+    }
+
+    #[test]
+    fn surface_from_callback_userdata_returns_none_for_null() {
+        assert!(unsafe { surface_from_callback_userdata(std::ptr::null_mut()) }.is_none());
     }
 }

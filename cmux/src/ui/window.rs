@@ -1,12 +1,11 @@
 //! Main application window using AdwNavigationSplitView.
 
 use std::rc::Rc;
-use std::sync::mpsc::Receiver;
-use std::time::Duration;
 
 use gtk4::prelude::*;
 use libadwaita as adw;
 use libadwaita::prelude::*;
+use tokio::sync::mpsc::UnboundedReceiver;
 
 use crate::app::{AppState, UiEvent};
 use crate::model::panel::SplitOrientation;
@@ -17,7 +16,7 @@ use crate::ui::{sidebar, split_view};
 pub fn create_window(
     app: &adw::Application,
     state: &Rc<AppState>,
-    ui_events: Receiver<UiEvent>,
+    ui_events: UnboundedReceiver<UiEvent>,
 ) -> adw::ApplicationWindow {
     install_css();
 
@@ -170,31 +169,43 @@ fn bind_shared_state_updates(
     list_box: &gtk4::ListBox,
     content_box: &gtk4::Box,
     state: &Rc<AppState>,
-    ui_events: Receiver<UiEvent>,
+    mut ui_events: UnboundedReceiver<UiEvent>,
 ) {
     let state = state.clone();
     let list_box = list_box.clone();
     let content_box = content_box.clone();
 
-    glib::timeout_add_local(Duration::from_millis(33), move || {
-        let mut needs_refresh = false;
-        while let Ok(event) = ui_events.try_recv() {
-            match event {
-                UiEvent::Refresh => needs_refresh = true,
-                UiEvent::SendInput { panel_id, text } => {
-                    let sent = state.send_input_to_panel(panel_id, &text);
-                    if !sent {
-                        tracing::warn!(%panel_id, "surface.send_input dropped because panel is not ready");
+    glib::MainContext::default().spawn_local(async move {
+        while let Some(event) = ui_events.recv().await {
+            let mut pending = Some(event);
+            let mut needs_refresh = false;
+            loop {
+                let event = match pending.take() {
+                    Some(event) => event,
+                    None => match ui_events.try_recv() {
+                        Ok(event) => event,
+                        Err(_) => break,
+                    },
+                };
+
+                match event {
+                    UiEvent::Refresh => needs_refresh = true,
+                    UiEvent::SendInput { panel_id, text } => {
+                        let sent = state.send_input_to_panel(panel_id, &text);
+                        if !sent {
+                            tracing::warn!(
+                                %panel_id,
+                                "surface.send_input dropped because panel is not ready"
+                            );
+                        }
                     }
                 }
             }
-        }
 
-        if needs_refresh {
-            refresh_ui(&list_box, &content_box, &state);
+            if needs_refresh {
+                refresh_ui(&list_box, &content_box, &state);
+            }
         }
-
-        glib::ControlFlow::Continue
     });
 }
 

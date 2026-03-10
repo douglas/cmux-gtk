@@ -798,7 +798,7 @@ mod tests {
     #[test]
     fn test_surface_send_input_dispatches_ui_event() {
         let state = Arc::new(SharedState::new());
-        let (tx, rx) = std::sync::mpsc::channel();
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
         state.install_ui_event_sender(tx);
 
         let panel_id = {
