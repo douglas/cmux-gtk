@@ -1106,8 +1106,13 @@ pub struct ghostty_action_s {
 
 pub type ghostty_runtime_wakeup_cb = Option<unsafe extern "C" fn(userdata: *mut c_void)>;
 
-pub type ghostty_runtime_read_clipboard_cb =
-    Option<unsafe extern "C" fn(userdata: *mut c_void, clipboard: ghostty_clipboard_e, context: *mut c_void)>;
+pub type ghostty_runtime_read_clipboard_cb = Option<
+    unsafe extern "C" fn(
+        userdata: *mut c_void,
+        clipboard: ghostty_clipboard_e,
+        context: *mut c_void,
+    ),
+>;
 
 pub type ghostty_runtime_confirm_read_clipboard_cb = Option<
     unsafe extern "C" fn(
@@ -1245,25 +1250,14 @@ extern "C" {
         surface: ghostty_surface_t,
         mods: GhosttyMods,
     ) -> GhosttyMods;
-    pub fn ghostty_surface_key(
-        surface: ghostty_surface_t,
-        key: ghostty_input_key_s,
-    ) -> bool;
+    pub fn ghostty_surface_key(surface: ghostty_surface_t, key: ghostty_input_key_s) -> bool;
     pub fn ghostty_surface_key_is_binding(
         surface: ghostty_surface_t,
         key: ghostty_input_key_s,
         flags: *mut ghostty_binding_flags_e,
     ) -> bool;
-    pub fn ghostty_surface_text(
-        surface: ghostty_surface_t,
-        text: *const c_char,
-        len: usize,
-    );
-    pub fn ghostty_surface_preedit(
-        surface: ghostty_surface_t,
-        text: *const c_char,
-        len: usize,
-    );
+    pub fn ghostty_surface_text(surface: ghostty_surface_t, text: *const c_char, len: usize);
+    pub fn ghostty_surface_preedit(surface: ghostty_surface_t, text: *const c_char, len: usize);
     pub fn ghostty_surface_mouse_captured(surface: ghostty_surface_t) -> bool;
     pub fn ghostty_surface_mouse_button(
         surface: ghostty_surface_t,
@@ -1283,7 +1277,11 @@ extern "C" {
         y: c_double,
         scroll_mods: ghostty_input_scroll_mods_t,
     );
-    pub fn ghostty_surface_mouse_pressure(surface: ghostty_surface_t, stage: u32, pressure: c_double);
+    pub fn ghostty_surface_mouse_pressure(
+        surface: ghostty_surface_t,
+        stage: u32,
+        pressure: c_double,
+    );
     pub fn ghostty_surface_ime_point(
         surface: ghostty_surface_t,
         x: *mut c_double,

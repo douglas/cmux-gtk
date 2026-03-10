@@ -79,7 +79,9 @@ impl Drop for RuntimeCallbacks {
 // Helper to recover the handler from userdata
 // -----------------------------------------------------------------------
 
-unsafe fn handler_from_userdata<'a>(userdata: *mut c_void) -> Option<&'a dyn GhosttyCallbackHandler> {
+unsafe fn handler_from_userdata<'a>(
+    userdata: *mut c_void,
+) -> Option<&'a dyn GhosttyCallbackHandler> {
     if userdata.is_null() {
         return None;
     }
@@ -110,10 +112,7 @@ unsafe extern "C" fn action_trampoline(
     #[cfg(feature = "link-ghostty")]
     {
         let userdata = ghostty_app_userdata(_app);
-        match handler_from_userdata(userdata) {
-            Some(handler) => handler.on_action(target, action),
-            None => false,
-        }
+        handler_from_userdata(userdata).is_some_and(|handler| handler.on_action(target, action))
     }
     #[cfg(not(feature = "link-ghostty"))]
     {
@@ -198,7 +197,11 @@ fn c_string(ptr: *const c_char) -> Option<String> {
     if ptr.is_null() {
         None
     } else {
-        Some(unsafe { std::ffi::CStr::from_ptr(ptr) }.to_string_lossy().into_owned())
+        Some(
+            unsafe { std::ffi::CStr::from_ptr(ptr) }
+                .to_string_lossy()
+                .into_owned(),
+        )
     }
 }
 
@@ -210,10 +213,15 @@ pub struct ClipboardContent {
 
 #[cfg(test)]
 mod tests {
-    use super::c_string;
+    use super::{c_string, handler_from_userdata};
 
     #[test]
     fn c_string_returns_none_for_null() {
         assert_eq!(c_string(std::ptr::null()), None);
+    }
+
+    #[test]
+    fn handler_from_userdata_returns_none_for_null() {
+        assert!(unsafe { handler_from_userdata(std::ptr::null_mut()) }.is_none());
     }
 }

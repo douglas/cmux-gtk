@@ -716,10 +716,12 @@ impl GhosttyGlSurface {
         let clipboard = self.clipboard_for_kind(clipboard);
         if let Some(text) = content
             .iter()
-            .find_map(|entry| match (entry.mime.as_deref(), entry.data.as_deref()) {
-                (Some("text/plain"), Some(text)) => Some(text),
-                _ => None,
-            })
+            .find_map(
+                |entry| match (entry.mime.as_deref(), entry.data.as_deref()) {
+                    (Some("text/plain"), Some(text)) => Some(text),
+                    _ => None,
+                },
+            )
             .or_else(|| content.iter().find_map(|entry| entry.data.as_deref()))
         {
             clipboard.set_text(text);

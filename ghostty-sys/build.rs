@@ -11,16 +11,27 @@ fn main() {
 
     let manifest_dir = PathBuf::from(env::var("CARGO_MANIFEST_DIR").unwrap());
     let workspace_dir = manifest_dir.parent().unwrap();
-
-    // Path to the ghostty submodule
-    let ghostty_dir = workspace_dir.join("ghostty");
-
-    if !ghostty_dir.join("build.zig").exists() {
-        panic!(
-            "ghostty submodule not found at {}. Run: git submodule update --init ghostty",
-            ghostty_dir.display()
-        );
-    }
+    let candidate_dirs = [
+        workspace_dir.join("ghostty"),
+        workspace_dir
+            .parent()
+            .map(|parent| parent.join("ghostty"))
+            .unwrap_or_else(|| workspace_dir.join("ghostty")),
+    ];
+    let ghostty_dir = candidate_dirs
+        .into_iter()
+        .find(|path| path.join("build.zig").exists())
+        .unwrap_or_else(|| {
+            panic!(
+                "ghostty submodule not found. Checked: {} and {}",
+                workspace_dir.join("ghostty").display(),
+                workspace_dir
+                    .parent()
+                    .map(|parent| parent.join("ghostty"))
+                    .unwrap_or_else(|| workspace_dir.join("ghostty"))
+                    .display()
+            )
+        });
 
     // Build libghostty as a static library using zig build
     let output_dir = PathBuf::from(env::var("OUT_DIR").unwrap());

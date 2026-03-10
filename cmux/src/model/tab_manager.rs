@@ -217,8 +217,8 @@ impl TabManager {
 
     /// Move a workspace from one index to another.
     pub fn move_workspace(&mut self, from: usize, to: usize) -> bool {
-        if from >= self.workspaces.len() || to >= self.workspaces.len() {
-            return false;
+        if from >= self.workspaces.len() || to >= self.workspaces.len() || from == to {
+            return from == to && from < self.workspaces.len();
         }
         let previous_selection = self.selected_index;
         let ws = self.workspaces.remove(from);
@@ -358,5 +358,16 @@ mod tests {
         tm.select(1);
         assert!(tm.move_workspace(3, 0));
         assert_eq!(tm.selected_index(), Some(2));
+    }
+
+    #[test]
+    fn test_move_workspace_is_noop_when_from_equals_to() {
+        let mut tm = TabManager::new();
+        tm.add_workspace(Workspace::new());
+
+        tm.select(1);
+        assert!(tm.move_workspace(1, 1));
+        assert_eq!(tm.selected_index(), Some(1));
+        assert!(!tm.move_workspace(3, 3));
     }
 }

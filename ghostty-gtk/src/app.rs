@@ -148,7 +148,10 @@ fn configure_bundled_resources_dir() {
 
     if std::path::Path::new(dir).exists() {
         std::env::set_var(KEY, dir);
-        tracing::info!(resources_dir = dir, "Configured bundled Ghostty resources dir");
+        tracing::info!(
+            resources_dir = dir,
+            "Configured bundled Ghostty resources dir"
+        );
     }
 }
 

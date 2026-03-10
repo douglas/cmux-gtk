@@ -262,21 +262,17 @@ fn send_request(socket_path: &str, method: &str, params: Value) -> anyhow::Resul
     stream.write_all(b"\n")?;
     stream.flush()?;
 
-    let mut reader = BufReader::new(stream);
-    let mut buf = Vec::new();
-    let bytes_read = reader
-        .by_ref()
-        .take((MAX_RESPONSE_LEN + 1) as u64)
-        .read_until(b'\n', &mut buf)?;
-
+    let limited = (&stream).take((MAX_RESPONSE_LEN + 1) as u64);
+    let mut reader = BufReader::new(limited);
+    let mut line = String::new();
+    let bytes_read = reader.read_line(&mut line)?;
     if bytes_read == 0 {
-        anyhow::bail!("cmux closed the connection without sending a response");
+        anyhow::bail!("cmux closed socket without a response");
     }
-    if buf.len() > MAX_RESPONSE_LEN || !buf.ends_with(b"\n") {
+    if line.len() > MAX_RESPONSE_LEN {
         anyhow::bail!("cmux response exceeded {} bytes", MAX_RESPONSE_LEN);
     }
 
-    let line = String::from_utf8(buf)?;
     let response: Value = serde_json::from_str(line.trim())?;
     Ok(response)
 }
@@ -330,7 +326,8 @@ fn format_response(method: &str, response: &Value) {
                     let index = ws.get("index").and_then(|v| v.as_u64()).unwrap_or(0);
                     let title = ws.get("title").and_then(|v| v.as_str()).unwrap_or("?");
                     let selected = ws
-                        .get("is_selected")
+                        .get("selected")
+                        .or_else(|| ws.get("is_selected"))
                         .and_then(|v| v.as_bool())
                         .unwrap_or(false);
                     let panels = ws.get("panel_count").and_then(|v| v.as_u64()).unwrap_or(0);

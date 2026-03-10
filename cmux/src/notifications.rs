@@ -21,6 +21,8 @@ pub struct NotificationStore {
     notifications: Vec<Notification>,
 }
 
+const MAX_NOTIFICATIONS: usize = 500;
+
 impl NotificationStore {
     pub fn new() -> Self {
         Self {
@@ -41,6 +43,8 @@ impl NotificationStore {
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default()
             .as_secs_f64();
+        let title = crate::model::workspace::truncate_str(title, 1024);
+        let body = crate::model::workspace::truncate_str(body, 8192);
 
         let notification = Notification {
             id: Uuid::new_v4(),
@@ -56,6 +60,10 @@ impl NotificationStore {
 
         if send_desktop {
             send_desktop_notification(title, body);
+        }
+
+        if self.notifications.len() >= MAX_NOTIFICATIONS {
+            self.notifications.drain(..self.notifications.len() / 4);
         }
 
         self.notifications.push(notification);

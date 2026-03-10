@@ -135,7 +135,22 @@ pub fn run() -> i32 {
         .build();
 
     let shared = Arc::new(SharedState::new());
-    let state = Rc::new(AppState::new(shared));
+    let state = Rc::new(AppState::new(shared.clone()));
+
+    {
+        let shared_for_socket = shared.clone();
+        app.connect_startup(move |_app| {
+            let shared = shared_for_socket.clone();
+            std::thread::spawn(move || {
+                let rt = tokio::runtime::Runtime::new().expect("Failed to create tokio runtime");
+                rt.block_on(async {
+                    if let Err(e) = socket::server::run_socket_server(shared).await {
+                        tracing::error!("Socket server error: {}", e);
+                    }
+                });
+            });
+        });
+    }
 
     let state_clone = state.clone();
     app.connect_activate(move |app| {
@@ -161,22 +176,7 @@ fn activate(app: &adw::Application, state: &Rc<AppState>) {
     let (ui_event_tx, ui_event_rx) = std::sync::mpsc::channel();
     state.shared.install_ui_event_sender(ui_event_tx);
 
-    let needs_runtime_init = state.ghostty_app.borrow().is_none();
-    if needs_runtime_init {
-        // Start the socket server in a background tokio runtime
-        let shared_for_socket = state.shared.clone();
-        std::thread::spawn(move || {
-            let rt = tokio::runtime::Runtime::new().expect("Failed to create tokio runtime");
-            rt.block_on(async {
-                if let Err(e) = socket::server::run_socket_server(shared_for_socket).await {
-                    tracing::error!("Socket server error: {}", e);
-                }
-            });
-        });
-
-        // Initialize ghostty runtime once per app lifetime.
-        init_ghostty(state);
-    }
+    init_ghostty(state);
 
     // Create the main window
     let window = ui::window::create_window(app, state, ui_event_rx);
@@ -185,6 +185,10 @@ fn activate(app: &adw::Application, state: &Rc<AppState>) {
 
 /// Initialize the ghostty embedded runtime and store it in AppState.
 fn init_ghostty(state: &Rc<AppState>) {
+    if state.ghostty_app.borrow().is_some() {
+        return;
+    }
+
     if let Err(e) = ghostty_gtk::app::GhosttyApp::init() {
         tracing::error!("Failed to init ghostty: {}", e);
         return;

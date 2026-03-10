@@ -23,6 +23,11 @@ cargo build --release # Release build
   - `notifications.rs` — Notification store + desktop notifications
 - `cmux-cli/` — CLI client (`cmux workspace list`, `cmux surface send-text`, etc.)
 
+## Architecture Review
+
+**Read `docs/architecture-review.md` and `docs/ubuntu-mvp-spec.md` before making structural changes.**
+They document the current Ubuntu MVP tradeoffs, Ghostty integration constraints, and review scope.
+
 ## Ghostty Integration
 
 The `link-ghostty` feature enables actual FFI linking to libghostty.
@@ -30,7 +35,7 @@ Without it (default), the crates compile in stub mode for development.
 
 To build with ghostty:
 1. Initialize the ghostty submodule
-2. Build with `cargo build --features ghostty-sys/link-ghostty`
+2. Build with `cargo build --features cmux/link-ghostty`
 
 ## Socket Protocol
 

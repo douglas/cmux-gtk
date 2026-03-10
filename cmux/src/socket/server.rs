@@ -202,10 +202,8 @@ async fn handle_client(
         // Dispatch on a blocking thread to avoid holding std::sync::Mutex on async runtime
         let state_clone = state.clone();
         let trimmed_owned = trimmed.to_string();
-        let response = tokio::task::spawn_blocking(move || {
-            v2::dispatch(&trimmed_owned, &state_clone)
-        })
-        .await?;
+        let response =
+            tokio::task::spawn_blocking(move || v2::dispatch(&trimmed_owned, &state_clone)).await?;
         let mut response_json = serde_json::to_string(&response)?;
         response_json.push('\n');
         writer.write_all(response_json.as_bytes()).await?;

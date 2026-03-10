@@ -112,7 +112,10 @@ pub fn dispatch(json_line: &str, state: &Arc<SharedState>) -> Response {
         _ => Response::error(
             id,
             "unknown_method",
-            &format!("Unknown method: {}", req.method),
+            &format!(
+                "Unknown method: {}",
+                crate::model::workspace::truncate_str(&req.method, 200)
+            ),
         ),
     }
 }
@@ -191,8 +194,12 @@ fn create_workspace(
     let directory = params
         .get("directory")
         .or_else(|| params.get("cwd"))
-        .and_then(|v| v.as_str());
-    let title = params.get("title").and_then(|v| v.as_str());
+        .and_then(|v| v.as_str())
+        .map(|s| crate::model::workspace::truncate_str(s, 4096));
+    let title = params
+        .get("title")
+        .and_then(|v| v.as_str())
+        .map(|s| crate::model::workspace::truncate_str(s, 1024));
 
     let mut ws = if let Some(dir) = directory {
         Workspace::with_directory(dir)
@@ -408,7 +415,7 @@ fn handle_workspace_report_git(id: Value, params: &Value, state: &Arc<SharedStat
 
         if let Some(ws) = ws {
             ws.git_branch = Some(crate::model::panel::GitBranch {
-                branch: branch.to_string(),
+                branch: crate::model::workspace::truncate_str(branch, 256).to_string(),
                 is_dirty,
             });
             true
@@ -576,11 +583,17 @@ fn handle_surface_send_input(id: Value, params: &Value, state: &Arc<SharedState>
 // -----------------------------------------------------------------------
 
 fn handle_notification_create(id: Value, params: &Value, state: &Arc<SharedState>) -> Response {
-    let title = params
-        .get("title")
-        .and_then(|v| v.as_str())
-        .unwrap_or("cmux");
-    let body = params.get("body").and_then(|v| v.as_str()).unwrap_or("");
+    let title = crate::model::workspace::truncate_str(
+        params
+            .get("title")
+            .and_then(|v| v.as_str())
+            .unwrap_or("cmux"),
+        1024,
+    );
+    let body = crate::model::workspace::truncate_str(
+        params.get("body").and_then(|v| v.as_str()).unwrap_or(""),
+        8192,
+    );
     let workspace_id = parse_workspace_param(params);
     let panel_id = params
         .get("surface")
@@ -631,6 +644,7 @@ fn handle_notification_create(id: Value, params: &Value, state: &Arc<SharedState
         serde_json::json!({
             "notified": true,
             "workspace": target_workspace_id.to_string(),
+            "workspace_id": target_workspace_id.to_string(),
             "surface": resolved_panel_id.map(|panel_id| panel_id.to_string()),
         }),
     )

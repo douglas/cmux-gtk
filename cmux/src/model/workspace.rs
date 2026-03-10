@@ -73,6 +73,19 @@ pub struct Progress {
     pub label: Option<String>,
 }
 
+/// Truncate a string to at most `max_bytes` bytes without splitting UTF-8.
+pub fn truncate_str(s: &str, max_bytes: usize) -> &str {
+    if s.len() <= max_bytes {
+        return s;
+    }
+
+    let mut end = max_bytes;
+    while end > 0 && !s.is_char_boundary(end) {
+        end -= 1;
+    }
+    &s[..end]
+}
+
 impl Workspace {
     /// Create a new workspace with a single terminal panel.
     pub fn new() -> Self {
@@ -196,8 +209,16 @@ impl Workspace {
         self.panels.is_empty()
     }
 
+    const MAX_STATUS_ENTRIES: usize = 100;
+    const MAX_STATUS_KEY_LEN: usize = 256;
+    const MAX_STATUS_VALUE_LEN: usize = 4096;
+
     /// Update the status entry for a key, creating it if it doesn't exist.
     pub fn set_status(&mut self, key: &str, value: &str, icon: Option<&str>, color: Option<&str>) {
+        let key = truncate_str(key, Self::MAX_STATUS_KEY_LEN);
+        let value = truncate_str(value, Self::MAX_STATUS_VALUE_LEN);
+        let icon = icon.map(|s| truncate_str(s, 256));
+        let color = color.map(|s| truncate_str(s, 64));
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default()
@@ -209,6 +230,21 @@ impl Workspace {
             entry.color = color.map(|s| s.to_string());
             entry.timestamp = now;
         } else {
+            if self.status_entries.len() >= Self::MAX_STATUS_ENTRIES {
+                if let Some(oldest_idx) = self
+                    .status_entries
+                    .iter()
+                    .enumerate()
+                    .min_by(|a, b| {
+                        a.1.timestamp
+                            .partial_cmp(&b.1.timestamp)
+                            .unwrap_or(std::cmp::Ordering::Equal)
+                    })
+                    .map(|(idx, _)| idx)
+                {
+                    self.status_entries.remove(oldest_idx);
+                }
+            }
             self.status_entries.push(StatusEntry {
                 key: key.to_string(),
                 value: value.to_string(),
@@ -219,12 +255,22 @@ impl Workspace {
         }
     }
 
+    const MAX_LOG_ENTRIES: usize = 1000;
+    const MAX_LOG_MESSAGE_LEN: usize = 8192;
+
     /// Append a log entry.
     pub fn append_log(&mut self, message: &str, level: &str, source: Option<&str>) {
+        let message = truncate_str(message, Self::MAX_LOG_MESSAGE_LEN);
+        let level = truncate_str(level, 64);
+        let source = source.map(|s| truncate_str(s, 256));
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default()
             .as_secs_f64();
+
+        if self.log_entries.len() >= Self::MAX_LOG_ENTRIES {
+            self.log_entries.drain(..self.log_entries.len() / 4);
+        }
 
         self.log_entries.push(LogEntry {
             message: message.to_string(),
@@ -371,6 +417,27 @@ mod tests {
     }
 
     #[test]
+    fn test_status_entry_eviction_preserves_remaining_order() {
+        let mut ws = Workspace::new();
+
+        for i in 0..100 {
+            ws.set_status(&format!("key-{i}"), &format!("value-{i}"), None, None);
+        }
+
+        ws.set_status("key-100", "value-100", None, None);
+
+        assert_eq!(ws.status_entries.len(), 100);
+        assert_eq!(
+            ws.status_entries.first().map(|entry| entry.key.as_str()),
+            Some("key-1")
+        );
+        assert_eq!(
+            ws.status_entries.last().map(|entry| entry.key.as_str()),
+            Some("key-100")
+        );
+    }
+
+    #[test]
     fn test_record_notification_updates_unread_and_summary() {
         let mut ws = Workspace::new();
         let panel_id = ws.focused_panel_id;
@@ -432,5 +499,11 @@ mod tests {
 
         assert!(!ws.focus_panel(panel_id));
         assert_eq!(ws.focused_panel_id, original_focus);
+    }
+
+    #[test]
+    fn test_truncate_str_preserves_utf8_boundaries() {
+        assert_eq!(truncate_str("abcdef", 4), "abcd");
+        assert_eq!(truncate_str("あいう", 4), "あ");
     }
 }

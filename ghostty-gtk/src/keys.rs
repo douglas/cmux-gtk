@@ -7,8 +7,6 @@ use ghostty_sys::ghostty_input_key_e::{self, *};
 /// Convert a GDK keyval (u32) to a ghostty key code.
 ///
 /// Returns `None` if the keyval has no ghostty equivalent.
-/// Currently unused — will be needed for keybinding checks (ghostty_app_key_is_binding).
-#[allow(dead_code)]
 pub fn gdk_keyval_to_ghostty(keyval: u32) -> Option<ghostty_input_key_e> {
     // GDK key constants (from gdk/gdkkeysyms.h)
     // We use raw u32 values to avoid API differences between gtk4-rs versions.
@@ -58,25 +56,25 @@ pub fn gdk_keyval_to_ghostty(keyval: u32) -> Option<ghostty_input_key_e> {
         0x007a | 0x005a => GHOSTTY_KEY_Z,
         0x002d => GHOSTTY_KEY_MINUS,
         0x002e => GHOSTTY_KEY_PERIOD,
-        0x0027 => GHOSTTY_KEY_QUOTE,     // apostrophe
+        0x0027 => GHOSTTY_KEY_QUOTE, // apostrophe
         0x003b => GHOSTTY_KEY_SEMICOLON,
         0x002f => GHOSTTY_KEY_SLASH,
 
         // Functional Keys
-        0xffe9 => GHOSTTY_KEY_ALT_LEFT,       // Alt_L
-        0xffea => GHOSTTY_KEY_ALT_RIGHT,      // Alt_R
-        0xff08 => GHOSTTY_KEY_BACKSPACE,       // BackSpace
-        0xffe5 => GHOSTTY_KEY_CAPS_LOCK,       // Caps_Lock
-        0xff67 => GHOSTTY_KEY_CONTEXT_MENU,    // Menu
-        0xffe3 => GHOSTTY_KEY_CONTROL_LEFT,    // Control_L
-        0xffe4 => GHOSTTY_KEY_CONTROL_RIGHT,   // Control_R
-        0xff0d => GHOSTTY_KEY_ENTER,           // Return
-        0xffe7 | 0xffeb => GHOSTTY_KEY_META_LEFT, // Meta_L | Super_L
+        0xffe9 => GHOSTTY_KEY_ALT_LEFT,            // Alt_L
+        0xffea => GHOSTTY_KEY_ALT_RIGHT,           // Alt_R
+        0xff08 => GHOSTTY_KEY_BACKSPACE,           // BackSpace
+        0xffe5 => GHOSTTY_KEY_CAPS_LOCK,           // Caps_Lock
+        0xff67 => GHOSTTY_KEY_CONTEXT_MENU,        // Menu
+        0xffe3 => GHOSTTY_KEY_CONTROL_LEFT,        // Control_L
+        0xffe4 => GHOSTTY_KEY_CONTROL_RIGHT,       // Control_R
+        0xff0d => GHOSTTY_KEY_ENTER,               // Return
+        0xffe7 | 0xffeb => GHOSTTY_KEY_META_LEFT,  // Meta_L | Super_L
         0xffe8 | 0xffec => GHOSTTY_KEY_META_RIGHT, // Meta_R | Super_R
-        0xffe1 => GHOSTTY_KEY_SHIFT_LEFT,      // Shift_L
-        0xffe2 => GHOSTTY_KEY_SHIFT_RIGHT,     // Shift_R
-        0x0020 => GHOSTTY_KEY_SPACE,           // space
-        0xff09 | 0xfe20 => GHOSTTY_KEY_TAB,   // Tab | ISO_Left_Tab
+        0xffe1 => GHOSTTY_KEY_SHIFT_LEFT,          // Shift_L
+        0xffe2 => GHOSTTY_KEY_SHIFT_RIGHT,         // Shift_R
+        0x0020 => GHOSTTY_KEY_SPACE,               // space
+        0xff09 | 0xfe20 => GHOSTTY_KEY_TAB,        // Tab | ISO_Left_Tab
 
         // Control Pad Section
         0xffff => GHOSTTY_KEY_DELETE,
@@ -106,7 +104,7 @@ pub fn gdk_keyval_to_ghostty(keyval: u32) -> Option<ghostty_input_key_e> {
         0xffb8 => GHOSTTY_KEY_NUMPAD_8,
         0xffb9 => GHOSTTY_KEY_NUMPAD_9,
         0xffab => GHOSTTY_KEY_NUMPAD_ADD,
-        0xffac => GHOSTTY_KEY_NUMPAD_COMMA,    // KP_Separator
+        0xffac => GHOSTTY_KEY_NUMPAD_COMMA, // KP_Separator
         0xffae => GHOSTTY_KEY_NUMPAD_DECIMAL,
         0xffaf => GHOSTTY_KEY_NUMPAD_DIVIDE,
         0xff8d => GHOSTTY_KEY_NUMPAD_ENTER,
@@ -192,12 +190,13 @@ pub fn gdk_button_to_ghostty(button: u32) -> ghostty_sys::ghostty_input_mouse_bu
 
 /// Get the hardware keycode mapping for physical key translation.
 /// This maps X11/evdev keycodes to ghostty physical keys.
-///
-/// Currently unused — will be needed for physical key layout support (Phase 0 integration).
-#[allow(dead_code)]
 pub fn hardware_keycode_to_ghostty(keycode: u32) -> Option<ghostty_input_key_e> {
     // evdev keycodes (X11 keycode = evdev + 8)
-    let evdev_code = if keycode >= 8 { keycode - 8 } else { return None };
+    let evdev_code = if keycode >= 8 {
+        keycode - 8
+    } else {
+        return None;
+    };
 
     let key = match evdev_code {
         1 => GHOSTTY_KEY_ESCAPE,
