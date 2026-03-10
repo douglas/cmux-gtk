@@ -60,13 +60,26 @@ impl AppState {
     }
 
     pub fn send_input_to_panel(&self, panel_id: Uuid, text: &str) -> bool {
-        let surface = self.terminal_cache.borrow().get(&panel_id).cloned();
-        let Some(surface) = surface else {
-            return false;
+        let surface = if let Some(surface) = self.terminal_cache.borrow().get(&panel_id).cloned() {
+            surface
+        } else {
+            let working_directory = {
+                let tab_manager = self.shared.tab_manager.lock().unwrap();
+                let Some(workspace) = tab_manager.find_workspace_with_panel(panel_id) else {
+                    return false;
+                };
+                let Some(panel) = workspace.panel(panel_id) else {
+                    return false;
+                };
+                if panel.panel_type != crate::model::PanelType::Terminal {
+                    return false;
+                }
+                panel.directory.clone()
+            };
+            self.terminal_surface_for(panel_id, working_directory.as_deref())
         };
 
-        surface.send_text(text);
-        true
+        surface.send_text(text)
     }
 
     pub fn close_panel(&self, panel_id: Uuid, process_alive: bool) -> bool {

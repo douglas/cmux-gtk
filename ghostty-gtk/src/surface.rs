@@ -64,6 +64,7 @@ mod imp {
         pub(super) surface: Cell<ghostty_surface_t>,
         pub(super) app: Cell<ghostty_app_t>,
         pub(super) callback_userdata: RefCell<Option<Box<crate::callbacks::SurfaceUserdata>>>,
+        pub(super) pending_text: RefCell<Vec<String>>,
         pub(super) title: RefCell<String>,
         pub(super) im_context: RefCell<Option<gtk4::IMMulticontext>>,
         pub(super) im_composing: Cell<bool>,
@@ -307,6 +308,7 @@ impl GhosttyGlSurface {
 
             *self.imp().callback_userdata.borrow_mut() = Some(callback_userdata);
             self.imp().surface.set(surface);
+            self.flush_pending_text();
         }
     }
 
@@ -665,23 +667,41 @@ impl GhosttyGlSurface {
         self.queue_render();
     }
 
-    /// Send text input to the terminal (e.g., from IME commit).
-    pub fn send_text(&self, text: &str) {
-        let surface = self.imp().surface.get();
-        if surface.is_null() {
-            return;
-        }
-
+    fn write_text(&self, surface: ghostty_surface_t, text: &str) -> bool {
         #[cfg(feature = "link-ghostty")]
         {
             let Some(cstr) = cstring_input(text, "terminal text input") else {
-                return;
+                return false;
             };
             unsafe {
                 ghostty_surface_text(surface, cstr.as_ptr(), text.len());
             }
         }
-        let _ = text;
+        let _ = (surface, text);
+        true
+    }
+
+    fn flush_pending_text(&self) {
+        let surface = self.imp().surface.get();
+        if surface.is_null() {
+            return;
+        }
+
+        let pending = std::mem::take(&mut *self.imp().pending_text.borrow_mut());
+        for text in pending {
+            let _ = self.write_text(surface, &text);
+        }
+    }
+
+    /// Send text input to the terminal (e.g., from IME commit).
+    pub fn send_text(&self, text: &str) -> bool {
+        let surface = self.imp().surface.get();
+        if surface.is_null() {
+            self.imp().pending_text.borrow_mut().push(text.to_string());
+            return true;
+        }
+
+        self.write_text(surface, text)
     }
 
     pub fn read_clipboard_request(&self, clipboard: ghostty_clipboard_e, context: *mut c_void) {
