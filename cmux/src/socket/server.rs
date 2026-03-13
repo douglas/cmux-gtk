@@ -80,11 +80,14 @@ pub async fn run_socket_server(state: Arc<SharedState>) -> anyhow::Result<()> {
         }
     }
 
-    // Restrict umask before bind so the socket is created with 0o600 from the start
-    let old_umask = unsafe { libc::umask(0o177) };
-    let listener = UnixListener::bind(&path);
-    unsafe { libc::umask(old_umask) };
-    let listener = listener?;
+    // Bind the socket, then immediately restrict permissions to 0o600.
+    // We use fchmod-via-path instead of process-wide umask to avoid
+    // racing with other threads that may create files concurrently.
+    let listener = UnixListener::bind(&path)?;
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600))?;
+    }
     tracing::info!("Socket server listening on {}", path);
 
     let semaphore = Arc::new(Semaphore::new(MAX_CONNECTIONS));

@@ -154,7 +154,12 @@ fn compact_path(path: &str) -> String {
     if let Ok(home) = std::env::var("HOME") {
         let p = Path::new(path);
         if let Ok(stripped) = p.strip_prefix(&home) {
-            return format!("~/{}", stripped.display());
+            let s = stripped.display();
+            return if stripped.as_os_str().is_empty() {
+                "~".to_string()
+            } else {
+                format!("~/{s}")
+            };
         }
     }
 
