@@ -58,9 +58,9 @@ enum Commands {
         /// Target surface/panel UUID
         #[arg(long)]
         surface: Option<String>,
-        /// Whether to also send a desktop notification
-        #[arg(long, default_value_t = true)]
-        send_desktop: bool,
+        /// Suppress desktop notification
+        #[arg(long)]
+        no_desktop: bool,
     },
 
     /// List available API methods
@@ -214,7 +214,7 @@ fn main() -> anyhow::Result<()> {
             body,
             workspace,
             surface,
-            send_desktop,
+            no_desktop,
         } => (
             "notification.create",
             serde_json::json!({
@@ -222,7 +222,7 @@ fn main() -> anyhow::Result<()> {
                 "body": body,
                 "workspace": workspace,
                 "surface": surface,
-                "send_desktop": send_desktop,
+                "send_desktop": !no_desktop,
             }),
         ),
     };

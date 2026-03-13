@@ -126,15 +126,17 @@ pub fn rebuild_content(content_box: &gtk4::Box, state: &Rc<AppState>) {
         content_box.remove(&child);
     }
 
-    let tab_manager = state.shared.tab_manager.lock().unwrap();
-    if let Some(workspace) = tab_manager.selected() {
-        let widget = split_view::build_layout(
-            workspace.id,
-            &workspace.layout,
-            &workspace.panels,
-            workspace.attention_panel_id,
-            state,
-        );
+    // Clone workspace data out of the lock so we don't hold it during
+    // GTK widget construction (build_layout callbacks may re-acquire it).
+    let workspace_data = {
+        let tab_manager = state.shared.tab_manager.lock().unwrap();
+        tab_manager.selected().map(|ws| {
+            (ws.id, ws.layout.clone(), ws.panels.clone(), ws.attention_panel_id)
+        })
+    };
+
+    if let Some((id, layout, panels, attention_panel_id)) = workspace_data {
+        let widget = split_view::build_layout(id, &layout, &panels, attention_panel_id, state);
         content_box.append(&widget);
     } else {
         let label = gtk4::Label::new(Some("No workspace selected"));

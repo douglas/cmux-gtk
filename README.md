@@ -39,7 +39,7 @@ To build with ghostty:
 
 ## Socket Protocol
 
-Unix socket at `$XDG_RUNTIME_DIR/cmux.sock` (falls back to `/tmp/cmux.sock`).
+Unix socket at `$XDG_RUNTIME_DIR/cmux.sock` (falls back to `/tmp/cmux-$UID.sock`).
 Line-delimited JSON v2 protocol. Compatible with macOS cmux socket API.
 
 ## Reference

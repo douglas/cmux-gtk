@@ -10,9 +10,18 @@
 //! {"id": "1", "ok": true, "result": {...}}
 //! ```
 
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, MutexGuard};
 
 use serde::{Deserialize, Serialize};
+
+/// Lock a mutex, recovering from poisoning rather than panicking.
+/// This prevents cascading panics across all socket handler tasks.
+fn lock_or_recover<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
+    mutex.lock().unwrap_or_else(|poisoned| {
+        tracing::error!("Mutex was poisoned, recovering");
+        poisoned.into_inner()
+    })
+}
 use serde_json::Value;
 
 use crate::app::{SharedState, UiEvent};
@@ -153,7 +162,7 @@ fn handle_capabilities(id: Value) -> Response {
 // -----------------------------------------------------------------------
 
 fn handle_workspace_list(id: Value, state: &Arc<SharedState>) -> Response {
-    let tm = state.tab_manager.lock().unwrap();
+    let tm = lock_or_recover(&state.tab_manager);
     let workspaces: Vec<Value> = tm
         .iter()
         .enumerate()
@@ -212,7 +221,7 @@ fn create_workspace(
     }
 
     let ws_id = ws.id;
-    let mut tab_manager = state.tab_manager.lock().unwrap();
+    let mut tab_manager = lock_or_recover(&state.tab_manager);
     let previously_selected = if preserve_selection {
         tab_manager.selected_id()
     } else {
@@ -244,7 +253,7 @@ fn handle_workspace_select(id: Value, params: &Value, state: &Arc<SharedState>) 
         Err(()) => return Response::error(id, "invalid_params", "Invalid workspace UUID"),
     };
 
-    let mut tm = state.tab_manager.lock().unwrap();
+    let mut tm = lock_or_recover(&state.tab_manager);
 
     let selected = if let Some(idx) = index {
         tm.select(idx)
@@ -274,7 +283,7 @@ fn handle_workspace_select(id: Value, params: &Value, state: &Arc<SharedState>) 
 fn handle_workspace_next(id: Value, params: &Value, state: &Arc<SharedState>) -> Response {
     let wrap = params.get("wrap").and_then(|v| v.as_bool()).unwrap_or(true);
     let selected_workspace = {
-        let mut tm = state.tab_manager.lock().unwrap();
+        let mut tm = lock_or_recover(&state.tab_manager);
         tm.select_next(wrap);
         tm.selected_id()
     };
@@ -288,7 +297,7 @@ fn handle_workspace_next(id: Value, params: &Value, state: &Arc<SharedState>) ->
 fn handle_workspace_previous(id: Value, params: &Value, state: &Arc<SharedState>) -> Response {
     let wrap = params.get("wrap").and_then(|v| v.as_bool()).unwrap_or(true);
     let selected_workspace = {
-        let mut tm = state.tab_manager.lock().unwrap();
+        let mut tm = lock_or_recover(&state.tab_manager);
         tm.select_previous(wrap);
         tm.selected_id()
     };
@@ -301,7 +310,7 @@ fn handle_workspace_previous(id: Value, params: &Value, state: &Arc<SharedState>
 
 fn handle_workspace_last(id: Value, state: &Arc<SharedState>) -> Response {
     let selected_workspace = {
-        let mut tm = state.tab_manager.lock().unwrap();
+        let mut tm = lock_or_recover(&state.tab_manager);
         tm.select_last();
         tm.selected_id()
     };
@@ -314,7 +323,7 @@ fn handle_workspace_last(id: Value, state: &Arc<SharedState>) -> Response {
 
 fn handle_workspace_latest_unread(id: Value, state: &Arc<SharedState>) -> Response {
     let selected_workspace = {
-        let mut tm = state.tab_manager.lock().unwrap();
+        let mut tm = lock_or_recover(&state.tab_manager);
         tm.select_latest_unread()
     };
 
@@ -344,16 +353,17 @@ fn handle_workspace_close(id: Value, params: &Value, state: &Arc<SharedState>) -
         Err(()) => return Response::error(id, "invalid_params", "Invalid workspace UUID"),
     };
 
-    let mut tm = state.tab_manager.lock().unwrap();
-
-    let removed = if let Some(idx) = index {
-        tm.remove(idx).is_some()
-    } else if let Some(wid) = ws_id {
-        tm.remove_by_id(wid).is_some()
-    } else if let Some(idx) = tm.selected_index() {
-        tm.remove(idx).is_some()
-    } else {
-        false
+    let removed = {
+        let mut tm = lock_or_recover(&state.tab_manager);
+        if let Some(idx) = index {
+            tm.remove(idx).is_some()
+        } else if let Some(wid) = ws_id {
+            tm.remove_by_id(wid).is_some()
+        } else if let Some(idx) = tm.selected_index() {
+            tm.remove(idx).is_some()
+        } else {
+            false
+        }
     };
 
     if removed {
@@ -379,7 +389,7 @@ fn handle_workspace_set_status(id: Value, params: &Value, state: &Arc<SharedStat
     };
 
     let updated = {
-        let mut tm = state.tab_manager.lock().unwrap();
+        let mut tm = lock_or_recover(&state.tab_manager);
         let ws = if let Some(wid) = ws_id {
             tm.workspace_mut(wid)
         } else {
@@ -418,7 +428,7 @@ fn handle_workspace_report_git(id: Value, params: &Value, state: &Arc<SharedStat
     };
 
     let updated = {
-        let mut tm = state.tab_manager.lock().unwrap();
+        let mut tm = lock_or_recover(&state.tab_manager);
         let ws = if let Some(wid) = ws_id {
             tm.workspace_mut(wid)
         } else {
@@ -453,7 +463,7 @@ fn handle_workspace_set_progress(id: Value, params: &Value, state: &Arc<SharedSt
     let label = params.get("label").and_then(|v| v.as_str());
 
     let updated = {
-        let mut tm = state.tab_manager.lock().unwrap();
+        let mut tm = lock_or_recover(&state.tab_manager);
         let ws = if let Some(wid) = ws_id {
             tm.workspace_mut(wid)
         } else {
@@ -500,7 +510,7 @@ fn handle_workspace_append_log(id: Value, params: &Value, state: &Arc<SharedStat
     };
 
     let updated = {
-        let mut tm = state.tab_manager.lock().unwrap();
+        let mut tm = lock_or_recover(&state.tab_manager);
         let ws = if let Some(wid) = ws_id {
             tm.workspace_mut(wid)
         } else {
@@ -534,7 +544,7 @@ fn handle_pane_new(id: Value, params: &Value, state: &Arc<SharedState>) -> Respo
         _ => SplitOrientation::Horizontal,
     };
 
-    let mut tm = state.tab_manager.lock().unwrap();
+    let mut tm = lock_or_recover(&state.tab_manager);
     if let Some(ws) = tm.selected_mut() {
         let panel_id = ws.split(orientation, PanelType::Terminal);
         drop(tm);
@@ -553,6 +563,8 @@ fn handle_surface_send_input(id: Value, params: &Value, state: &Arc<SharedState>
     let Some(input) = params.get("input").and_then(|v| v.as_str()) else {
         return Response::error(id, "invalid_params", "Provide 'input'");
     };
+    // Limit input size to prevent unbounded memory growth via the channel
+    let input = crate::model::workspace::truncate_str(input, 128 * 1024);
 
     let explicit_panel_id = params
         .get("surface")
@@ -561,7 +573,7 @@ fn handle_surface_send_input(id: Value, params: &Value, state: &Arc<SharedState>
         .and_then(|s| uuid::Uuid::parse_str(s).ok());
 
     let panel_id = {
-        let tab_manager = state.tab_manager.lock().unwrap();
+        let tab_manager = lock_or_recover(&state.tab_manager);
         if let Some(panel_id) = explicit_panel_id {
             if tab_manager.find_workspace_with_panel(panel_id).is_none() {
                 return Response::error(id, "not_found", "Surface not found");
@@ -627,7 +639,7 @@ fn handle_notification_create(id: Value, params: &Value, state: &Arc<SharedState
         .unwrap_or(true);
 
     let target = {
-        let mut tm = state.tab_manager.lock().unwrap();
+        let mut tm = lock_or_recover(&state.tab_manager);
         let target_workspace_id = if let Some(workspace_id) = workspace_id {
             if tm.workspace(workspace_id).is_some() {
                 Some(workspace_id)
@@ -651,7 +663,7 @@ fn handle_notification_create(id: Value, params: &Value, state: &Arc<SharedState
     };
 
     let (target_workspace_id, resolved_panel_id) = target;
-    state.notifications.lock().unwrap().add(
+    lock_or_recover(&state.notifications).add(
         title,
         body,
         Some(target_workspace_id),
@@ -672,18 +684,9 @@ fn handle_notification_create(id: Value, params: &Value, state: &Arc<SharedState
 }
 
 fn mark_workspace_read(state: &Arc<SharedState>, workspace_id: uuid::Uuid) {
-    state
-        .notifications
-        .lock()
-        .unwrap()
-        .mark_workspace_read(workspace_id);
+    lock_or_recover(&state.notifications).mark_workspace_read(workspace_id);
 
-    if let Some(workspace) = state
-        .tab_manager
-        .lock()
-        .unwrap()
-        .workspace_mut(workspace_id)
-    {
+    if let Some(workspace) = lock_or_recover(&state.tab_manager).workspace_mut(workspace_id) {
         workspace.mark_notifications_read();
     }
 }
@@ -732,7 +735,7 @@ mod tests {
     fn test_notification_create_updates_workspace_attention() {
         let state = Arc::new(SharedState::new());
         let (workspace_id, panel_id) = {
-            let tab_manager = state.tab_manager.lock().unwrap();
+            let tab_manager = lock_or_recover(&state.tab_manager);
             let workspace = tab_manager.selected().unwrap();
             (workspace.id, workspace.focused_panel_id.unwrap())
         };
@@ -752,7 +755,7 @@ mod tests {
         let response = dispatch(&request.to_string(), &state);
         assert!(response.ok);
 
-        let tab_manager = state.tab_manager.lock().unwrap();
+        let tab_manager = lock_or_recover(&state.tab_manager);
         let workspace = tab_manager.workspace(workspace_id).unwrap();
         assert_eq!(workspace.unread_count, 1);
         assert_eq!(
@@ -765,7 +768,7 @@ mod tests {
     #[test]
     fn test_workspace_latest_unread_selects_newest_workspace() {
         let state = Arc::new(SharedState::new());
-        let workspace_one_id = state.tab_manager.lock().unwrap().selected_id().unwrap();
+        let workspace_one_id = lock_or_recover(&state.tab_manager).selected_id().unwrap();
 
         let new_workspace_request = serde_json::json!({
             "id": 1,
@@ -777,7 +780,7 @@ mod tests {
         let response = dispatch(&new_workspace_request.to_string(), &state);
         assert!(response.ok);
 
-        let workspace_two_id = state.tab_manager.lock().unwrap().selected_id().unwrap();
+        let workspace_two_id = lock_or_recover(&state.tab_manager).selected_id().unwrap();
 
         let first_notification = serde_json::json!({
             "id": 2,
@@ -813,7 +816,7 @@ mod tests {
         let response = dispatch(&latest_unread.to_string(), &state);
         assert!(response.ok);
 
-        let tab_manager = state.tab_manager.lock().unwrap();
+        let tab_manager = lock_or_recover(&state.tab_manager);
         assert_eq!(tab_manager.selected_id(), Some(workspace_two_id));
         assert_eq!(
             tab_manager
@@ -838,7 +841,7 @@ mod tests {
         state.install_ui_event_sender(tx);
 
         let panel_id = {
-            let tab_manager = state.tab_manager.lock().unwrap();
+            let tab_manager = lock_or_recover(&state.tab_manager);
             tab_manager.selected().unwrap().focused_panel_id.unwrap()
         };
 
@@ -870,7 +873,7 @@ mod tests {
     #[test]
     fn test_workspace_create_alias_and_legacy_response_field() {
         let state = Arc::new(SharedState::new());
-        let selected_before = state.tab_manager.lock().unwrap().selected_id();
+        let selected_before = lock_or_recover(&state.tab_manager).selected_id();
 
         let response = dispatch(
             r#"{"id":1,"method":"workspace.create","params":{"title":"Legacy"}}"#,
@@ -888,7 +891,7 @@ mod tests {
             Some(workspace_id)
         );
         assert_eq!(
-            state.tab_manager.lock().unwrap().selected_id(),
+            lock_or_recover(&state.tab_manager).selected_id(),
             selected_before
         );
     }
@@ -913,7 +916,7 @@ mod tests {
     #[test]
     fn test_workspace_select_accepts_legacy_workspace_id_param() {
         let state = Arc::new(SharedState::new());
-        let workspace_id = state.tab_manager.lock().unwrap().selected_id().unwrap();
+        let workspace_id = lock_or_recover(&state.tab_manager).selected_id().unwrap();
 
         let response = dispatch(
             &serde_json::json!({
@@ -929,7 +932,7 @@ mod tests {
 
         assert!(response.ok);
         assert_eq!(
-            state.tab_manager.lock().unwrap().selected_id(),
+            lock_or_recover(&state.tab_manager).selected_id(),
             Some(workspace_id)
         );
     }
@@ -949,7 +952,7 @@ mod tests {
             .expect("workspace_id should be present");
         let workspace_id = uuid::Uuid::parse_str(workspace_id).expect("valid uuid");
 
-        let tab_manager = state.tab_manager.lock().unwrap();
+        let tab_manager = lock_or_recover(&state.tab_manager);
         let workspace = tab_manager
             .workspace(workspace_id)
             .expect("workspace should exist");
