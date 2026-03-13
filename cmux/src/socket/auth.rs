@@ -57,11 +57,41 @@ pub fn is_authorized(peer: &PeerInfo, mode: SocketControlMode) -> bool {
         SocketControlMode::AllowAll => true,
         SocketControlMode::LocalUser => is_same_user(peer),
         SocketControlMode::CmuxOnly => {
-            // Full policy: same UID + peer must be a descendant of the cmux process.
-            // Currently only enforces same-UID (equivalent to LocalUser).
-            // Descendant-PID check requires /proc traversal and will be added
-            // once ghostty integration is complete (Phase 2+).
-            is_same_user(peer)
+            // Same UID + peer must be a descendant of the cmux process.
+            is_same_user(peer) && is_descendant(peer.pid)
         }
     }
+}
+
+/// Check if `pid` is a descendant of the current process by walking /proc/PID/status.
+fn is_descendant(pid: u32) -> bool {
+    if pid == 0 {
+        return false;
+    }
+    let my_pid = std::process::id();
+    let mut current = pid;
+    // Walk up the process tree (bounded to prevent infinite loops)
+    for _ in 0..64 {
+        if current == my_pid {
+            return true;
+        }
+        if current <= 1 {
+            return false;
+        }
+        match read_ppid(current) {
+            Some(ppid) if ppid != current => current = ppid,
+            _ => return false,
+        }
+    }
+    false
+}
+
+fn read_ppid(pid: u32) -> Option<u32> {
+    let status = std::fs::read_to_string(format!("/proc/{pid}/status")).ok()?;
+    for line in status.lines() {
+        if let Some(rest) = line.strip_prefix("PPid:") {
+            return rest.trim().parse().ok();
+        }
+    }
+    None
 }

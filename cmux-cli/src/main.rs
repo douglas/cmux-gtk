@@ -236,7 +236,7 @@ fn main() -> anyhow::Result<()> {
     }
 
     // Exit with error code if the response indicates failure
-    if response.get("ok").and_then(|v| v.as_bool()) == Some(false) {
+    if response.get("ok").and_then(|v| v.as_bool()) != Some(true) {
         std::process::exit(1);
     }
 

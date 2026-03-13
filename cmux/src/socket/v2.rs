@@ -239,7 +239,10 @@ fn handle_workspace_select(id: Value, params: &Value, state: &Arc<SharedState>) 
         Ok(index) => index,
         Err(response) => return response,
     };
-    let ws_id = parse_workspace_param(params);
+    let ws_id = match parse_workspace_param(params) {
+        Ok(v) => v,
+        Err(()) => return Response::error(id, "invalid_params", "Invalid workspace UUID"),
+    };
 
     let mut tm = state.tab_manager.lock().unwrap();
 
@@ -336,7 +339,10 @@ fn handle_workspace_close(id: Value, params: &Value, state: &Arc<SharedState>) -
         Ok(index) => index,
         Err(response) => return response,
     };
-    let ws_id = parse_workspace_param(params);
+    let ws_id = match parse_workspace_param(params) {
+        Ok(v) => v,
+        Err(()) => return Response::error(id, "invalid_params", "Invalid workspace UUID"),
+    };
 
     let mut tm = state.tab_manager.lock().unwrap();
 
@@ -359,7 +365,10 @@ fn handle_workspace_close(id: Value, params: &Value, state: &Arc<SharedState>) -
 }
 
 fn handle_workspace_set_status(id: Value, params: &Value, state: &Arc<SharedState>) -> Response {
-    let ws_id = parse_workspace_param(params);
+    let ws_id = match parse_workspace_param(params) {
+        Ok(v) => v,
+        Err(()) => return Response::error(id, "invalid_params", "Invalid workspace UUID"),
+    };
     let key = params.get("key").and_then(|v| v.as_str());
     let value = params.get("value").and_then(|v| v.as_str());
     let icon = params.get("icon").and_then(|v| v.as_str());
@@ -394,7 +403,10 @@ fn handle_workspace_set_status(id: Value, params: &Value, state: &Arc<SharedStat
 }
 
 fn handle_workspace_report_git(id: Value, params: &Value, state: &Arc<SharedState>) -> Response {
-    let ws_id = parse_workspace_param(params);
+    let ws_id = match parse_workspace_param(params) {
+        Ok(v) => v,
+        Err(()) => return Response::error(id, "invalid_params", "Invalid workspace UUID"),
+    };
     let branch = params.get("branch").and_then(|v| v.as_str());
     let is_dirty = params
         .get("is_dirty")
@@ -433,7 +445,10 @@ fn handle_workspace_report_git(id: Value, params: &Value, state: &Arc<SharedStat
 }
 
 fn handle_workspace_set_progress(id: Value, params: &Value, state: &Arc<SharedState>) -> Response {
-    let ws_id = parse_workspace_param(params);
+    let ws_id = match parse_workspace_param(params) {
+        Ok(v) => v,
+        Err(()) => return Response::error(id, "invalid_params", "Invalid workspace UUID"),
+    };
     let value = params.get("value").and_then(|v| v.as_f64());
     let label = params.get("label").and_then(|v| v.as_str());
 
@@ -469,7 +484,10 @@ fn handle_workspace_set_progress(id: Value, params: &Value, state: &Arc<SharedSt
 }
 
 fn handle_workspace_append_log(id: Value, params: &Value, state: &Arc<SharedState>) -> Response {
-    let ws_id = parse_workspace_param(params);
+    let ws_id = match parse_workspace_param(params) {
+        Ok(v) => v,
+        Err(()) => return Response::error(id, "invalid_params", "Invalid workspace UUID"),
+    };
     let message = params.get("message").and_then(|v| v.as_str());
     let level = params
         .get("level")
@@ -594,7 +612,10 @@ fn handle_notification_create(id: Value, params: &Value, state: &Arc<SharedState
         params.get("body").and_then(|v| v.as_str()).unwrap_or(""),
         8192,
     );
-    let workspace_id = parse_workspace_param(params);
+    let workspace_id = match parse_workspace_param(params) {
+        Ok(v) => v,
+        Err(()) => return Response::error(id, "invalid_params", "Invalid workspace UUID"),
+    };
     let panel_id = params
         .get("surface")
         .or_else(|| params.get("panel"))
@@ -667,23 +688,38 @@ fn mark_workspace_read(state: &Arc<SharedState>, workspace_id: uuid::Uuid) {
     }
 }
 
-fn parse_workspace_param(params: &Value) -> Option<uuid::Uuid> {
-    params
+/// Parse a workspace UUID from `workspace` or `workspace_id` params.
+/// Returns `Err(())` if the key exists but the value is not a valid UUID.
+/// Returns `Ok(None)` if neither key is present.
+fn parse_workspace_param(params: &Value) -> Result<Option<uuid::Uuid>, ()> {
+    let val = params
         .get("workspace")
-        .or_else(|| params.get("workspace_id"))
-        .and_then(|v| v.as_str())
-        .and_then(|s| uuid::Uuid::parse_str(s).ok())
+        .or_else(|| params.get("workspace_id"));
+    match val {
+        Some(v) => match v.as_str().map(uuid::Uuid::parse_str) {
+            Some(Ok(id)) => Ok(Some(id)),
+            _ => Err(()),
+        },
+        None => Ok(None),
+    }
 }
 
 fn parse_usize_param(id: &Value, params: &Value, key: &str) -> Result<Option<usize>, Response> {
-    match params.get(key).and_then(|v| v.as_u64()) {
-        Some(value) => usize::try_from(value).map(Some).map_err(|_| {
-            Response::error(
+    match params.get(key) {
+        Some(v) => match v.as_u64() {
+            Some(value) => usize::try_from(value).map(Some).map_err(|_| {
+                Response::error(
+                    id.clone(),
+                    "invalid_params",
+                    &format!("'{key}' is out of range"),
+                )
+            }),
+            None => Err(Response::error(
                 id.clone(),
                 "invalid_params",
-                &format!("'{key}' is out of range"),
-            )
-        }),
+                &format!("'{key}' must be a non-negative integer"),
+            )),
+        },
         None => Ok(None),
     }
 }

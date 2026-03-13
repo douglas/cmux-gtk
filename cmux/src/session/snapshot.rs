@@ -55,9 +55,9 @@ pub struct SessionWorkspaceSnapshot {
 #[serde(tag = "type")]
 pub enum SessionWorkspaceLayoutSnapshot {
     #[serde(rename = "pane")]
-    Pane(SessionPaneLayoutSnapshot),
+    Pane { pane: SessionPaneLayoutSnapshot },
     #[serde(rename = "split")]
-    Split(SessionSplitLayoutSnapshot),
+    Split { split: SessionSplitLayoutSnapshot },
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -141,32 +141,36 @@ impl SessionWorkspaceLayoutSnapshot {
             LayoutNode::Pane {
                 panel_ids,
                 selected_panel_id,
-            } => SessionWorkspaceLayoutSnapshot::Pane(SessionPaneLayoutSnapshot {
-                panel_ids: panel_ids.clone(),
-                selected_panel_id: *selected_panel_id,
-            }),
+            } => SessionWorkspaceLayoutSnapshot::Pane {
+                pane: SessionPaneLayoutSnapshot {
+                    panel_ids: panel_ids.clone(),
+                    selected_panel_id: *selected_panel_id,
+                },
+            },
             LayoutNode::Split {
                 orientation,
                 divider_position,
                 first,
                 second,
-            } => SessionWorkspaceLayoutSnapshot::Split(SessionSplitLayoutSnapshot {
-                orientation: *orientation,
-                divider_position: *divider_position,
-                first: Box::new(Self::from_layout(first)),
-                second: Box::new(Self::from_layout(second)),
-            }),
+            } => SessionWorkspaceLayoutSnapshot::Split {
+                split: SessionSplitLayoutSnapshot {
+                    orientation: *orientation,
+                    divider_position: *divider_position,
+                    first: Box::new(Self::from_layout(first)),
+                    second: Box::new(Self::from_layout(second)),
+                },
+            },
         }
     }
 
     /// Convert to a model LayoutNode.
     pub fn to_layout(&self) -> LayoutNode {
         match self {
-            SessionWorkspaceLayoutSnapshot::Pane(p) => LayoutNode::Pane {
+            SessionWorkspaceLayoutSnapshot::Pane { pane: p } => LayoutNode::Pane {
                 panel_ids: p.panel_ids.clone(),
                 selected_panel_id: p.selected_panel_id,
             },
-            SessionWorkspaceLayoutSnapshot::Split(s) => LayoutNode::Split {
+            SessionWorkspaceLayoutSnapshot::Split { split: s } => LayoutNode::Split {
                 orientation: s.orientation,
                 divider_position: if s.divider_position.is_finite() {
                     s.divider_position.clamp(0.0, 1.0)

@@ -83,7 +83,7 @@ impl AppState {
     }
 
     pub fn close_panel(&self, panel_id: Uuid, process_alive: bool) -> bool {
-        let empty_workspace_id = {
+        {
             let mut tab_manager = self.shared.tab_manager.lock().unwrap();
             let Some(workspace) = tab_manager.find_workspace_with_panel_mut(panel_id) else {
                 return false;
@@ -91,15 +91,10 @@ impl AppState {
             if !workspace.remove_panel(panel_id) {
                 return false;
             }
-            workspace.is_empty().then_some(workspace.id)
-        };
-
-        if let Some(workspace_id) = empty_workspace_id {
-            self.shared
-                .tab_manager
-                .lock()
-                .unwrap()
-                .remove_by_id(workspace_id);
+            let empty_workspace_id = workspace.is_empty().then_some(workspace.id);
+            if let Some(workspace_id) = empty_workspace_id {
+                tab_manager.remove_by_id(workspace_id);
+            }
         }
 
         self.terminal_cache.borrow_mut().remove(&panel_id);

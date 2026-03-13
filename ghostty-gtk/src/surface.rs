@@ -491,8 +491,18 @@ impl GhosttyGlSurface {
             ptr::null()
         };
 
-        // Unshifted codepoint: the unicode value of the key without Shift
-        let unshifted_codepoint = key.to_lower().to_unicode().map(|c| c as u32).unwrap_or(0);
+        // Unshifted codepoint: the unicode value of the key without Shift.
+        // Translate the hardware keycode with no modifiers to get the base keyval.
+        let unshifted_codepoint = {
+            let display = self.display();
+            if let Some((unshifted_key, _, _, _)) =
+                display.translate_key(keycode, gdk4::ModifierType::empty(), 0)
+            {
+                unshifted_key.to_unicode().map(|c| c as u32).unwrap_or(0)
+            } else {
+                key.to_lower().to_unicode().map(|c| c as u32).unwrap_or(0)
+            }
+        };
 
         let key_event = ghostty_input_key_s {
             action,

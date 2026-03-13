@@ -167,14 +167,13 @@ pub enum ghostty_input_mods_e {
 // Use a type alias for modifier flags (can combine multiple values)
 pub type GhosttyMods = u32;
 
-#[repr(C)]
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ghostty_binding_flags_e {
-    GHOSTTY_BINDING_FLAGS_CONSUMED = 1 << 0,
-    GHOSTTY_BINDING_FLAGS_ALL = 1 << 1,
-    GHOSTTY_BINDING_FLAGS_GLOBAL = 1 << 2,
-    GHOSTTY_BINDING_FLAGS_PERFORMABLE = 1 << 3,
-}
+// Binding flags are bitflags that can be OR'd together in C,
+// so we use a type alias instead of an enum to avoid UB.
+pub type GhosttyBindingFlags = u32;
+pub const GHOSTTY_BINDING_FLAGS_CONSUMED: GhosttyBindingFlags = 1 << 0;
+pub const GHOSTTY_BINDING_FLAGS_ALL: GhosttyBindingFlags = 1 << 1;
+pub const GHOSTTY_BINDING_FLAGS_GLOBAL: GhosttyBindingFlags = 1 << 2;
+pub const GHOSTTY_BINDING_FLAGS_PERFORMABLE: GhosttyBindingFlags = 1 << 3;
 
 #[repr(C)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1254,7 +1253,7 @@ extern "C" {
     pub fn ghostty_surface_key_is_binding(
         surface: ghostty_surface_t,
         key: ghostty_input_key_s,
-        flags: *mut ghostty_binding_flags_e,
+        flags: *mut GhosttyBindingFlags,
     ) -> bool;
     pub fn ghostty_surface_text(surface: ghostty_surface_t, text: *const c_char, len: usize);
     pub fn ghostty_surface_preedit(surface: ghostty_surface_t, text: *const c_char, len: usize);

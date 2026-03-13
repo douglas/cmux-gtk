@@ -169,18 +169,14 @@ fn build_split(
         }
 
         let divider_position = (paned.position() as f64 / size as f64).clamp(0.0, 1.0);
-        if let Some(workspace) = state
-            .shared
-            .tab_manager
-            .lock()
-            .unwrap()
-            .workspace_mut(workspace_id)
-        {
-            let _ = workspace.layout.set_divider_position_for_split(
-                &first_panel_ids,
-                &second_panel_ids,
-                divider_position,
-            );
+        if let Ok(mut tm) = state.shared.tab_manager.lock() {
+            if let Some(workspace) = tm.workspace_mut(workspace_id) {
+                let _ = workspace.layout.set_divider_position_for_split(
+                    &first_panel_ids,
+                    &second_panel_ids,
+                    divider_position,
+                );
+            }
         }
     });
 

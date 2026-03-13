@@ -3,6 +3,7 @@
 //! Listens on a Unix socket and handles line-delimited JSON v2 protocol.
 //! Each client connection is handled in a separate tokio task.
 
+use std::os::unix::fs::FileTypeExt;
 use std::sync::Arc;
 
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
@@ -60,12 +61,22 @@ pub async fn run_socket_server(state: Arc<SharedState>) -> anyhow::Result<()> {
     let path = socket_path();
 
     // Check if an existing socket is live before removing
-    if std::path::Path::new(&path).exists() {
-        if std::os::unix::net::UnixStream::connect(&path).is_ok() {
-            anyhow::bail!("Another cmux instance is already running on {}", path);
+    let socket_path = std::path::Path::new(&path);
+    if socket_path.exists() {
+        // Only remove if it's actually a Unix socket, not a regular file
+        let metadata = std::fs::symlink_metadata(socket_path)?;
+        if metadata.file_type().is_socket() {
+            if std::os::unix::net::UnixStream::connect(&path).is_ok() {
+                anyhow::bail!("Another cmux instance is already running on {}", path);
+            }
+            // Socket is stale — safe to remove
+            let _ = std::fs::remove_file(&path);
+        } else {
+            anyhow::bail!(
+                "Path {} exists but is not a socket — refusing to overwrite",
+                path
+            );
         }
-        // Socket is stale — safe to remove
-        let _ = std::fs::remove_file(&path);
     }
 
     let listener = UnixListener::bind(&path)?;
