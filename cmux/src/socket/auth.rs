@@ -52,27 +52,27 @@ impl SocketControlMode {
 }
 
 /// Check whether a peer is authorized under the given control mode.
-pub fn is_authorized(peer: &PeerInfo, mode: SocketControlMode) -> bool {
+/// `server_pid` should be the cmux server process ID (used for CmuxOnly descendant check).
+pub fn is_authorized(peer: &PeerInfo, mode: SocketControlMode, server_pid: u32) -> bool {
     match mode {
         SocketControlMode::AllowAll => true,
         SocketControlMode::LocalUser => is_same_user(peer),
         SocketControlMode::CmuxOnly => {
             // Same UID + peer must be a descendant of the cmux process.
-            is_same_user(peer) && is_descendant(peer.pid)
+            is_same_user(peer) && is_descendant(peer.pid, server_pid)
         }
     }
 }
 
-/// Check if `pid` is a descendant of the current process by walking /proc/PID/status.
-fn is_descendant(pid: u32) -> bool {
+/// Check if `pid` is a descendant of `ancestor_pid` by walking /proc/PID/status.
+fn is_descendant(pid: u32, ancestor_pid: u32) -> bool {
     if pid == 0 {
         return false;
     }
-    let my_pid = std::process::id();
     let mut current = pid;
     // Walk up the process tree (bounded to prevent infinite loops)
     for _ in 0..64 {
-        if current == my_pid {
+        if current == ancestor_pid {
             return true;
         }
         if current <= 1 {

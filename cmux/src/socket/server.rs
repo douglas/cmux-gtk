@@ -51,10 +51,11 @@ pub fn socket_path() -> String {
 /// on a background thread.
 pub async fn run_socket_server(state: Arc<SharedState>) -> anyhow::Result<()> {
     let control_mode = auth::SocketControlMode::from_env();
+    let server_pid = std::process::id();
     tracing::info!("Socket control mode: {:?}", control_mode);
     if control_mode == auth::SocketControlMode::CmuxOnly {
-        tracing::warn!(
-            "CmuxOnly mode: descendant-PID check not yet implemented, falling back to same-UID"
+        tracing::info!(
+            "CmuxOnly mode: same-UID + descendant-PID check via /proc enabled"
         );
     }
 
@@ -96,7 +97,7 @@ pub async fn run_socket_server(state: Arc<SharedState>) -> anyhow::Result<()> {
                 // Authenticate the client
                 match auth::authenticate_peer(&stream) {
                     Ok(peer_info) => {
-                        if !auth::is_authorized(&peer_info, control_mode) {
+                        if !auth::is_authorized(&peer_info, control_mode, server_pid) {
                             tracing::warn!(
                                 "Client rejected: pid={}, uid={} (mode={:?})",
                                 peer_info.pid,
