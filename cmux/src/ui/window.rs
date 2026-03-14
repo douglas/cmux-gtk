@@ -59,12 +59,7 @@ pub fn create_window(
         let content_box = content_box.clone();
         new_ws_btn.connect_clicked(move |_| {
             let workspace = Workspace::new();
-            state
-                .shared
-                .tab_manager
-                .lock()
-                .unwrap()
-                .add_workspace(workspace);
+            lock_or_recover(&state.shared.tab_manager).add_workspace(workspace);
             refresh_ui(&list_box, &content_box, &state);
         });
     }
@@ -278,12 +273,7 @@ fn setup_shortcuts(
         match (keyval, ctrl, shift) {
             (gdk4::Key::T, true, true) => {
                 let workspace = Workspace::new();
-                state
-                    .shared
-                    .tab_manager
-                    .lock()
-                    .unwrap()
-                    .add_workspace(workspace);
+                lock_or_recover(&state.shared.tab_manager).add_workspace(workspace);
                 refresh_ui(&list_box, &content_box, &state);
                 glib::Propagation::Stop
             }

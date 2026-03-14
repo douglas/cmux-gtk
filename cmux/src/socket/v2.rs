@@ -557,11 +557,24 @@ fn handle_surface_send_input(id: Value, params: &Value, state: &Arc<SharedState>
     // Limit input size to prevent unbounded memory growth via the channel
     let input = crate::model::workspace::truncate_str(input, 128 * 1024);
 
-    let explicit_panel_id = params
-        .get("surface")
-        .or_else(|| params.get("panel"))
-        .and_then(|v| v.as_str())
-        .and_then(|s| uuid::Uuid::parse_str(s).ok());
+    let explicit_panel_id = match params.get("surface").or_else(|| params.get("panel")) {
+        Some(v) => {
+            let Some(s) = v.as_str() else {
+                return Response::error(id, "invalid_params", "surface/panel must be a string");
+            };
+            match uuid::Uuid::parse_str(s) {
+                Ok(uuid) => Some(uuid),
+                Err(_) => {
+                    return Response::error(
+                        id,
+                        "invalid_params",
+                        "Invalid surface/panel UUID format",
+                    )
+                }
+            }
+        }
+        None => None,
+    };
 
     let panel_id = {
         let tab_manager = lock_or_recover(&state.tab_manager);
@@ -619,11 +632,24 @@ fn handle_notification_create(id: Value, params: &Value, state: &Arc<SharedState
         Ok(v) => v,
         Err(()) => return Response::error(id, "invalid_params", "Invalid workspace UUID"),
     };
-    let panel_id = params
-        .get("surface")
-        .or_else(|| params.get("panel"))
-        .and_then(|v| v.as_str())
-        .and_then(|s| uuid::Uuid::parse_str(s).ok());
+    let panel_id = match params.get("surface").or_else(|| params.get("panel")) {
+        Some(v) => {
+            let Some(s) = v.as_str() else {
+                return Response::error(id, "invalid_params", "surface/panel must be a string");
+            };
+            match uuid::Uuid::parse_str(s) {
+                Ok(uuid) => Some(uuid),
+                Err(_) => {
+                    return Response::error(
+                        id,
+                        "invalid_params",
+                        "Invalid surface/panel UUID format",
+                    )
+                }
+            }
+        }
+        None => None,
+    };
     let send_desktop = params
         .get("send_desktop")
         .and_then(|v| v.as_bool())

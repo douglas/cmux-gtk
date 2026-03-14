@@ -87,12 +87,14 @@ enum WorkspaceCommands {
     },
     /// Select the next workspace
     Next {
-        #[arg(long, default_value = "true")]
+        /// Wrap around when reaching the end (default: true)
+        #[arg(long, default_value_t = true, action = clap::ArgAction::Set)]
         wrap: bool,
     },
     /// Select the previous workspace
     Previous {
-        #[arg(long, default_value = "true")]
+        /// Wrap around when reaching the start (default: true)
+        #[arg(long, default_value_t = true, action = clap::ArgAction::Set)]
         wrap: bool,
     },
     /// Select the last workspace

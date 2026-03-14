@@ -167,8 +167,12 @@ where
 // -----------------------------------------------------------------------
 
 unsafe extern "C" fn wakeup_trampoline(userdata: *mut c_void) {
-    if let Some(handler) = handler_from_userdata(userdata) {
-        handler.on_wakeup();
+    if let Err(e) = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        if let Some(handler) = handler_from_userdata(userdata) {
+            handler.on_wakeup();
+        }
+    })) {
+        tracing::error!("Panic in wakeup trampoline: {:?}", e);
     }
 }
 
@@ -180,8 +184,14 @@ unsafe extern "C" fn action_trampoline(
     // The userdata is stored in the app; retrieve it
     #[cfg(feature = "link-ghostty")]
     {
-        let userdata = ghostty_app_userdata(_app);
-        handler_from_userdata(userdata).is_some_and(|handler| handler.on_action(target, action))
+        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let userdata = ghostty_app_userdata(_app);
+            handler_from_userdata(userdata).is_some_and(|handler| handler.on_action(target, action))
+        }))
+        .unwrap_or_else(|e| {
+            tracing::error!("Panic in action trampoline: {:?}", e);
+            false
+        })
     }
     #[cfg(not(feature = "link-ghostty"))]
     {
@@ -195,10 +205,14 @@ unsafe extern "C" fn read_clipboard_trampoline(
     clipboard: ghostty_clipboard_e,
     context: *mut c_void,
 ) {
-    let context = context as usize;
-    invoke_surface_callback(userdata, move |surface| {
-        surface.read_clipboard_request(clipboard, context as *mut c_void);
-    });
+    if let Err(e) = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let context = context as usize;
+        invoke_surface_callback(userdata, move |surface| {
+            surface.read_clipboard_request(clipboard, context as *mut c_void);
+        });
+    })) {
+        tracing::error!("Panic in read_clipboard trampoline: {:?}", e);
+    }
 }
 
 unsafe extern "C" fn confirm_read_clipboard_trampoline(
@@ -207,17 +221,21 @@ unsafe extern "C" fn confirm_read_clipboard_trampoline(
     context: *mut c_void,
     request: ghostty_clipboard_request_e,
 ) {
-    let context = context as usize;
-    let content = if content.is_null() {
-        String::new()
-    } else {
-        std::ffi::CStr::from_ptr(content)
-            .to_string_lossy()
-            .into_owned()
-    };
-    invoke_surface_callback(userdata, move |surface| {
-        surface.confirm_clipboard_read(&content, context as *mut c_void, request);
-    });
+    if let Err(e) = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let context = context as usize;
+        let content = if content.is_null() {
+            String::new()
+        } else {
+            std::ffi::CStr::from_ptr(content)
+                .to_string_lossy()
+                .into_owned()
+        };
+        invoke_surface_callback(userdata, move |surface| {
+            surface.confirm_clipboard_read(&content, context as *mut c_void, request);
+        });
+    })) {
+        tracing::error!("Panic in confirm_read_clipboard trampoline: {:?}", e);
+    }
 }
 
 unsafe extern "C" fn write_clipboard_trampoline(
@@ -227,26 +245,34 @@ unsafe extern "C" fn write_clipboard_trampoline(
     content_len: usize,
     confirm: bool,
 ) {
-    let entries = if content.is_null() || content_len == 0 {
-        Vec::new()
-    } else {
-        std::slice::from_raw_parts(content, content_len)
-            .iter()
-            .map(|entry| ClipboardContent {
-                mime: c_string(entry.mime),
-                data: c_string(entry.data),
-            })
-            .collect()
-    };
-    invoke_surface_callback(userdata, move |surface| {
-        surface.write_clipboard(clipboard, &entries, confirm);
-    });
+    if let Err(e) = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let entries = if content.is_null() || content_len == 0 {
+            Vec::new()
+        } else {
+            std::slice::from_raw_parts(content, content_len)
+                .iter()
+                .map(|entry| ClipboardContent {
+                    mime: c_string(entry.mime),
+                    data: c_string(entry.data),
+                })
+                .collect()
+        };
+        invoke_surface_callback(userdata, move |surface| {
+            surface.write_clipboard(clipboard, &entries, confirm);
+        });
+    })) {
+        tracing::error!("Panic in write_clipboard trampoline: {:?}", e);
+    }
 }
 
 unsafe extern "C" fn close_surface_trampoline(userdata: *mut c_void, process_alive: bool) {
-    invoke_surface_callback(userdata, move |surface| {
-        surface.close_requested(process_alive);
-    });
+    if let Err(e) = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        invoke_surface_callback(userdata, move |surface| {
+            surface.close_requested(process_alive);
+        });
+    })) {
+        tracing::error!("Panic in close_surface trampoline: {:?}", e);
+    }
 }
 
 fn c_string(ptr: *const c_char) -> Option<String> {
