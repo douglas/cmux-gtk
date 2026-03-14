@@ -7,7 +7,7 @@ use std::rc::Rc;
 use gtk4::prelude::*;
 use uuid::Uuid;
 
-use crate::app::AppState;
+use crate::app::{lock_or_recover, AppState};
 use crate::model::panel::{LayoutNode, Panel, SplitOrientation};
 use crate::ui::terminal_panel;
 
@@ -169,18 +169,14 @@ fn build_split(
         }
 
         let divider_position = (paned.position() as f64 / size as f64).clamp(0.0, 1.0);
-        match state.shared.tab_manager.lock() {
-            Ok(mut tm) => {
-                if let Some(workspace) = tm.workspace_mut(workspace_id) {
-                    let _ = workspace.layout.set_divider_position_for_split(
-                        &first_panel_ids,
-                        &second_panel_ids,
-                        divider_position,
-                    );
-                }
-            }
-            Err(e) => {
-                tracing::error!("tab_manager mutex poisoned in divider callback: {e}");
+        {
+            let mut tm = lock_or_recover(&state.shared.tab_manager);
+            if let Some(workspace) = tm.workspace_mut(workspace_id) {
+                let _ = workspace.layout.set_divider_position_for_split(
+                    &first_panel_ids,
+                    &second_panel_ids,
+                    divider_position,
+                );
             }
         }
     });

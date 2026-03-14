@@ -171,7 +171,11 @@ fn main() -> anyhow::Result<()> {
             WorkspaceCommands::Last => ("workspace.last", serde_json::json!({})),
             WorkspaceCommands::LatestUnread => ("workspace.latest_unread", serde_json::json!({})),
             WorkspaceCommands::Close { index } => {
-                ("workspace.close", serde_json::json!({"index": index}))
+                let mut params = serde_json::json!({});
+                if let Some(idx) = index {
+                    params["index"] = serde_json::json!(idx);
+                }
+                ("workspace.close", params)
             }
             WorkspaceCommands::SetStatus {
                 key,

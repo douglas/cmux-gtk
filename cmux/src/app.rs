@@ -4,12 +4,21 @@ use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, MutexGuard};
 
 use ghostty_sys::*;
 use gtk4::prelude::*;
 use libadwaita as adw;
 use tokio::sync::mpsc::UnboundedSender;
+
+/// Lock a mutex, recovering from poisoning rather than panicking.
+/// Prevents cascading panics when one thread panics while holding a lock.
+pub fn lock_or_recover<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
+    mutex.lock().unwrap_or_else(|poisoned| {
+        tracing::error!("Mutex was poisoned, recovering");
+        poisoned.into_inner()
+    })
+}
 
 use crate::model::TabManager;
 use crate::notifications::NotificationStore;
@@ -64,7 +73,7 @@ impl AppState {
             surface
         } else {
             let working_directory = {
-                let tab_manager = self.shared.tab_manager.lock().unwrap();
+                let tab_manager = lock_or_recover(&self.shared.tab_manager);
                 let Some(workspace) = tab_manager.find_workspace_with_panel(panel_id) else {
                     return false;
                 };
@@ -84,7 +93,7 @@ impl AppState {
 
     pub fn close_panel(&self, panel_id: Uuid, process_alive: bool) -> bool {
         {
-            let mut tab_manager = self.shared.tab_manager.lock().unwrap();
+            let mut tab_manager = lock_or_recover(&self.shared.tab_manager);
             let Some(workspace) = tab_manager.find_workspace_with_panel_mut(panel_id) else {
                 return false;
             };
@@ -105,7 +114,7 @@ impl AppState {
 
     pub fn prune_terminal_cache(&self) {
         let live_panels: HashSet<Uuid> = {
-            let tab_manager = self.shared.tab_manager.lock().unwrap();
+            let tab_manager = lock_or_recover(&self.shared.tab_manager);
             tab_manager
                 .iter()
                 .flat_map(|workspace| workspace.panels.values())
@@ -146,13 +155,11 @@ impl SharedState {
     }
 
     pub fn install_ui_event_sender(&self, sender: UnboundedSender<UiEvent>) {
-        *self.ui_event_tx.lock().unwrap() = Some(sender);
+        *lock_or_recover(&self.ui_event_tx) = Some(sender);
     }
 
     pub fn send_ui_event(&self, event: UiEvent) -> bool {
-        self.ui_event_tx
-            .lock()
-            .unwrap()
+        lock_or_recover(&self.ui_event_tx)
             .as_ref()
             .is_some_and(|sender| sender.send(event).is_ok())
     }

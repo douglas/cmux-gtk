@@ -10,21 +10,12 @@
 //! {"id": "1", "ok": true, "result": {...}}
 //! ```
 
-use std::sync::{Arc, Mutex, MutexGuard};
+use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
-
-/// Lock a mutex, recovering from poisoning rather than panicking.
-/// This prevents cascading panics across all socket handler tasks.
-fn lock_or_recover<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
-    mutex.lock().unwrap_or_else(|poisoned| {
-        tracing::error!("Mutex was poisoned, recovering");
-        poisoned.into_inner()
-    })
-}
 use serde_json::Value;
 
-use crate::app::{SharedState, UiEvent};
+use crate::app::{lock_or_recover, SharedState, UiEvent};
 use crate::model::panel::SplitOrientation;
 use crate::model::PanelType;
 use crate::model::Workspace;

@@ -8,6 +8,7 @@ use std::path::PathBuf;
 use std::os::unix::fs::OpenOptionsExt;
 use std::os::unix::fs::PermissionsExt;
 
+use crate::app::lock_or_recover;
 use crate::session::snapshot::*;
 
 /// Get the session file path: ~/.local/share/cmux/session.json
@@ -79,7 +80,7 @@ fn write_atomic(path: &Path, bytes: &[u8]) -> anyhow::Result<()> {
 
 /// Create a snapshot from the current application state.
 pub fn create_snapshot(state: &crate::app::AppState) -> AppSessionSnapshot {
-    let tm = state.shared.tab_manager.lock().unwrap();
+    let tm = lock_or_recover(&state.shared.tab_manager);
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default()

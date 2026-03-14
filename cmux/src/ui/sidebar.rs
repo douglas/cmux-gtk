@@ -5,7 +5,7 @@ use std::rc::Rc;
 
 use gtk4::prelude::*;
 
-use crate::app::AppState;
+use crate::app::{lock_or_recover, AppState};
 use crate::model::Workspace;
 
 pub struct SidebarWidgets {
@@ -48,7 +48,7 @@ pub fn refresh_sidebar(list_box: &gtk4::ListBox, state: &Rc<AppState>) {
     // `row-selected` synchronously; the connected handler tries to acquire
     // the same tab_manager lock, which would deadlock on std::sync::Mutex.
     let (rows, selected_index): (Vec<gtk4::ListBoxRow>, Option<usize>) = {
-        let tab_manager = state.shared.tab_manager.lock().unwrap();
+        let tab_manager = lock_or_recover(&state.shared.tab_manager);
         let selected_index = tab_manager.selected_index();
         let rows = tab_manager
             .iter()
@@ -148,18 +148,21 @@ fn workspace_meta_text(workspace: &Workspace) -> String {
 
 fn compact_path(path: &str) -> String {
     if path.is_empty() {
-        return "/".to_string();
+        return "~".to_string();
     }
 
     if let Ok(home) = std::env::var("HOME") {
-        let p = Path::new(path);
-        if let Ok(stripped) = p.strip_prefix(&home) {
-            let s = stripped.display();
-            return if stripped.as_os_str().is_empty() {
-                "~".to_string()
-            } else {
-                format!("~/{s}")
-            };
+        // Guard against HOME="/" where strip_prefix would match any absolute path
+        if home != "/" {
+            let p = Path::new(path);
+            if let Ok(stripped) = p.strip_prefix(&home) {
+                let s = stripped.display();
+                return if stripped.as_os_str().is_empty() {
+                    "~".to_string()
+                } else {
+                    format!("~/{s}")
+                };
+            }
         }
     }
 

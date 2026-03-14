@@ -7,7 +7,7 @@ use libadwaita as adw;
 use libadwaita::prelude::*;
 use tokio::sync::mpsc::UnboundedReceiver;
 
-use crate::app::{AppState, UiEvent};
+use crate::app::{lock_or_recover, AppState, UiEvent};
 use crate::model::panel::SplitOrientation;
 use crate::model::{PanelType, Workspace};
 use crate::ui::{sidebar, split_view};
@@ -77,7 +77,7 @@ pub fn create_window(
         let list_box = list_box.clone();
         let content_box = content_box.clone();
         split_h_btn.connect_clicked(move |_| {
-            if let Some(workspace) = state.shared.tab_manager.lock().unwrap().selected_mut() {
+            if let Some(workspace) = lock_or_recover(&state.shared.tab_manager).selected_mut() {
                 workspace.split(SplitOrientation::Horizontal, PanelType::Terminal);
             }
             refresh_ui(&list_box, &content_box, &state);
@@ -92,7 +92,7 @@ pub fn create_window(
         let list_box = list_box.clone();
         let content_box = content_box.clone();
         split_v_btn.connect_clicked(move |_| {
-            if let Some(workspace) = state.shared.tab_manager.lock().unwrap().selected_mut() {
+            if let Some(workspace) = lock_or_recover(&state.shared.tab_manager).selected_mut() {
                 workspace.split(SplitOrientation::Vertical, PanelType::Terminal);
             }
             refresh_ui(&list_box, &content_box, &state);
@@ -129,7 +129,7 @@ pub fn rebuild_content(content_box: &gtk4::Box, state: &Rc<AppState>) {
     // Clone workspace data out of the lock so we don't hold it during
     // GTK widget construction (build_layout callbacks may re-acquire it).
     let workspace_data = {
-        let tab_manager = state.shared.tab_manager.lock().unwrap();
+        let tab_manager = lock_or_recover(&state.shared.tab_manager);
         tab_manager.selected().map(|ws| {
             (ws.id, ws.layout.clone(), ws.panels.clone(), ws.attention_panel_id)
         })
@@ -161,7 +161,11 @@ fn bind_sidebar_selection(list_box: &gtk4::ListBox, content_box: &gtk4::Box, sta
             return;
         };
 
-        if select_workspace_by_index(&state, row.index() as usize) {
+        let index = row.index();
+        if index < 0 {
+            return;
+        }
+        if select_workspace_by_index(&state, index as usize) {
             refresh_ui(&lb, &content_box, &state);
         }
     });
@@ -213,7 +217,7 @@ fn bind_shared_state_updates(
 
 fn select_workspace_by_index(state: &Rc<AppState>, index: usize) -> bool {
     let (selected, already_selected, workspace_id) = {
-        let mut tab_manager = state.shared.tab_manager.lock().unwrap();
+        let mut tab_manager = lock_or_recover(&state.shared.tab_manager);
         let already_selected = tab_manager.selected_index() == Some(index);
         let selected = tab_manager.select(index);
         let workspace_id = tab_manager.get(index).map(|workspace| workspace.id);
@@ -233,7 +237,7 @@ fn select_workspace_by_index(state: &Rc<AppState>, index: usize) -> bool {
 
 fn select_latest_unread(state: &Rc<AppState>) -> bool {
     let workspace_id = {
-        let mut tab_manager = state.shared.tab_manager.lock().unwrap();
+        let mut tab_manager = lock_or_recover(&state.shared.tab_manager);
         tab_manager.select_latest_unread()
     };
 
@@ -246,19 +250,10 @@ fn select_latest_unread(state: &Rc<AppState>) -> bool {
 }
 
 fn mark_workspace_read(state: &Rc<AppState>, workspace_id: uuid::Uuid) {
-    state
-        .shared
-        .notifications
-        .lock()
-        .unwrap()
-        .mark_workspace_read(workspace_id);
+    lock_or_recover(&state.shared.notifications).mark_workspace_read(workspace_id);
 
-    if let Some(workspace) = state
-        .shared
-        .tab_manager
-        .lock()
-        .unwrap()
-        .workspace_mut(workspace_id)
+    if let Some(workspace) =
+        lock_or_recover(&state.shared.tab_manager).workspace_mut(workspace_id)
     {
         workspace.mark_notifications_read();
     }
@@ -293,7 +288,7 @@ fn setup_shortcuts(
                 glib::Propagation::Stop
             }
             (gdk4::Key::W, true, true) => {
-                let mut tab_manager = state.shared.tab_manager.lock().unwrap();
+                let mut tab_manager = lock_or_recover(&state.shared.tab_manager);
                 if let Some(index) = tab_manager.selected_index() {
                     tab_manager.remove(index);
                 }
@@ -302,14 +297,14 @@ fn setup_shortcuts(
                 glib::Propagation::Stop
             }
             (gdk4::Key::D, true, true) => {
-                if let Some(workspace) = state.shared.tab_manager.lock().unwrap().selected_mut() {
+                if let Some(workspace) = lock_or_recover(&state.shared.tab_manager).selected_mut() {
                     workspace.split(SplitOrientation::Horizontal, PanelType::Terminal);
                 }
                 refresh_ui(&list_box, &content_box, &state);
                 glib::Propagation::Stop
             }
             (gdk4::Key::E, true, true) => {
-                if let Some(workspace) = state.shared.tab_manager.lock().unwrap().selected_mut() {
+                if let Some(workspace) = lock_or_recover(&state.shared.tab_manager).selected_mut() {
                     workspace.split(SplitOrientation::Vertical, PanelType::Terminal);
                 }
                 refresh_ui(&list_box, &content_box, &state);
