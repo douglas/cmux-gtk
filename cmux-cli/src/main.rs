@@ -44,7 +44,11 @@ enum Commands {
     #[command(subcommand)]
     Pane(PaneCommands),
 
-    /// Send a notification
+    /// Notification management
+    #[command(subcommand)]
+    Notification(NotificationCommands),
+
+    /// Send a notification (shorthand for notification create)
     Notify {
         /// Notification title
         #[arg(long)]
@@ -138,6 +142,89 @@ enum WorkspaceCommands {
         #[arg(long)]
         color: Option<String>,
     },
+    /// Clear all status entries
+    ClearStatus {
+        /// Target workspace UUID
+        #[arg(long)]
+        workspace: Option<String>,
+    },
+    /// List status entries
+    ListStatus {
+        /// Target workspace UUID
+        #[arg(long)]
+        workspace: Option<String>,
+    },
+    /// Set progress bar
+    SetProgress {
+        /// Progress value (0.0 to 1.0, >1.0 for indeterminate)
+        value: f64,
+        /// Optional label
+        #[arg(long)]
+        label: Option<String>,
+    },
+    /// Clear progress bar
+    ClearProgress {
+        /// Target workspace UUID
+        #[arg(long)]
+        workspace: Option<String>,
+    },
+    /// Append a log entry
+    Log {
+        /// Log message
+        message: String,
+        /// Log level (info, warning, error, success, progress)
+        #[arg(long, default_value = "info")]
+        level: String,
+        /// Source name
+        #[arg(long)]
+        source: Option<String>,
+    },
+    /// Clear all log entries
+    ClearLog {
+        /// Target workspace UUID
+        #[arg(long)]
+        workspace: Option<String>,
+    },
+    /// List log entries
+    ListLog {
+        /// Target workspace UUID
+        #[arg(long)]
+        workspace: Option<String>,
+    },
+    /// Report git branch for workspace
+    ReportGit {
+        /// Branch name
+        branch: String,
+        /// Whether the working tree is dirty
+        #[arg(long)]
+        dirty: bool,
+    },
+}
+
+#[derive(Subcommand)]
+enum NotificationCommands {
+    /// Create a notification
+    Create {
+        /// Notification title
+        #[arg(long)]
+        title: String,
+        /// Notification body
+        #[arg(long, default_value = "")]
+        body: String,
+        /// Target workspace UUID
+        #[arg(long)]
+        workspace: Option<String>,
+        /// Target surface/panel UUID
+        #[arg(long)]
+        surface: Option<String>,
+        /// Suppress desktop notification
+        #[arg(long)]
+        no_desktop: bool,
+    },
+    /// List all notifications
+    List,
+    /// Clear all notifications
+    Clear,
 }
 
 #[derive(Subcommand)]
@@ -251,6 +338,46 @@ fn main() -> anyhow::Result<()> {
                     "color": color,
                 }),
             ),
+            WorkspaceCommands::ClearStatus { workspace } => (
+                "workspace.clear_status",
+                serde_json::json!({"workspace": workspace}),
+            ),
+            WorkspaceCommands::ListStatus { workspace } => (
+                "workspace.list_status",
+                serde_json::json!({"workspace": workspace}),
+            ),
+            WorkspaceCommands::SetProgress { value, label } => (
+                "workspace.set_progress",
+                serde_json::json!({"value": value, "label": label}),
+            ),
+            WorkspaceCommands::ClearProgress { workspace } => (
+                "workspace.clear_progress",
+                serde_json::json!({"workspace": workspace}),
+            ),
+            WorkspaceCommands::Log {
+                message,
+                level,
+                source,
+            } => (
+                "workspace.append_log",
+                serde_json::json!({
+                    "message": message,
+                    "level": level,
+                    "source": source,
+                }),
+            ),
+            WorkspaceCommands::ClearLog { workspace } => (
+                "workspace.clear_log",
+                serde_json::json!({"workspace": workspace}),
+            ),
+            WorkspaceCommands::ListLog { workspace } => (
+                "workspace.list_log",
+                serde_json::json!({"workspace": workspace}),
+            ),
+            WorkspaceCommands::ReportGit { branch, dirty } => (
+                "workspace.report_git_branch",
+                serde_json::json!({"branch": branch, "is_dirty": dirty}),
+            ),
         },
 
         Commands::Surface(surf) => match surf {
@@ -291,6 +418,27 @@ fn main() -> anyhow::Result<()> {
                 "pane.close",
                 serde_json::json!({"panel": id}),
             ),
+        },
+
+        Commands::Notification(notif) => match notif {
+            NotificationCommands::Create {
+                title,
+                body,
+                workspace,
+                surface,
+                no_desktop,
+            } => (
+                "notification.create",
+                serde_json::json!({
+                    "title": title,
+                    "body": body,
+                    "workspace": workspace,
+                    "surface": surface,
+                    "send_desktop": !no_desktop,
+                }),
+            ),
+            NotificationCommands::List => ("notification.list", serde_json::json!({})),
+            NotificationCommands::Clear => ("notification.clear", serde_json::json!({})),
         },
 
         Commands::Notify {
