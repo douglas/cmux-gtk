@@ -214,13 +214,16 @@ enum WorkspaceCommands {
         #[arg(long)]
         workspace: Option<String>,
     },
-    /// Perform an action on a workspace (pin, unpin, toggle_pin)
+    /// Perform an action on a workspace
     Action {
-        /// Action name: pin, unpin, toggle_pin
+        /// Action: pin, unpin, toggle_pin, mark_read, mark_unread, clear_name, set_color, clear_color
         action: String,
         /// Target workspace UUID
         #[arg(long)]
         workspace: Option<String>,
+        /// Color value (required for set_color)
+        #[arg(long)]
+        color: Option<String>,
     },
     /// Report git branch for workspace
     ReportGit {
@@ -304,6 +307,29 @@ enum SurfaceCommands {
         #[arg(long)]
         surface: Option<String>,
     },
+    /// Split the focused pane (alias for pane new)
+    Split {
+        /// Split orientation: horizontal or vertical
+        #[arg(long, default_value = "horizontal")]
+        orientation: String,
+    },
+    /// Close a surface (alias for pane close)
+    Close {
+        /// Surface/panel UUID (closes focused panel if not specified)
+        id: Option<String>,
+    },
+    /// Refresh a terminal surface
+    Refresh {
+        /// Surface/panel UUID (refreshes focused panel if not specified)
+        #[arg(long)]
+        surface: Option<String>,
+    },
+    /// Clear the scrollback history of a terminal
+    ClearHistory {
+        /// Surface/panel UUID (clears focused panel if not specified)
+        #[arg(long)]
+        surface: Option<String>,
+    },
 }
 
 #[derive(Subcommand)]
@@ -355,6 +381,20 @@ enum PaneCommands {
     FocusDirection {
         /// Direction: left, right, up, down
         direction: String,
+    },
+    /// Break focused pane into a new workspace
+    Break {
+        /// Panel UUID (breaks focused panel if not specified)
+        #[arg(long)]
+        panel: Option<String>,
+    },
+    /// Join a pane from another workspace into the current workspace
+    Join {
+        /// Panel UUID to join
+        id: String,
+        /// Split orientation: horizontal or vertical
+        #[arg(long, default_value = "horizontal")]
+        orientation: String,
     },
 }
 
@@ -470,11 +510,16 @@ fn main() -> anyhow::Result<()> {
                     "workspace": workspace,
                 }),
             ),
-            WorkspaceCommands::Action { action, workspace } => (
+            WorkspaceCommands::Action {
+                action,
+                workspace,
+                color,
+            } => (
                 "workspace.action",
                 serde_json::json!({
                     "action": action,
                     "workspace": workspace,
+                    "color": color,
                 }),
             ),
             WorkspaceCommands::ReportGit { branch, dirty } => (
@@ -523,6 +568,22 @@ fn main() -> anyhow::Result<()> {
                 "surface.trigger_flash",
                 serde_json::json!({"surface": surface}),
             ),
+            SurfaceCommands::Split { orientation } => (
+                "surface.split",
+                serde_json::json!({"orientation": orientation}),
+            ),
+            SurfaceCommands::Close { id } => (
+                "surface.close",
+                serde_json::json!({"panel": id}),
+            ),
+            SurfaceCommands::Refresh { surface } => (
+                "surface.refresh",
+                serde_json::json!({"surface": surface}),
+            ),
+            SurfaceCommands::ClearHistory { surface } => (
+                "surface.clear_history",
+                serde_json::json!({"surface": surface}),
+            ),
         },
 
         Commands::Pane(pane) => match pane {
@@ -556,6 +617,14 @@ fn main() -> anyhow::Result<()> {
             PaneCommands::FocusDirection { direction } => (
                 "pane.focus_direction",
                 serde_json::json!({"direction": direction}),
+            ),
+            PaneCommands::Break { panel } => (
+                "pane.break",
+                serde_json::json!({"panel": panel}),
+            ),
+            PaneCommands::Join { id, orientation } => (
+                "pane.join",
+                serde_json::json!({"panel": id, "orientation": orientation}),
             ),
         },
 
