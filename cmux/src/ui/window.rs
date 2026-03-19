@@ -116,28 +116,51 @@ pub fn create_window(
 }
 
 /// Rebuild the content area from the current workspace layout.
+///
+/// GtkGLArea breaks if you remove a widget and re-add it in the same GTK
+/// main-loop tick (the GL context gets destroyed and recreated, invalidating
+/// the renderer's state). Ghostty's own GTK app has the same problem and
+/// solves it with a two-phase approach: orphan all surfaces first, then
+/// rebuild in an idle callback once GTK has fully processed the unparent.
 pub fn rebuild_content(content_box: &gtk4::Box, state: &Rc<AppState>) {
+    // Phase 1: Remove all children so GTK can fully orphan the surfaces.
     while let Some(child) = content_box.first_child() {
         content_box.remove(&child);
     }
 
-    // Clone workspace data out of the lock so we don't hold it during
-    // GTK widget construction (build_layout callbacks may re-acquire it).
-    let workspace_data = {
-        let tab_manager = lock_or_recover(&state.shared.tab_manager);
-        tab_manager.selected().map(|ws| {
-            (ws.id, ws.layout.clone(), ws.panels.clone(), ws.attention_panel_id)
-        })
-    };
-
-    if let Some((id, layout, panels, attention_panel_id)) = workspace_data {
-        let widget = split_view::build_layout(id, &layout, &panels, attention_panel_id, state);
-        content_box.append(&widget);
-    } else {
-        let label = gtk4::Label::new(Some("No workspace selected"));
-        label.add_css_class("dim-label");
-        content_box.append(&label);
+    // Explicitly unparent cached GL surfaces — they may have been nested
+    // inside intermediate containers (Paned, Box) that were just removed.
+    for surface in state.terminal_cache.borrow().values() {
+        if let Some(parent) = surface.parent() {
+            if let Ok(parent_box) = parent.downcast::<gtk4::Box>() {
+                parent_box.remove(surface);
+            }
+        }
     }
+
+    // Phase 2: Schedule the actual rebuild on the next idle tick, giving GTK
+    // time to fully process the unparent cascade before re-adding surfaces.
+    let content_box = content_box.clone();
+    let state = state.clone();
+    glib::idle_add_local_once(move || {
+        // Clone workspace data out of the lock so we don't hold it during
+        // GTK widget construction (build_layout callbacks may re-acquire it).
+        let workspace_data = {
+            let tab_manager = lock_or_recover(&state.shared.tab_manager);
+            tab_manager.selected().map(|ws| {
+                (ws.id, ws.layout.clone(), ws.panels.clone(), ws.attention_panel_id)
+            })
+        };
+
+        if let Some((id, layout, panels, attention_panel_id)) = workspace_data {
+            let widget = split_view::build_layout(id, &layout, &panels, attention_panel_id, &state);
+            content_box.append(&widget);
+        } else {
+            let label = gtk4::Label::new(Some("No workspace selected"));
+            label.add_css_class("dim-label");
+            content_box.append(&label);
+        }
+    });
 }
 
 fn refresh_ui(list_box: &gtk4::ListBox, content_box: &gtk4::Box, state: &Rc<AppState>) {

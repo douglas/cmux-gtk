@@ -227,10 +227,10 @@ fn activate(app: &adw::Application, state: &Rc<AppState>) {
     let (ui_event_tx, ui_event_rx) = tokio::sync::mpsc::unbounded_channel();
     state.shared.install_ui_event_sender(ui_event_tx);
 
-    // Restore session before creating the window
-    restore_session(state);
-
     init_ghostty(state);
+
+    // Restore session after ghostty is initialized so terminals can be created
+    restore_session(state);
 
     // Create the main window
     let window = ui::window::create_window(app, state, ui_event_rx);

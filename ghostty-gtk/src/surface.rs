@@ -99,6 +99,11 @@ mod imp {
             gl_area.set_required_version(4, 3);
             gl_area.set_focusable(true);
             gl_area.set_can_focus(true);
+            // Expand to fill the parent container. Without this, GTK gives
+            // the GLArea a 0-height natural size inside vertical Boxes, so
+            // the resize/render signals never fire → permanent black screen.
+            gl_area.set_hexpand(true);
+            gl_area.set_vexpand(true);
 
             // Set up IME context
             let im_context = gtk4::IMMulticontext::new();
@@ -139,9 +144,31 @@ mod imp {
                 tracing::error!("Failed to make GL context current");
                 return;
             }
+            // Re-realize after reparent: reinitialize renderer GL state
+            // for the new GL context (shaders, swap chain, etc.).
+            let surface = self.surface.get();
+            if !surface.is_null() {
+                #[cfg(feature = "link-ghostty")]
+                unsafe {
+                    ghostty_surface_display_realized(surface);
+                }
+            }
         }
 
         fn unrealize(&self) {
+            // Tear down renderer GL state BEFORE the context is destroyed.
+            // The context must still be current for cleanup to work.
+            let surface = self.surface.get();
+            if !surface.is_null() {
+                let widget = self.obj();
+                widget.make_current();
+                if widget.error().is_none() {
+                    #[cfg(feature = "link-ghostty")]
+                    unsafe {
+                        ghostty_surface_display_unrealized(surface);
+                    }
+                }
+            }
             self.parent_unrealize();
         }
     }
@@ -174,9 +201,9 @@ mod imp {
             if !surface.is_null() {
                 #[cfg(feature = "link-ghostty")]
                 unsafe {
-                    // GtkGLArea does NOT set glViewport before the render signal.
-                    // Ghostty's renderer reads GL_VIEWPORT via surfaceSize() to
-                    // determine the render area. We must set it here.
+                    // Set the viewport so ghostty's renderer knows the surface
+                    // dimensions. GtkGLArea does NOT set glViewport before its
+                    // render signal.
                     let widget = self.obj();
                     let scale = widget.scale_factor();
                     let w = widget.width() * scale;
@@ -194,12 +221,12 @@ mod imp {
             if !surface.is_null() && width > 0 && height > 0 {
                 #[cfg(feature = "link-ghostty")]
                 unsafe {
-                    let scale = self.obj().scale_factor();
-                    let width_px = width.saturating_mul(scale) as u32;
-                    let height_px = height.saturating_mul(scale) as u32;
-                    let scale = scale as f64;
+                    // GTK4's GLArea resize signal passes physical pixels
+                    // (logical_width * scale_factor). Pass them directly to
+                    // ghostty — do not multiply by scale again.
+                    let scale = self.obj().scale_factor() as f64;
                     ghostty_surface_set_content_scale(surface, scale, scale);
-                    ghostty_surface_set_size(surface, width_px, height_px);
+                    ghostty_surface_set_size(surface, width as u32, height as u32);
                 }
 
                 self.obj().schedule_resize_focus_restore();
@@ -236,19 +263,22 @@ impl GhosttyGlSurface {
     ) {
         let imp = self.imp();
         imp.app.set(app);
-
         self.setup_event_controllers();
 
-        // Create the surface after the widget is realized
         let widget = self.clone();
         let wd = working_directory.map(|s| s.to_string());
         let cmd = command.map(|s| s.to_string());
 
-        self.connect_realize(move |w| {
+        self.connect_realize(move |_w| {
             widget.create_surface(app, wd.as_deref(), cmd.as_deref());
-            // Grab focus so keyboard events go to this terminal
-            w.grab_focus();
+            widget.grab_focus();
         });
+
+        // GTK4: if the widget is already realized, connect_realize won't fire.
+        if self.is_realized() {
+            self.create_surface(app, working_directory, command);
+            self.grab_focus();
+        }
     }
 
     fn create_surface(
@@ -258,7 +288,6 @@ impl GhosttyGlSurface {
         _command: Option<&str>,
     ) {
         if app.is_null() {
-            tracing::warn!("Cannot create surface: app is null (stub mode)");
             return;
         }
 
