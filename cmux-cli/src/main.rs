@@ -44,6 +44,10 @@ enum Commands {
     #[command(subcommand)]
     Pane(PaneCommands),
 
+    /// Tab operations
+    #[command(subcommand)]
+    Tab(TabCommands),
+
     /// Notification management
     #[command(subcommand)]
     Notification(NotificationCommands),
@@ -344,6 +348,56 @@ enum SurfaceCommands {
         #[arg(long)]
         surface: Option<String>,
     },
+    /// Move a panel to a different workspace
+    Move {
+        /// Panel UUID (moves focused panel if not specified)
+        #[arg(long)]
+        panel: Option<String>,
+        /// Target workspace UUID
+        #[arg(long)]
+        workspace: String,
+        /// Split orientation when inserting: horizontal or vertical
+        #[arg(long, default_value = "horizontal")]
+        orientation: String,
+    },
+    /// Reorder a panel within its pane tabs
+    Reorder {
+        /// Panel UUID (reorders focused panel if not specified)
+        #[arg(long)]
+        panel: Option<String>,
+        /// New tab index (0-based)
+        index: usize,
+    },
+    /// Create a new surface (tabbed in the focused pane, not split)
+    Create {
+        /// Panel type: terminal or browser
+        #[arg(long, default_value = "terminal")]
+        r#type: String,
+    },
+    /// Move a surface into a new split pane in the given direction
+    DragToSplit {
+        /// Direction: left, right, up, down
+        direction: String,
+        /// Surface/panel UUID (moves focused panel if not specified)
+        #[arg(long)]
+        surface: Option<String>,
+    },
+}
+
+/// Tab operations
+#[derive(Subcommand)]
+enum TabCommands {
+    /// Perform an action on a tab/surface
+    Action {
+        /// Action: rename, clear_name, close_left, close_right, close_others, pin, unpin, mark_read, mark_unread, duplicate
+        action: String,
+        /// Surface/panel UUID (uses focused panel if not specified)
+        #[arg(long)]
+        surface: Option<String>,
+        /// Title (for rename action)
+        #[arg(long)]
+        title: Option<String>,
+    },
 }
 
 #[derive(Subcommand)]
@@ -415,6 +469,12 @@ enum PaneCommands {
         /// Split orientation: horizontal or vertical
         #[arg(long, default_value = "horizontal")]
         orientation: String,
+    },
+    /// List surfaces (panels) in the pane containing a panel
+    Surfaces {
+        /// Panel UUID (uses focused panel if not specified)
+        #[arg(long)]
+        panel: Option<String>,
     },
 }
 
@@ -612,6 +672,51 @@ fn main() -> anyhow::Result<()> {
                 "surface.health",
                 serde_json::json!({"surface": surface}),
             ),
+            SurfaceCommands::Move {
+                panel,
+                workspace,
+                orientation,
+            } => (
+                "surface.move",
+                serde_json::json!({
+                    "panel": panel,
+                    "workspace": workspace,
+                    "orientation": orientation,
+                }),
+            ),
+            SurfaceCommands::Reorder { panel, index } => (
+                "surface.reorder",
+                serde_json::json!({"panel": panel, "index": index}),
+            ),
+            SurfaceCommands::Create { r#type } => (
+                "surface.create",
+                serde_json::json!({"type": r#type}),
+            ),
+            SurfaceCommands::DragToSplit {
+                direction,
+                surface,
+            } => (
+                "surface.drag_to_split",
+                serde_json::json!({
+                    "direction": direction,
+                    "surface": surface,
+                }),
+            ),
+        },
+
+        Commands::Tab(tab) => match tab {
+            TabCommands::Action {
+                action,
+                surface,
+                title,
+            } => (
+                "tab.action",
+                serde_json::json!({
+                    "action": action,
+                    "surface": surface,
+                    "title": title,
+                }),
+            ),
         },
 
         Commands::Pane(pane) => match pane {
@@ -656,6 +761,10 @@ fn main() -> anyhow::Result<()> {
             PaneCommands::Join { id, orientation } => (
                 "pane.join",
                 serde_json::json!({"panel": id, "orientation": orientation}),
+            ),
+            PaneCommands::Surfaces { panel } => (
+                "pane.surfaces",
+                serde_json::json!({"panel": panel}),
             ),
         },
 

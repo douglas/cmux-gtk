@@ -179,6 +179,22 @@ impl LayoutNode {
         }
     }
 
+    /// Find the panel IDs in the pane containing the given panel (immutable).
+    pub fn find_pane_with_panel_readonly(&self, panel_id: Uuid) -> Option<Vec<Uuid>> {
+        match self {
+            LayoutNode::Pane { panel_ids, .. } => {
+                if panel_ids.contains(&panel_id) {
+                    Some(panel_ids.clone())
+                } else {
+                    None
+                }
+            }
+            LayoutNode::Split { first, second, .. } => first
+                .find_pane_with_panel_readonly(panel_id)
+                .or_else(|| second.find_pane_with_panel_readonly(panel_id)),
+        }
+    }
+
     /// Select the given panel if it exists in this layout tree.
     pub fn select_panel(&mut self, panel_id: Uuid) -> bool {
         match self {
@@ -456,6 +472,89 @@ impl LayoutNode {
         }
     }
 
+    /// Reorder a panel within its pane to a new index.
+    /// Returns true if the panel was found and moved.
+    pub fn reorder_panel_in_pane(&mut self, panel_id: Uuid, new_index: usize) -> bool {
+        if let Some(LayoutNode::Pane { panel_ids, .. }) = self.find_pane_with_panel(panel_id) {
+            if let Some(pos) = panel_ids.iter().position(|&id| id == panel_id) {
+                panel_ids.remove(pos);
+                let clamped = new_index.min(panel_ids.len());
+                panel_ids.insert(clamped, panel_id);
+                return true;
+            }
+        }
+        false
+    }
+
+    /// Add a new panel to the same pane as target_panel_id (tabbed, not split).
+    /// The new panel is inserted after the target and selected.
+    /// Returns true if the target pane was found and the panel was added.
+    pub fn add_panel_to_pane(&mut self, target_panel_id: Uuid, new_panel_id: Uuid) -> bool {
+        if let Some(LayoutNode::Pane {
+            panel_ids,
+            selected_panel_id,
+        }) = self.find_pane_with_panel(target_panel_id)
+        {
+            if let Some(pos) = panel_ids.iter().position(|&id| id == target_panel_id) {
+                panel_ids.insert(pos + 1, new_panel_id);
+            } else {
+                panel_ids.push(new_panel_id);
+            }
+            *selected_panel_id = Some(new_panel_id);
+            return true;
+        }
+        false
+    }
+
+    /// Split the pane containing `target_panel_id`, placing `panel_id` in a
+    /// new adjacent split in the given direction. Does NOT remove `panel_id`
+    /// from any existing pane — the caller must do that first.
+    /// Returns true if the target pane was found and split.
+    pub fn split_pane_with_panel(
+        &mut self,
+        target_panel_id: Uuid,
+        panel_id: Uuid,
+        orientation: SplitOrientation,
+        direction: Direction,
+    ) -> bool {
+        match self {
+            LayoutNode::Pane { panel_ids, .. } => {
+                if !panel_ids.contains(&target_panel_id) {
+                    return false;
+                }
+                let new_pane = LayoutNode::Pane {
+                    panel_ids: vec![panel_id],
+                    selected_panel_id: Some(panel_id),
+                };
+                let existing = std::mem::replace(
+                    self,
+                    LayoutNode::Pane {
+                        panel_ids: vec![],
+                        selected_panel_id: None,
+                    },
+                );
+                // left/up → new panel is first; right/down → new panel is second
+                let new_first = matches!(direction, Direction::Left | Direction::Up);
+                *self = LayoutNode::Split {
+                    orientation,
+                    divider_position: 0.5,
+                    first: Box::new(if new_first {
+                        new_pane.clone()
+                    } else {
+                        existing.clone()
+                    }),
+                    second: Box::new(if new_first { existing } else { new_pane }),
+                };
+                true
+            }
+            LayoutNode::Split { first, second, .. } => {
+                first.split_pane_with_panel(target_panel_id, panel_id, orientation, direction)
+                    || second
+                        .split_pane_with_panel(target_panel_id, panel_id, orientation, direction)
+            }
+        }
+    }
+
     /// Check if this node contains no panels.
     pub fn is_empty(&self) -> bool {
         match self {
@@ -558,6 +657,41 @@ mod tests {
         let json = serde_json::to_string(&node).unwrap();
         let restored: LayoutNode = serde_json::from_str(&json).unwrap();
         assert_eq!(restored.all_panel_ids().len(), 2);
+    }
+
+    #[test]
+    fn test_reorder_panel_in_pane() {
+        let id1 = Uuid::new_v4();
+        let id2 = Uuid::new_v4();
+        let id3 = Uuid::new_v4();
+        let mut node = LayoutNode::Pane {
+            panel_ids: vec![id1, id2, id3],
+            selected_panel_id: Some(id1),
+        };
+        assert!(node.reorder_panel_in_pane(id3, 0));
+        if let LayoutNode::Pane { panel_ids, .. } = &node {
+            assert_eq!(panel_ids, &[id3, id1, id2]);
+        } else {
+            panic!("expected pane");
+        }
+    }
+
+    #[test]
+    fn test_add_panel_to_pane() {
+        let id1 = Uuid::new_v4();
+        let id2 = Uuid::new_v4();
+        let mut node = LayoutNode::single_pane(id1);
+        assert!(node.add_panel_to_pane(id1, id2));
+        if let LayoutNode::Pane {
+            panel_ids,
+            selected_panel_id,
+        } = &node
+        {
+            assert_eq!(panel_ids, &[id1, id2]);
+            assert_eq!(*selected_panel_id, Some(id2));
+        } else {
+            panic!("expected pane");
+        }
     }
 
     #[test]

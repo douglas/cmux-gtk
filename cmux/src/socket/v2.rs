@@ -129,6 +129,7 @@ pub fn dispatch(json_line: &str, state: &Arc<SharedState>) -> Response {
 
         // Surface commands
         "surface.send_input" => handle_surface_send_input(id, &req.params, state),
+        "surface.send_text" => handle_surface_send_input(id, &req.params, state),
         "surface.list" => handle_surface_list(id, &req.params, state),
         "surface.current" => handle_surface_current(id, state),
         "surface.focus" => handle_surface_focus(id, &req.params, state),
@@ -141,12 +142,24 @@ pub fn dispatch(json_line: &str, state: &Arc<SharedState>) -> Response {
         "surface.refresh" => handle_surface_refresh(id, &req.params, state),
         "surface.clear_history" => handle_surface_clear_history(id, &req.params, state),
         "surface.trigger_flash" => handle_surface_trigger_flash(id, &req.params, state),
+        "surface.move" => handle_surface_move(id, &req.params, state),
+        "surface.reorder" => handle_surface_reorder(id, &req.params, state),
+        "surface.create" => handle_surface_create(id, &req.params, state),
+        "surface.drag_to_split" => handle_surface_drag_to_split(id, &req.params, state),
+
+        // Tab actions
+        "tab.action" => handle_tab_action(id, &req.params, state),
+
+        // Pane query
+        "pane.surfaces" => handle_pane_surfaces(id, &req.params, state),
 
         // Settings
         "settings.open" => handle_settings_open(id, state),
 
         // Notification commands
         "notification.create" => handle_notification_create(id, &req.params, state),
+        "notification.create_for_surface" => handle_notification_create(id, &req.params, state),
+        "notification.create_for_target" => handle_notification_create(id, &req.params, state),
         "notification.list" => handle_notification_list(id, state),
         "notification.clear" => handle_notification_clear(id, state),
 
@@ -206,6 +219,7 @@ fn handle_capabilities(id: Value) -> Response {
         "pane.break",
         "pane.join",
         "surface.send_input",
+        "surface.send_text",
         "surface.list",
         "surface.current",
         "surface.focus",
@@ -218,8 +232,16 @@ fn handle_capabilities(id: Value) -> Response {
         "surface.refresh",
         "surface.clear_history",
         "surface.trigger_flash",
+        "surface.move",
+        "surface.reorder",
+        "surface.create",
+        "surface.drag_to_split",
+        "tab.action",
+        "pane.surfaces",
         "settings.open",
         "notification.create",
+        "notification.create_for_surface",
+        "notification.create_for_target",
         "notification.list",
         "notification.clear",
     ];
@@ -779,7 +801,11 @@ fn handle_surface_send_input(id: Value, params: &Value, state: &Arc<SharedState>
     // Limit input size to prevent unbounded memory growth via the channel
     let input = crate::model::workspace::truncate_str(input, 128 * 1024);
 
-    let explicit_panel_id = match params.get("surface").or_else(|| params.get("panel")) {
+    let explicit_panel_id = match params
+        .get("surface")
+        .or_else(|| params.get("panel"))
+        .and_then(|v| if v.is_null() { None } else { Some(v) })
+    {
         Some(v) => {
             let Some(s) = v.as_str() else {
                 return Response::error(id, "invalid_params", "surface/panel must be a string");
@@ -854,7 +880,11 @@ fn handle_notification_create(id: Value, params: &Value, state: &Arc<SharedState
         Ok(v) => v,
         Err(()) => return Response::error(id, "invalid_params", "Invalid workspace UUID"),
     };
-    let panel_id = match params.get("surface").or_else(|| params.get("panel")) {
+    let panel_id = match params
+        .get("surface")
+        .or_else(|| params.get("panel"))
+        .and_then(|v| if v.is_null() { None } else { Some(v) })
+    {
         Some(v) => {
             let Some(s) = v.as_str() else {
                 return Response::error(id, "invalid_params", "surface/panel must be a string");
@@ -1086,6 +1116,7 @@ fn handle_pane_focus(id: Value, params: &Value, state: &Arc<SharedState>) -> Res
         .get("panel")
         .or_else(|| params.get("surface"))
         .or_else(|| params.get("id"))
+        .and_then(|v| if v.is_null() { None } else { Some(v) })
     {
         Some(v) => {
             let Some(s) = v.as_str() else {
@@ -1124,6 +1155,7 @@ fn handle_pane_close(id: Value, params: &Value, state: &Arc<SharedState>) -> Res
         .get("panel")
         .or_else(|| params.get("surface"))
         .or_else(|| params.get("id"))
+        .and_then(|v| if v.is_null() { None } else { Some(v) })
     {
         Some(v) => {
             let Some(s) = v.as_str() else {
@@ -2001,6 +2033,414 @@ fn handle_surface_trigger_flash(id: Value, params: &Value, state: &Arc<SharedSta
 
     state.send_ui_event(UiEvent::TriggerFlash { panel_id });
     Response::success(id, serde_json::json!({"flashed": true}))
+}
+
+// -----------------------------------------------------------------------
+// surface.move — move a panel to a different workspace
+// -----------------------------------------------------------------------
+
+fn handle_surface_move(id: Value, params: &Value, state: &Arc<SharedState>) -> Response {
+    let panel_id = match resolve_panel_id(&id, params, state) {
+        Ok(pid) => pid,
+        Err(resp) => return resp,
+    };
+
+    let target_ws_str = params
+        .get("workspace")
+        .or_else(|| params.get("workspace_id"))
+        .and_then(|v| v.as_str());
+    let Some(target_ws_str) = target_ws_str else {
+        return Response::error(id, "invalid_params", "Provide 'workspace' target UUID");
+    };
+    let target_ws_id = match uuid::Uuid::parse_str(target_ws_str) {
+        Ok(wid) => wid,
+        Err(_) => return Response::error(id, "invalid_params", "Invalid workspace UUID"),
+    };
+
+    let orientation = match params.get("orientation").and_then(|v| v.as_str()) {
+        Some("vertical") => SplitOrientation::Vertical,
+        _ => SplitOrientation::Horizontal,
+    };
+
+    let mut tm = lock_or_recover(&state.tab_manager);
+
+    // Find source workspace
+    let source_ws_id = tm
+        .find_workspace_with_panel(panel_id)
+        .map(|ws| ws.id);
+    let Some(source_ws_id) = source_ws_id else {
+        return Response::error(id, "not_found", "Panel not found in any workspace");
+    };
+
+    if source_ws_id == target_ws_id {
+        return Response::error(id, "invalid_params", "Panel is already in the target workspace");
+    }
+
+    // Detach from source
+    let source_ws = tm.workspace_mut(source_ws_id).unwrap();
+    let panel = source_ws.detach_panel(panel_id);
+    let Some(panel) = panel else {
+        return Response::error(id, "not_found", "Panel not found");
+    };
+    let source_empty = tm
+        .workspace(source_ws_id)
+        .is_some_and(|ws| ws.is_empty());
+    if source_empty {
+        tm.remove_by_id(source_ws_id);
+    }
+
+    // Insert into target workspace
+    let Some(target_ws) = tm.workspace_mut(target_ws_id) else {
+        return Response::error(id, "not_found", "Target workspace not found");
+    };
+    target_ws.insert_panel(panel, orientation);
+
+    drop(tm);
+    state.notify_ui_refresh();
+
+    Response::success(
+        id,
+        serde_json::json!({
+            "panel_id": panel_id.to_string(),
+            "workspace_id": target_ws_id.to_string(),
+            "moved": true,
+        }),
+    )
+}
+
+// -----------------------------------------------------------------------
+// surface.reorder — reorder a panel within its pane tabs
+// -----------------------------------------------------------------------
+
+fn handle_surface_reorder(id: Value, params: &Value, state: &Arc<SharedState>) -> Response {
+    let panel_id = match resolve_panel_id(&id, params, state) {
+        Ok(pid) => pid,
+        Err(resp) => return resp,
+    };
+
+    let Some(index) = params.get("index").and_then(|v| v.as_u64()) else {
+        return Response::error(id, "invalid_params", "Provide 'index' (integer)");
+    };
+    let index = index as usize;
+
+    let mut tm = lock_or_recover(&state.tab_manager);
+    let ws = tm.find_workspace_with_panel_mut(panel_id);
+    let Some(ws) = ws else {
+        return Response::error(id, "not_found", "Panel not found in any workspace");
+    };
+
+    if !ws.layout.reorder_panel_in_pane(panel_id, index) {
+        return Response::error(id, "not_found", "Panel not found in any pane");
+    }
+
+    drop(tm);
+    state.notify_ui_refresh();
+
+    Response::success(
+        id,
+        serde_json::json!({
+            "panel_id": panel_id.to_string(),
+            "index": index,
+            "reordered": true,
+        }),
+    )
+}
+
+// -----------------------------------------------------------------------
+// surface.create — create a new surface (tabbed, not split)
+// -----------------------------------------------------------------------
+
+fn handle_surface_create(id: Value, params: &Value, state: &Arc<SharedState>) -> Response {
+    let panel_type = match params.get("type").and_then(|v| v.as_str()) {
+        Some("browser") => crate::model::PanelType::Browser,
+        _ => crate::model::PanelType::Terminal,
+    };
+
+    let new_panel = match panel_type {
+        crate::model::PanelType::Terminal => crate::model::Panel::new_terminal(),
+        crate::model::PanelType::Browser => crate::model::Panel::new_browser(),
+    };
+    let new_panel_id = new_panel.id;
+
+    let mut tm = lock_or_recover(&state.tab_manager);
+    let Some(ws) = tm.selected_mut() else {
+        return Response::error(id, "not_found", "No workspace selected");
+    };
+
+    let focused = ws.focused_panel_id;
+    ws.panels.insert(new_panel_id, new_panel);
+
+    let added = if let Some(focused_id) = focused {
+        ws.layout.add_panel_to_pane(focused_id, new_panel_id)
+    } else {
+        false
+    };
+
+    if !added {
+        // Fallback: replace root with a single pane containing the new panel
+        ws.layout = crate::model::panel::LayoutNode::single_pane(new_panel_id);
+    }
+
+    ws.previous_focused_panel_id = ws.focused_panel_id;
+    ws.focused_panel_id = Some(new_panel_id);
+
+    drop(tm);
+    state.notify_ui_refresh();
+
+    Response::success(
+        id,
+        serde_json::json!({
+            "panel_id": new_panel_id.to_string(),
+            "created": true,
+        }),
+    )
+}
+
+// -----------------------------------------------------------------------
+// pane.surfaces — list surfaces in a specific pane
+// -----------------------------------------------------------------------
+
+fn handle_pane_surfaces(id: Value, params: &Value, state: &Arc<SharedState>) -> Response {
+    let panel_id = match resolve_panel_id(&id, params, state) {
+        Ok(pid) => pid,
+        Err(resp) => return resp,
+    };
+
+    let tm = lock_or_recover(&state.tab_manager);
+    let ws = tm.find_workspace_with_panel(panel_id);
+    let Some(ws) = ws else {
+        return Response::error(id, "not_found", "Panel not found in any workspace");
+    };
+
+    // Find the pane containing this panel and list all panel_ids in it
+    let pane_panel_ids = if let Some(pane) = ws.layout.find_pane_with_panel_readonly(panel_id) {
+        pane
+    } else {
+        vec![panel_id]
+    };
+
+    let surfaces: Vec<Value> = pane_panel_ids
+        .iter()
+        .map(|&pid| {
+            let panel = ws.panels.get(&pid);
+            serde_json::json!({
+                "id": pid.to_string(),
+                "type": panel.map(|p| match p.panel_type {
+                    crate::model::PanelType::Terminal => "terminal",
+                    crate::model::PanelType::Browser => "browser",
+                }).unwrap_or("unknown"),
+                "title": panel.map(|p| p.display_title()).unwrap_or("?"),
+                "focused": ws.focused_panel_id == Some(pid),
+            })
+        })
+        .collect();
+
+    Response::success(id, serde_json::json!({"surfaces": surfaces}))
+}
+
+// -----------------------------------------------------------------------
+// surface.drag_to_split — move a surface into a new split pane
+// -----------------------------------------------------------------------
+
+fn handle_surface_drag_to_split(
+    id: Value,
+    params: &Value,
+    state: &Arc<SharedState>,
+) -> Response {
+    use crate::model::panel::Direction;
+
+    let panel_id = match resolve_panel_id(&id, params, state) {
+        Ok(pid) => pid,
+        Err(resp) => return resp,
+    };
+
+    let dir_str = params.get("direction").and_then(|v| v.as_str());
+    let Some(dir_str) = dir_str else {
+        return Response::error(
+            id,
+            "invalid_params",
+            "Provide 'direction': left, right, up, down",
+        );
+    };
+
+    let direction = match dir_str {
+        "left" => Direction::Left,
+        "right" => Direction::Right,
+        "up" => Direction::Up,
+        "down" => Direction::Down,
+        _ => {
+            return Response::error(
+                id,
+                "invalid_params",
+                "direction must be: left, right, up, down",
+            )
+        }
+    };
+
+    let mut tm = lock_or_recover(&state.tab_manager);
+    let ws = tm.find_workspace_with_panel_mut(panel_id);
+    let Some(ws) = ws else {
+        return Response::error(id, "not_found", "Panel not found in any workspace");
+    };
+
+    if ws.panels.len() < 2 {
+        return Response::error(
+            id,
+            "invalid_params",
+            "Need at least 2 panels to drag to split",
+        );
+    }
+
+    if ws.drag_to_split(panel_id, direction) {
+        drop(tm);
+        state.notify_ui_refresh();
+        Response::success(
+            id,
+            serde_json::json!({
+                "panel_id": panel_id.to_string(),
+                "direction": dir_str,
+                "moved": true,
+            }),
+        )
+    } else {
+        Response::error(id, "not_found", "Could not split panel")
+    }
+}
+
+// -----------------------------------------------------------------------
+// tab.action — batch of tab/surface lifecycle actions
+// -----------------------------------------------------------------------
+
+fn handle_tab_action(id: Value, params: &Value, state: &Arc<SharedState>) -> Response {
+    let panel_id = match resolve_panel_id(&id, params, state) {
+        Ok(pid) => pid,
+        Err(resp) => return resp,
+    };
+
+    let action = params.get("action").and_then(|v| v.as_str());
+    let Some(action) = action else {
+        return Response::error(id, "invalid_params", "Provide 'action'");
+    };
+
+    let mut tm = lock_or_recover(&state.tab_manager);
+    let ws = tm.find_workspace_with_panel_mut(panel_id);
+    let Some(ws) = ws else {
+        return Response::error(id, "not_found", "Panel not found in any workspace");
+    };
+
+    match action {
+        "rename" => {
+            let title = params.get("title").and_then(|v| v.as_str());
+            let Some(title) = title else {
+                return Response::error(id, "invalid_params", "rename requires 'title'");
+            };
+            if let Some(panel) = ws.panels.get_mut(&panel_id) {
+                panel.custom_title = Some(
+                    crate::model::workspace::truncate_str(title, 1024).to_string(),
+                );
+            }
+        }
+        "clear_name" => {
+            if let Some(panel) = ws.panels.get_mut(&panel_id) {
+                panel.custom_title = None;
+            }
+        }
+        "close_left" | "close_right" | "close_others" => {
+            let pane_ids = ws.layout.find_pane_with_panel_readonly(panel_id);
+            let Some(pane_ids) = pane_ids else {
+                return Response::error(id, "not_found", "Panel not in any pane");
+            };
+            let pos = pane_ids
+                .iter()
+                .position(|&pid| pid == panel_id)
+                .unwrap_or(0);
+            let to_close: Vec<uuid::Uuid> = match action {
+                "close_left" => pane_ids[..pos].to_vec(),
+                "close_right" => {
+                    if pos + 1 < pane_ids.len() {
+                        pane_ids[pos + 1..].to_vec()
+                    } else {
+                        vec![]
+                    }
+                }
+                "close_others" => pane_ids
+                    .iter()
+                    .filter(|&&pid| pid != panel_id)
+                    .copied()
+                    .collect(),
+                _ => vec![],
+            };
+            for pid in &to_close {
+                ws.panels.remove(pid);
+                ws.layout.remove_panel(*pid);
+            }
+            // Update focus
+            if let Some(focused) = ws.focused_panel_id {
+                if to_close.contains(&focused) {
+                    ws.focused_panel_id = Some(panel_id);
+                }
+            }
+            let ws_empty = ws.is_empty();
+            let ws_id = ws.id;
+            if ws_empty {
+                tm.remove_by_id(ws_id);
+            }
+            drop(tm);
+            state.notify_ui_refresh();
+            return Response::success(
+                id,
+                serde_json::json!({"closed": to_close.len()}),
+            );
+        }
+        "pin" => {
+            if let Some(panel) = ws.panels.get_mut(&panel_id) {
+                panel.is_pinned = true;
+            }
+        }
+        "unpin" => {
+            if let Some(panel) = ws.panels.get_mut(&panel_id) {
+                panel.is_pinned = false;
+            }
+        }
+        "mark_read" => {
+            if let Some(panel) = ws.panels.get_mut(&panel_id) {
+                panel.is_manually_unread = false;
+            }
+        }
+        "mark_unread" => {
+            if let Some(panel) = ws.panels.get_mut(&panel_id) {
+                panel.is_manually_unread = true;
+            }
+        }
+        "duplicate" => {
+            let new_panel = crate::model::Panel::new_terminal();
+            let new_id = new_panel.id;
+            ws.panels.insert(new_id, new_panel);
+            ws.layout.add_panel_to_pane(panel_id, new_id);
+            ws.previous_focused_panel_id = ws.focused_panel_id;
+            ws.focused_panel_id = Some(new_id);
+            drop(tm);
+            state.notify_ui_refresh();
+            return Response::success(
+                id,
+                serde_json::json!({
+                    "panel_id": new_id.to_string(),
+                    "duplicated": true,
+                }),
+            );
+        }
+        _ => {
+            return Response::error(
+                id,
+                "invalid_params",
+                "Unknown action. Use: rename, clear_name, close_left, close_right, close_others, pin, unpin, mark_read, mark_unread, duplicate",
+            );
+        }
+    }
+
+    drop(tm);
+    state.notify_ui_refresh();
+    Response::success(id, serde_json::json!({"ok": true}))
 }
 
 /// Resolve a panel UUID from `panel` or `surface` params, falling back to the

@@ -266,6 +266,59 @@ impl Workspace {
         true
     }
 
+    /// Move a panel into a new split adjacent to the focused pane.
+    /// The panel is removed from its current pane and placed in a new
+    /// split in the given direction.
+    pub fn drag_to_split(
+        &mut self,
+        panel_id: Uuid,
+        direction: super::panel::Direction,
+    ) -> bool {
+        use super::panel::Direction;
+
+        if !self.panels.contains_key(&panel_id) {
+            return false;
+        }
+
+        let orientation = match direction {
+            Direction::Left | Direction::Right => SplitOrientation::Horizontal,
+            Direction::Up | Direction::Down => SplitOrientation::Vertical,
+        };
+
+        // Determine the target pane (focused panel's pane, or if the dragged
+        // panel IS the focused panel, pick the first other panel's pane).
+        let target_panel_id = if self.focused_panel_id == Some(panel_id) {
+            self.layout
+                .all_panel_ids()
+                .into_iter()
+                .find(|&id| id != panel_id)
+        } else {
+            self.focused_panel_id
+        };
+
+        let Some(target_panel_id) = target_panel_id else {
+            return false; // Can't split — only one panel
+        };
+
+        // Remove the panel from its current position in the layout
+        self.layout.remove_panel(panel_id);
+
+        // Split the target pane with the panel
+        if !self.layout.split_pane_with_panel(
+            target_panel_id,
+            panel_id,
+            orientation,
+            direction,
+        ) {
+            // Fallback: re-add as a tab (shouldn't happen, but be safe)
+            self.layout.add_panel_to_pane(target_panel_id, panel_id);
+        }
+
+        self.previous_focused_panel_id = self.focused_panel_id;
+        self.focused_panel_id = Some(panel_id);
+        true
+    }
+
     /// Get a reference to a panel by ID.
     pub fn panel(&self, id: Uuid) -> Option<&Panel> {
         self.panels.get(&id)
