@@ -18,7 +18,7 @@ pub fn build_zoomed(
     state: &Rc<AppState>,
 ) -> gtk4::Widget {
     if let Some(panel) = panels.get(&panel_id) {
-        terminal_panel::create_panel_widget(panel, false, state)
+        terminal_panel::create_panel_widget(panel, false, true, state)
     } else {
         gtk4::Label::new(Some("Panel not found")).upcast()
     }
@@ -33,6 +33,7 @@ pub fn build_layout(
     node: &LayoutNode,
     panels: &HashMap<Uuid, Panel>,
     attention_panel_id: Option<Uuid>,
+    focused_panel_id: Option<Uuid>,
     state: &Rc<AppState>,
 ) -> gtk4::Widget {
     match node {
@@ -44,6 +45,7 @@ pub fn build_layout(
             *selected_panel_id,
             panels,
             attention_panel_id,
+            focused_panel_id,
             state,
         ),
 
@@ -60,6 +62,7 @@ pub fn build_layout(
             second,
             panels,
             attention_panel_id,
+            focused_panel_id,
             state,
         ),
     }
@@ -71,6 +74,7 @@ fn build_pane(
     selected_id: Option<Uuid>,
     panels: &HashMap<Uuid, Panel>,
     attention_panel_id: Option<Uuid>,
+    focused_panel_id: Option<Uuid>,
     state: &Rc<AppState>,
 ) -> gtk4::Widget {
     if panel_ids.is_empty() {
@@ -85,9 +89,11 @@ fn build_pane(
         // Single panel — no tabs needed
         let panel_id = panel_ids[0];
         if let Some(panel) = panels.get(&panel_id) {
+            let is_focused = focused_panel_id == Some(panel_id);
             return terminal_panel::create_panel_widget(
                 panel,
                 attention_panel_id == Some(panel_id),
+                is_focused,
                 state,
             );
         }
@@ -102,9 +108,11 @@ fn build_pane(
 
     for &panel_id in panel_ids {
         if let Some(panel) = panels.get(&panel_id) {
+            let is_focused = focused_panel_id == Some(panel_id);
             let widget = terminal_panel::create_panel_widget(
                 panel,
                 attention_panel_id == Some(panel_id),
+                is_focused,
                 state,
             );
             let page = stack.add_child(&widget);
@@ -132,6 +140,7 @@ fn build_pane(
 }
 
 /// Build a split widget (GtkPaned with two children).
+#[allow(clippy::too_many_arguments)]
 fn build_split(
     workspace_id: Uuid,
     orientation: SplitOrientation,
@@ -140,6 +149,7 @@ fn build_split(
     second: &LayoutNode,
     panels: &HashMap<Uuid, Panel>,
     attention_panel_id: Option<Uuid>,
+    focused_panel_id: Option<Uuid>,
     state: &Rc<AppState>,
 ) -> gtk4::Widget {
     let gtk_orientation = match orientation {
@@ -154,8 +164,10 @@ fn build_split(
 
     let first_panel_ids = first.all_panel_ids();
     let second_panel_ids = second.all_panel_ids();
-    let first_widget = build_layout(workspace_id, first, panels, attention_panel_id, state);
-    let second_widget = build_layout(workspace_id, second, panels, attention_panel_id, state);
+    let first_widget =
+        build_layout(workspace_id, first, panels, attention_panel_id, focused_panel_id, state);
+    let second_widget =
+        build_layout(workspace_id, second, panels, attention_panel_id, focused_panel_id, state);
 
     paned.set_start_child(Some(&first_widget));
     paned.set_end_child(Some(&second_widget));

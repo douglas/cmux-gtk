@@ -183,15 +183,25 @@ pub fn rebuild_content(content_box: &gtk4::Box, state: &Rc<AppState>) {
                     ws.panels.clone(),
                     ws.attention_panel_id,
                     ws.zoomed_panel_id,
+                    ws.focused_panel_id,
                 )
             })
         };
 
-        if let Some((id, layout, panels, attention_panel_id, zoomed_panel_id)) = workspace_data {
+        if let Some((id, layout, panels, attention_panel_id, zoomed_panel_id, focused_panel_id)) =
+            workspace_data
+        {
             let widget = if let Some(zoomed_id) = zoomed_panel_id {
                 split_view::build_zoomed(zoomed_id, &panels, &state)
             } else {
-                split_view::build_layout(id, &layout, &panels, attention_panel_id, &state)
+                split_view::build_layout(
+                    id,
+                    &layout,
+                    &panels,
+                    attention_panel_id,
+                    focused_panel_id,
+                    &state,
+                )
             };
             content_box.append(&widget);
         } else {
@@ -289,11 +299,27 @@ fn bind_shared_state_updates(
                     UiEvent::TriggerFlash { panel_id } => {
                         if let Some(surface) = state.terminal_cache.borrow().get(&panel_id) {
                             let widget = surface.clone().upcast::<gtk4::Widget>();
+                            // Two-phase pulse: on → off → on → off
                             widget.add_css_class("flash-panel");
+                            let w = widget.clone();
                             glib::timeout_add_local_once(
-                                std::time::Duration::from_millis(300),
+                                std::time::Duration::from_millis(200),
                                 move || {
-                                    widget.remove_css_class("flash-panel");
+                                    w.remove_css_class("flash-panel");
+                                    let w2 = w.clone();
+                                    glib::timeout_add_local_once(
+                                        std::time::Duration::from_millis(150),
+                                        move || {
+                                            w2.add_css_class("flash-panel");
+                                            let w3 = w2.clone();
+                                            glib::timeout_add_local_once(
+                                                std::time::Duration::from_millis(200),
+                                                move || {
+                                                    w3.remove_css_class("flash-panel");
+                                                },
+                                            );
+                                        },
+                                    );
                                 },
                             );
                         }
@@ -577,16 +603,9 @@ fn setup_shortcuts(
                     tm.selected().and_then(|ws| ws.focused_panel_id)
                 };
                 if let Some(panel_id) = panel_id {
-                    if let Some(surface) = state.terminal_cache.borrow().get(&panel_id) {
-                        let widget = surface.clone().upcast::<gtk4::Widget>();
-                        widget.add_css_class("flash-panel");
-                        glib::timeout_add_local_once(
-                            std::time::Duration::from_millis(300),
-                            move || {
-                                widget.remove_css_class("flash-panel");
-                            },
-                        );
-                    }
+                    state
+                        .shared
+                        .send_ui_event(crate::app::UiEvent::TriggerFlash { panel_id });
                 }
                 glib::Propagation::Stop
             }
@@ -739,6 +758,30 @@ fn setup_shortcuts(
                     }
                 }
                 drop(tm);
+                refresh_ui(&list_box, &content_box, &state);
+                glib::Propagation::Stop
+            }
+            // Ctrl+Tab: Next workspace
+            (gdk4::Key::Tab, true, false) => {
+                let mut tm = lock_or_recover(&state.shared.tab_manager);
+                tm.select_next(true);
+                let ws_id = tm.selected_id();
+                drop(tm);
+                if let Some(workspace_id) = ws_id {
+                    mark_workspace_read(&state, workspace_id);
+                }
+                refresh_ui(&list_box, &content_box, &state);
+                glib::Propagation::Stop
+            }
+            // Ctrl+Shift+Tab: Previous workspace
+            (gdk4::Key::ISO_Left_Tab, true, true) => {
+                let mut tm = lock_or_recover(&state.shared.tab_manager);
+                tm.select_previous(true);
+                let ws_id = tm.selected_id();
+                drop(tm);
+                if let Some(workspace_id) = ws_id {
+                    mark_workspace_read(&state, workspace_id);
+                }
                 refresh_ui(&list_box, &content_box, &state);
                 glib::Propagation::Stop
             }
@@ -925,6 +968,16 @@ fn install_css() {
         .notification-timestamp {
             color: alpha(@theme_fg_color, 0.45);
             font-size: 0.85em;
+        }
+
+        /* ── Inactive pane overlay ── */
+        .inactive-pane-overlay {
+            background-color: alpha(black, 0.12);
+        }
+
+        /* ── Focused panel indicator ── */
+        .focused-panel {
+            border-color: alpha(@accent_color, 0.5);
         }
 
         /* ── Flash panel ── */
