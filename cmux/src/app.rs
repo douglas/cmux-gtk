@@ -131,7 +131,7 @@ impl AppState {
 }
 
 /// Messages from background tasks that require a UI refresh.
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 pub enum UiEvent {
     Refresh,
     SendInput { panel_id: Uuid, text: String },
@@ -141,6 +141,16 @@ pub enum UiEvent {
     EndSearch,
     OpenSettings,
     TriggerFlash { panel_id: Uuid },
+    SendKey {
+        panel_id: Uuid,
+        keyval: u32,
+        keycode: u32,
+        mods: u32,
+    },
+    ReadText {
+        panel_id: Uuid,
+        reply: tokio::sync::oneshot::Sender<Option<String>>,
+    },
 }
 
 /// Thread-safe state shared between GTK main thread and socket server.

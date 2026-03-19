@@ -759,6 +759,118 @@ impl GhosttyGlSurface {
         }
     }
 
+    /// Send a synthetic key event to the terminal surface.
+    ///
+    /// `keyval` is a GDK keyval (e.g. from `gdk4::Key::from_name`).
+    /// `mods` is a ghostty modifier bitmask.
+    pub fn send_key(&self, keyval: u32, keycode: u32, mods: u32) -> bool {
+        let surface = self.imp().surface.get();
+        if surface.is_null() {
+            return false;
+        }
+
+        // Build the text pointer for printable keys
+        let key: gdk4::Key = unsafe { glib::translate::from_glib(keyval) };
+        let mut text_buf = [0u8; 8];
+        let text_ptr = if mods == 0 || mods == ghostty_sys::ghostty_input_mods_e::GHOSTTY_MODS_SHIFT as u32 {
+            if let Some(ch) = key.to_unicode() {
+                if ch >= '\x20' {
+                    let len = ch.encode_utf8(&mut text_buf).len();
+                    text_buf[len] = 0;
+                    text_buf.as_ptr() as *const c_char
+                } else {
+                    ptr::null()
+                }
+            } else {
+                ptr::null()
+            }
+        } else {
+            ptr::null()
+        };
+
+        let unshifted_codepoint = key.to_lower().to_unicode().map(|c| c as u32).unwrap_or(0);
+
+        let key_event = ghostty_input_key_s {
+            action: ghostty_input_action_e::GHOSTTY_ACTION_PRESS,
+            mods,
+            consumed_mods: 0,
+            keycode,
+            text: text_ptr,
+            unshifted_codepoint,
+            composing: false,
+        };
+
+        #[cfg(feature = "link-ghostty")]
+        unsafe {
+            ghostty_surface_key(surface, key_event)
+        }
+
+        #[cfg(not(feature = "link-ghostty"))]
+        {
+            let _ = key_event;
+            false
+        }
+    }
+
+    /// Read the visible screen text from the terminal.
+    ///
+    /// Returns the full viewport text, or `None` if the surface is not ready.
+    pub fn read_screen_text(&self) -> Option<String> {
+        let surface = self.imp().surface.get();
+        if surface.is_null() {
+            return None;
+        }
+
+        #[cfg(feature = "link-ghostty")]
+        unsafe {
+            use ghostty_sys::*;
+
+            let size = ghostty_surface_size(surface);
+            if size.columns == 0 || size.rows == 0 {
+                return Some(String::new());
+            }
+
+            let selection = ghostty_selection_s {
+                top_left: ghostty_point_s {
+                    tag: ghostty_point_tag_e::GHOSTTY_POINT_VIEWPORT,
+                    coord: ghostty_point_coord_e::GHOSTTY_POINT_COORD_TOP_LEFT,
+                    x: 0,
+                    y: 0,
+                },
+                bottom_right: ghostty_point_s {
+                    tag: ghostty_point_tag_e::GHOSTTY_POINT_VIEWPORT,
+                    coord: ghostty_point_coord_e::GHOSTTY_POINT_COORD_BOTTOM_RIGHT,
+                    x: size.columns as u32 - 1,
+                    y: size.rows as u32 - 1,
+                },
+                rectangle: false,
+            };
+
+            let mut text_out = std::mem::zeroed::<ghostty_text_s>();
+            if !ghostty_surface_read_text(surface, selection, &mut text_out) {
+                return Some(String::new());
+            }
+
+            let result = if text_out.text.is_null() || text_out.text_len == 0 {
+                String::new()
+            } else {
+                let slice = std::slice::from_raw_parts(
+                    text_out.text as *const u8,
+                    text_out.text_len,
+                );
+                String::from_utf8_lossy(slice).into_owned()
+            };
+
+            ghostty_surface_free_text(surface, &mut text_out);
+            Some(result)
+        }
+
+        #[cfg(not(feature = "link-ghostty"))]
+        {
+            Some(String::new())
+        }
+    }
+
     /// Send text input to the terminal (e.g., from IME commit).
     pub fn send_text(&self, text: &str) -> bool {
         let surface = self.imp().surface.get();
