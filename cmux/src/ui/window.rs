@@ -1002,6 +1002,12 @@ fn show_rename_tab_dialog(
 }
 
 fn install_css() {
+    // Ensure Adwaita legacy icons (terminal, browser, etc.) resolve on all systems.
+    if let Some(display) = gdk4::Display::default() {
+        let icon_theme = gtk4::IconTheme::for_display(&display);
+        icon_theme.add_search_path("/usr/share/icons/Adwaita");
+    }
+
     let provider = gtk4::CssProvider::new();
     provider.load_from_data(
         "
@@ -1032,7 +1038,13 @@ fn install_css() {
 
         /* ── Workspace type icon ── */
         .workspace-type-icon {
-            opacity: 0.5;
+            opacity: 0.7;
+        }
+
+        /* ── Hover highlight on rows ── */
+        .workspace-row:hover,
+        .workspace-row-colored:hover {
+            background-color: alpha(@theme_fg_color, 0.04);
         }
 
         /* ── Selected row — solid accent highlight with white text ── */
@@ -1106,6 +1118,15 @@ fn install_css() {
             opacity: 0.5;
         }
         .pane-tab-close:hover {
+            opacity: 1;
+        }
+        .pane-tab-action {
+            min-width: 20px;
+            min-height: 20px;
+            padding: 2px;
+            opacity: 0.5;
+        }
+        .pane-tab-action:hover {
             opacity: 1;
         }
 

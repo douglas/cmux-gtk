@@ -41,6 +41,7 @@ pub fn build_layout(
             panel_ids,
             selected_panel_id,
         } => build_pane(
+            workspace_id,
             panel_ids,
             *selected_panel_id,
             panels,
@@ -69,7 +70,11 @@ pub fn build_layout(
 }
 
 /// Build a pane widget (single or tabbed panels).
+///
+/// Always shows a tab bar with action buttons, even for single-panel panes.
+#[allow(clippy::too_many_arguments)]
 fn build_pane(
+    workspace_id: Uuid,
     panel_ids: &[Uuid],
     selected_id: Option<Uuid>,
     panels: &HashMap<Uuid, Panel>,
@@ -85,23 +90,7 @@ fn build_pane(
         return label.upcast();
     }
 
-    if panel_ids.len() == 1 {
-        // Single panel — no tabs needed
-        let panel_id = panel_ids[0];
-        if let Some(panel) = panels.get(&panel_id) {
-            let is_focused = focused_panel_id == Some(panel_id);
-            return terminal_panel::create_panel_widget(
-                panel,
-                attention_panel_id == Some(panel_id),
-                is_focused,
-                state,
-            );
-        }
-        let label = gtk4::Label::new(Some("Panel not found"));
-        return label.upcast();
-    }
-
-    // Multiple panels — use GtkStack with custom tab bar
+    // Always use GtkStack (even for single panel) so tab bar logic is uniform
     let stack = gtk4::Stack::new();
     stack.set_hexpand(true);
     stack.set_vexpand(true);
@@ -128,37 +117,132 @@ fn build_pane(
 
     let vbox = gtk4::Box::new(gtk4::Orientation::Vertical, 0);
 
-    // Build custom tab bar with close buttons and drag-drop reorder
-    if panel_ids.len() > 1 {
-        let tab_bar = gtk4::Box::new(gtk4::Orientation::Horizontal, 0);
-        tab_bar.add_css_class("pane-tab-bar");
+    // Tab bar — always shown (action buttons are always accessible)
+    let tab_bar = gtk4::Box::new(gtk4::Orientation::Horizontal, 0);
+    tab_bar.add_css_class("pane-tab-bar");
 
-        for (tab_index, &panel_id) in panel_ids.iter().enumerate() {
-            let title = panels
-                .get(&panel_id)
-                .map(|p| p.display_title().to_string())
-                .unwrap_or_else(|| "?".to_string());
-            let is_selected = selected_id == Some(panel_id);
+    for (tab_index, &panel_id) in panel_ids.iter().enumerate() {
+        let title = panels
+            .get(&panel_id)
+            .map(|p| p.display_title().to_string())
+            .unwrap_or_else(|| "?".to_string());
+        let is_selected = selected_id == Some(panel_id);
 
-            let panel_type = panels
-                .get(&panel_id)
-                .map(|p| p.panel_type)
-                .unwrap_or(PanelType::Terminal);
-            let tab_btn = build_tab_button(
-                panel_id,
-                tab_index,
-                &title,
-                is_selected,
-                panel_type,
-                &stack,
-                state,
-            );
-            tab_bar.append(&tab_btn);
-        }
-
-        vbox.append(&tab_bar);
+        let panel_type = panels
+            .get(&panel_id)
+            .map(|p| p.panel_type)
+            .unwrap_or(PanelType::Terminal);
+        let tab_btn = build_tab_button(
+            panel_id,
+            tab_index,
+            &title,
+            is_selected,
+            panel_type,
+            &stack,
+            state,
+        );
+        tab_bar.append(&tab_btn);
     }
 
+    // Spacer to push action buttons to the right
+    let spacer = gtk4::Box::new(gtk4::Orientation::Horizontal, 0);
+    spacer.set_hexpand(true);
+    tab_bar.append(&spacer);
+
+    // Target panel for "add tab" actions (selected or first)
+    let target_panel_id = selected_id.or_else(|| panel_ids.first().copied());
+
+    // New Terminal button
+    let new_term_btn = gtk4::Button::from_icon_name("utilities-terminal-symbolic");
+    new_term_btn.add_css_class("flat");
+    new_term_btn.add_css_class("circular");
+    new_term_btn.add_css_class("pane-tab-action");
+    new_term_btn.set_tooltip_text(Some("New Terminal"));
+    {
+        let state = Rc::clone(state);
+        new_term_btn.connect_clicked(move |_| {
+            let new_panel = Panel::new_terminal();
+            let new_id = new_panel.id;
+            let mut tm = lock_or_recover(&state.shared.tab_manager);
+            if let Some(ws) = tm.workspace_mut(workspace_id) {
+                ws.panels.insert(new_id, new_panel);
+                if let Some(tid) = target_panel_id {
+                    ws.layout.add_panel_to_pane(tid, new_id);
+                }
+                ws.previous_focused_panel_id = ws.focused_panel_id;
+                ws.focused_panel_id = Some(new_id);
+            }
+            drop(tm);
+            state.shared.notify_ui_refresh();
+        });
+    }
+    tab_bar.append(&new_term_btn);
+
+    // New Browser button
+    let new_browser_btn = gtk4::Button::from_icon_name("web-browser-symbolic");
+    new_browser_btn.add_css_class("flat");
+    new_browser_btn.add_css_class("circular");
+    new_browser_btn.add_css_class("pane-tab-action");
+    new_browser_btn.set_tooltip_text(Some("New Browser"));
+    {
+        let state = Rc::clone(state);
+        new_browser_btn.connect_clicked(move |_| {
+            let new_panel = Panel::new_browser();
+            let new_id = new_panel.id;
+            let mut tm = lock_or_recover(&state.shared.tab_manager);
+            if let Some(ws) = tm.workspace_mut(workspace_id) {
+                ws.panels.insert(new_id, new_panel);
+                if let Some(tid) = target_panel_id {
+                    ws.layout.add_panel_to_pane(tid, new_id);
+                }
+                ws.previous_focused_panel_id = ws.focused_panel_id;
+                ws.focused_panel_id = Some(new_id);
+            }
+            drop(tm);
+            state.shared.notify_ui_refresh();
+        });
+    }
+    tab_bar.append(&new_browser_btn);
+
+    // Split Right button
+    let split_h_btn = gtk4::Button::from_icon_name("view-dual-symbolic");
+    split_h_btn.add_css_class("flat");
+    split_h_btn.add_css_class("circular");
+    split_h_btn.add_css_class("pane-tab-action");
+    split_h_btn.set_tooltip_text(Some("Split Right"));
+    {
+        let state = Rc::clone(state);
+        split_h_btn.connect_clicked(move |_| {
+            let mut tm = lock_or_recover(&state.shared.tab_manager);
+            if let Some(ws) = tm.workspace_mut(workspace_id) {
+                ws.split(SplitOrientation::Horizontal, PanelType::Terminal);
+            }
+            drop(tm);
+            state.shared.notify_ui_refresh();
+        });
+    }
+    tab_bar.append(&split_h_btn);
+
+    // Split Down button
+    let split_v_btn = gtk4::Button::from_icon_name("view-paged-symbolic");
+    split_v_btn.add_css_class("flat");
+    split_v_btn.add_css_class("circular");
+    split_v_btn.add_css_class("pane-tab-action");
+    split_v_btn.set_tooltip_text(Some("Split Down"));
+    {
+        let state = Rc::clone(state);
+        split_v_btn.connect_clicked(move |_| {
+            let mut tm = lock_or_recover(&state.shared.tab_manager);
+            if let Some(ws) = tm.workspace_mut(workspace_id) {
+                ws.split(SplitOrientation::Vertical, PanelType::Terminal);
+            }
+            drop(tm);
+            state.shared.notify_ui_refresh();
+        });
+    }
+    tab_bar.append(&split_v_btn);
+
+    vbox.append(&tab_bar);
     vbox.append(&stack);
     vbox.set_hexpand(true);
     vbox.set_vexpand(true);
