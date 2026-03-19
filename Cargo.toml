@@ -14,12 +14,12 @@ repository = "https://github.com/manaflow-ai/cmux"
 
 [workspace.dependencies]
 # GTK4 / libadwaita
-gtk4 = { version = "0.9", features = ["v4_6"] }
-libadwaita = { version = "0.7", features = ["v1_4", "gtk_v4_6"] }
-glib = "0.20"
-gdk4 = { version = "0.9", features = ["v4_6"] }
-gio = "0.20"
-# webkit6 = "0.6"  # Requires gtk4 0.11; enable when gtk4 is upgraded
+gtk4 = { version = "0.11", features = ["v4_6"] }
+libadwaita = { version = "0.9", features = ["v1_4", "gtk_v4_6"] }
+glib = "0.22"
+gdk4 = { version = "0.11", features = ["v4_6"] }
+gio = "0.22"
+webkit6 = "0.6"
 
 # Async runtime
 tokio = { version = "1", features = ["full"] }
