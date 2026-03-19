@@ -204,6 +204,68 @@ impl Workspace {
         true
     }
 
+    /// Detach a panel from the workspace, returning it.
+    /// Removes the panel from both the panels map and the layout tree,
+    /// but does NOT destroy it — the caller can re-insert it elsewhere.
+    pub fn detach_panel(&mut self, panel_id: Uuid) -> Option<Panel> {
+        let panel = self.panels.remove(&panel_id)?;
+        self.layout.remove_panel(panel_id);
+
+        // Update focused panel if we just detached the focused one
+        if self.focused_panel_id == Some(panel_id) {
+            self.focused_panel_id = self.layout.all_panel_ids().into_iter().next();
+        }
+        if self.previous_focused_panel_id == Some(panel_id) {
+            self.previous_focused_panel_id = None;
+        }
+        if self.zoomed_panel_id == Some(panel_id) {
+            self.zoomed_panel_id = None;
+        }
+
+        Some(panel)
+    }
+
+    /// Insert a panel into the workspace by splitting the focused pane.
+    /// Returns true if the panel was inserted successfully.
+    pub fn insert_panel(
+        &mut self,
+        panel: Panel,
+        orientation: SplitOrientation,
+    ) -> bool {
+        let panel_id = panel.id;
+        self.panels.insert(panel_id, panel);
+
+        let mut split_done = false;
+        if let Some(focused_id) = self.focused_panel_id {
+            if let Some(pane) = self.layout.find_pane_with_panel(focused_id) {
+                let old = std::mem::replace(
+                    pane,
+                    LayoutNode::Pane {
+                        panel_ids: vec![],
+                        selected_panel_id: None,
+                    },
+                );
+                *pane = old.split(orientation, panel_id);
+                split_done = true;
+            }
+        }
+
+        if !split_done {
+            let old = std::mem::replace(
+                &mut self.layout,
+                LayoutNode::Pane {
+                    panel_ids: vec![],
+                    selected_panel_id: None,
+                },
+            );
+            self.layout = old.split(orientation, panel_id);
+        }
+
+        self.previous_focused_panel_id = self.focused_panel_id;
+        self.focused_panel_id = Some(panel_id);
+        true
+    }
+
     /// Get a reference to a panel by ID.
     pub fn panel(&self, id: Uuid) -> Option<&Panel> {
         self.panels.get(&id)
