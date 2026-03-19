@@ -1,16 +1,16 @@
-//! Browser panel — embedded browser or external browser fallback.
-//!
-//! WebKit2GTK integration (webkit6 crate) requires gtk4 0.11+.
-//! Until the gtk4 dependency is upgraded, this module provides a URL entry
-//! that opens pages in the system default browser, with a preview area.
+//! Browser panel — embedded WebKit browser (webkit6 / WebKitGTK 6.0).
 
 use gtk4::prelude::*;
+use webkit6::prelude::*;
 
-/// Create a browser panel widget.
+/// Create an embedded browser panel widget.
 ///
-/// Currently a URL entry + "Open in Browser" button since webkit6 requires
-/// gtk4 0.11 (we're on 0.9). The address bar and navigation structure is
-/// ready for WebKitWebView integration.
+/// Layout:
+/// ```text
+/// VBox:
+///   ├─ nav_bar (HBox): [back] [fwd] [reload/stop] [url_entry]
+///   └─ web_view (WebView): fills remaining space
+/// ```
 pub fn create_browser_widget(
     panel_id: uuid::Uuid,
     initial_url: Option<&str>,
@@ -31,6 +31,20 @@ pub fn create_browser_widget(
     nav_bar.set_margin_top(4);
     nav_bar.set_margin_bottom(2);
 
+    let back_btn = gtk4::Button::from_icon_name("go-previous-symbolic");
+    back_btn.set_tooltip_text(Some("Back"));
+    back_btn.set_sensitive(false);
+    nav_bar.append(&back_btn);
+
+    let fwd_btn = gtk4::Button::from_icon_name("go-next-symbolic");
+    fwd_btn.set_tooltip_text(Some("Forward"));
+    fwd_btn.set_sensitive(false);
+    nav_bar.append(&fwd_btn);
+
+    let reload_btn = gtk4::Button::from_icon_name("view-refresh-symbolic");
+    reload_btn.set_tooltip_text(Some("Reload"));
+    nav_bar.append(&reload_btn);
+
     let url_entry = gtk4::Entry::new();
     url_entry.set_hexpand(true);
     url_entry.set_placeholder_text(Some("Enter URL..."));
@@ -39,61 +53,158 @@ pub fn create_browser_widget(
     }
     nav_bar.append(&url_entry);
 
-    let open_btn = gtk4::Button::with_label("Open");
-    open_btn.add_css_class("suggested-action");
-    nav_bar.append(&open_btn);
-
     container.append(&nav_bar);
 
-    // ── Info area ──
-    let info_box = gtk4::Box::new(gtk4::Orientation::Vertical, 8);
-    info_box.set_hexpand(true);
-    info_box.set_vexpand(true);
-    info_box.set_valign(gtk4::Align::Center);
-    info_box.set_halign(gtk4::Align::Center);
+    // ── WebView ──
+    let web_view = webkit6::WebView::new();
+    web_view.set_hexpand(true);
+    web_view.set_vexpand(true);
 
-    let icon = gtk4::Image::from_icon_name("web-browser-symbolic");
-    icon.set_pixel_size(48);
-    icon.add_css_class("dim-label");
-    info_box.append(&icon);
+    // Apply dark mode stylesheet if system is dark
+    apply_dark_mode(&web_view);
 
-    let label = gtk4::Label::new(Some("Browser Panel"));
-    label.add_css_class("title-3");
-    info_box.append(&label);
+    container.append(&web_view);
 
-    let subtitle = gtk4::Label::new(Some(
-        "Enter a URL above and press Enter or click Open.\nPages open in your default browser.",
-    ));
-    subtitle.add_css_class("dim-label");
-    subtitle.set_justify(gtk4::Justification::Center);
-    info_box.append(&subtitle);
-
-    container.append(&info_box);
-
-    // ── Wire navigation ──
+    // ── Wire navigation buttons ──
     {
-        let entry = url_entry.clone();
-        open_btn.connect_clicked(move |_| {
-            open_url(&entry.text());
+        let wv = web_view.clone();
+        back_btn.connect_clicked(move |_| {
+            wv.go_back();
         });
     }
     {
-        url_entry.connect_activate(move |entry| {
-            open_url(&entry.text());
+        let wv = web_view.clone();
+        fwd_btn.connect_clicked(move |_| {
+            wv.go_forward();
         });
+    }
+    {
+        let wv = web_view.clone();
+        reload_btn.connect_clicked(move |btn| {
+            if wv.is_loading() {
+                wv.stop_loading();
+                btn.set_icon_name("view-refresh-symbolic");
+                btn.set_tooltip_text(Some("Reload"));
+            } else {
+                wv.reload();
+            }
+        });
+    }
+
+    // ── URL entry navigation ──
+    {
+        let wv = web_view.clone();
+        url_entry.connect_activate(move |entry| {
+            let url = normalize_url(&entry.text());
+            wv.load_uri(&url);
+        });
+    }
+
+    // ── Load-changed signal: update URL bar + button sensitivity ──
+    {
+        let entry = url_entry.clone();
+        let back = back_btn.clone();
+        let fwd = fwd_btn.clone();
+        let reload = reload_btn.clone();
+        web_view.connect_load_changed(move |wv, event| {
+            back.set_sensitive(wv.can_go_back());
+            fwd.set_sensitive(wv.can_go_forward());
+
+            match event {
+                webkit6::LoadEvent::Started => {
+                    reload.set_icon_name("process-stop-symbolic");
+                    reload.set_tooltip_text(Some("Stop"));
+                }
+                webkit6::LoadEvent::Finished => {
+                    reload.set_icon_name("view-refresh-symbolic");
+                    reload.set_tooltip_text(Some("Reload"));
+                }
+                _ => {}
+            }
+
+            if let Some(uri) = wv.uri() {
+                entry.set_text(&uri);
+            }
+        });
+    }
+
+    // ── Title notify: update URL entry on title change (optional feedback) ──
+    {
+        let _entry = url_entry.clone();
+        web_view.connect_title_notify(move |wv| {
+            // Title is available for model updates — the panel title sync
+            // is handled by the caller via periodic model refresh.
+            let _title = wv.title();
+        });
+    }
+
+    // ── URI notify: keep URL bar in sync ──
+    {
+        let entry = url_entry;
+        web_view.connect_uri_notify(move |wv| {
+            if let Some(uri) = wv.uri() {
+                entry.set_text(&uri);
+            }
+        });
+    }
+
+    // ── Load initial URL ──
+    let url = initial_url.map(normalize_url);
+    if let Some(ref url) = url {
+        if url != "about:blank" {
+            web_view.load_uri(url);
+        }
     }
 
     container.set_widget_name(&panel_id.to_string());
     container.upcast()
 }
 
-fn open_url(input: &str) {
-    let url = normalize_url(input);
-    if url == "about:blank" {
-        return;
+/// Apply a dark-mode user stylesheet if the system prefers dark.
+fn apply_dark_mode(web_view: &webkit6::WebView) {
+    let style_manager = libadwaita::StyleManager::default();
+    let is_dark = style_manager.is_dark();
+
+    if is_dark {
+        inject_dark_stylesheet(web_view);
     }
-    if let Err(e) = std::process::Command::new("xdg-open").arg(&url).spawn() {
-        tracing::warn!("Failed to open URL: {}", e);
+
+    // React to theme changes at runtime
+    let wv = web_view.clone();
+    style_manager.connect_dark_notify(move |sm: &libadwaita::StyleManager| {
+        let ucm = wv.user_content_manager().unwrap();
+        ucm.remove_all_style_sheets();
+        if sm.is_dark() {
+            inject_dark_stylesheet(&wv);
+        }
+    });
+}
+
+fn inject_dark_stylesheet(web_view: &webkit6::WebView) {
+    let dark_css = r#"
+        @media (prefers-color-scheme: light) {
+            :root {
+                color-scheme: dark;
+            }
+            html {
+                filter: invert(0.88) hue-rotate(180deg);
+            }
+            img, video, canvas, svg, [style*="background-image"] {
+                filter: invert(1) hue-rotate(180deg);
+            }
+        }
+    "#;
+
+    let stylesheet = webkit6::UserStyleSheet::new(
+        dark_css,
+        webkit6::UserContentInjectedFrames::AllFrames,
+        webkit6::UserStyleLevel::User,
+        &[],
+        &[],
+    );
+
+    if let Some(ucm) = web_view.user_content_manager() {
+        ucm.add_style_sheet(&stylesheet);
     }
 }
 
