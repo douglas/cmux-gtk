@@ -7,10 +7,12 @@ use libadwaita as adw;
 use libadwaita::prelude::*;
 use tokio::sync::mpsc::UnboundedReceiver;
 
+use std::cell::Cell;
+
 use crate::app::{lock_or_recover, AppState, UiEvent};
 use crate::model::panel::SplitOrientation;
 use crate::model::{PanelType, Workspace};
-use crate::ui::{sidebar, split_view};
+use crate::ui::{notifications_panel, search_overlay, sidebar, split_view};
 
 /// Create the main application window.
 pub fn create_window(
@@ -43,8 +45,21 @@ pub fn create_window(
     content_box.set_vexpand(true);
     rebuild_content(&content_box, state);
 
-    let content_page = adw::NavigationPage::new(&content_box, "Terminal");
+    // Search overlay wraps the content area
+    let search = search_overlay::create_search_overlay(&content_box.clone().upcast(), state);
+    let search_bar = search.search_bar.clone();
+    let search_entry = search.entry.clone();
+    let search_count_label = search.count_label.clone();
+    let search_state = search.state.clone();
+
+    let content_page = adw::NavigationPage::new(&search.overlay, "Terminal");
     split_view.set_content(Some(&content_page));
+
+    // Notification panel — replaces sidebar when toggled
+    let notif_panel = notifications_panel::create_notifications_panel(state);
+    let notif_root = notif_panel.root.clone();
+    let notif_page = adw::NavigationPage::new(&notif_root, "Notifications");
+    let showing_notifications: Rc<Cell<bool>> = Rc::new(Cell::new(false));
 
     bind_sidebar_selection(&list_box, &content_box, state);
     bind_shared_state_updates(&list_box, &content_box, state, ui_events);
@@ -100,7 +115,21 @@ pub fn create_window(
     outer_box.append(&split_view);
 
     window.set_content(Some(&outer_box));
-    setup_shortcuts(&window, state, &list_box, &content_box);
+    setup_shortcuts(
+        &window,
+        state,
+        &list_box,
+        &content_box,
+        &search_bar,
+        &search_entry,
+        &search_count_label,
+        &search_state,
+        &split_view,
+        &sidebar_page,
+        &notif_page,
+        &showing_notifications,
+        &notif_panel,
+    );
 
     {
         let state = state.clone();
@@ -223,6 +252,13 @@ fn bind_shared_state_updates(
                             );
                         }
                     }
+                    // Search events are handled but we don't have the search
+                    // overlay widget refs here. The search overlay reads state
+                    // directly via its own callbacks.
+                    UiEvent::StartSearch
+                    | UiEvent::EndSearch
+                    | UiEvent::SearchTotal { .. }
+                    | UiEvent::SearchSelected { .. } => {}
                 }
             }
 
@@ -274,26 +310,138 @@ fn mark_workspace_read(state: &Rc<AppState>, workspace_id: uuid::Uuid) {
         lock_or_recover(&state.shared.tab_manager).workspace_mut(workspace_id)
     {
         workspace.mark_notifications_read();
+        workspace.clear_attention();
     }
 }
 
+fn show_rename_dialog(
+    window: &adw::ApplicationWindow,
+    state: &Rc<AppState>,
+    list_box: &gtk4::ListBox,
+    content_box: &gtk4::Box,
+    current_title: &str,
+) {
+    let dialog = adw::MessageDialog::new(Some(window), Some("Rename Workspace"), None);
+    dialog.set_body("Enter a new name for this workspace:");
+
+    let entry = gtk4::Entry::new();
+    entry.set_text(current_title);
+    entry.set_activates_default(true);
+    dialog.set_extra_child(Some(&entry));
+
+    dialog.add_response("cancel", "Cancel");
+    dialog.add_response("rename", "Rename");
+    dialog.set_default_response(Some("rename"));
+    dialog.set_response_appearance("rename", adw::ResponseAppearance::Suggested);
+
+    let state = state.clone();
+    let list_box = list_box.clone();
+    let content_box = content_box.clone();
+    dialog.connect_response(None, move |dialog, response| {
+        if response == "rename" {
+            let entry = dialog
+                .extra_child()
+                .and_then(|w| w.downcast::<gtk4::Entry>().ok());
+            if let Some(entry) = entry {
+                let new_name = entry.text().to_string();
+                if !new_name.is_empty() {
+                    let mut tm = lock_or_recover(&state.shared.tab_manager);
+                    if let Some(ws) = tm.selected_mut() {
+                        ws.custom_title = Some(new_name);
+                    }
+                    drop(tm);
+                    refresh_ui(&list_box, &content_box, &state);
+                }
+            }
+        }
+    });
+
+    dialog.present();
+}
+
+#[allow(clippy::too_many_arguments)]
 fn setup_shortcuts(
     window: &adw::ApplicationWindow,
     state: &Rc<AppState>,
     list_box: &gtk4::ListBox,
     content_box: &gtk4::Box,
+    search_bar: &gtk4::Box,
+    search_entry: &gtk4::SearchEntry,
+    search_count_label: &gtk4::Label,
+    search_state: &Rc<search_overlay::SearchState>,
+    nav_split_view: &adw::NavigationSplitView,
+    sidebar_page: &adw::NavigationPage,
+    notif_page: &adw::NavigationPage,
+    showing_notifications: &Rc<Cell<bool>>,
+    notif_panel: &notifications_panel::NotificationsPanel,
 ) {
     let controller = gtk4::EventControllerKey::new();
 
     let state = state.clone();
     let list_box = list_box.clone();
     let content_box = content_box.clone();
+    let search_bar = search_bar.clone();
+    let search_entry = search_entry.clone();
+    let _search_count_label = search_count_label.clone();
+    let _search_state = search_state.clone();
+    let nav_split_view = nav_split_view.clone();
+    let sidebar_page = sidebar_page.clone();
+    let notif_page = notif_page.clone();
+    let showing_notifications = showing_notifications.clone();
+    let notif_panel = notif_panel.clone();
+    let window_weak = window.downgrade();
 
     controller.connect_key_pressed(move |_controller, keyval, _keycode, modifier| {
         let ctrl = modifier.contains(gdk4::ModifierType::CONTROL_MASK);
         let shift = modifier.contains(gdk4::ModifierType::SHIFT_MASK);
 
         match (keyval, ctrl, shift) {
+            // Ctrl+Comma: Settings
+            (gdk4::Key::comma, true, false) => {
+                if let Some(window) = window_weak.upgrade() {
+                    super::settings::show_settings(&window);
+                }
+                glib::Propagation::Stop
+            }
+            // Ctrl+F: Toggle terminal find
+            (gdk4::Key::f, true, false) => {
+                if search_bar.is_visible() {
+                    search_bar.set_visible(false);
+                    // Return focus to terminal content
+                    content_box.grab_focus();
+                } else {
+                    search_bar.set_visible(true);
+                    search_entry.grab_focus();
+                }
+                glib::Propagation::Stop
+            }
+            // Ctrl+Shift+I: Toggle notification panel
+            (gdk4::Key::I, true, true) => {
+                if showing_notifications.get() {
+                    // Switch back to workspaces sidebar
+                    nav_split_view.set_sidebar(Some(&sidebar_page));
+                    showing_notifications.set(false);
+                } else {
+                    // Refresh and show notification panel
+                    notif_panel.refresh(&state);
+                    nav_split_view.set_sidebar(Some(&notif_page));
+                    showing_notifications.set(true);
+                }
+                glib::Propagation::Stop
+            }
+            // Ctrl+Shift+R: Rename workspace
+            (gdk4::Key::R, true, true) => {
+                let current_title = {
+                    let tm = lock_or_recover(&state.shared.tab_manager);
+                    tm.selected().map(|ws| ws.display_title().to_string())
+                };
+                if let Some(title) = current_title {
+                    if let Some(window) = window_weak.upgrade() {
+                        show_rename_dialog(&window, &state, &list_box, &content_box, &title);
+                    }
+                }
+                glib::Propagation::Stop
+            }
             // Ctrl+Shift+T: New workspace
             (gdk4::Key::T, true, true) => {
                 let workspace = Workspace::new();
@@ -471,8 +619,15 @@ fn install_css() {
     let provider = gtk4::CssProvider::new();
     provider.load_from_data(
         "
+        /* ── Workspace rows ── */
         .workspace-row {
             border-radius: 10px;
+        }
+
+        .workspace-row-colored {
+            border-radius: 10px;
+            border-left: 4px solid transparent;
+            padding-left: 0px;
         }
 
         .sidebar-notification {
@@ -480,6 +635,94 @@ fn install_css() {
             font-weight: 600;
         }
 
+        /* ── Status pills ── */
+        .status-pill {
+            border-radius: 8px;
+            padding: 1px 6px;
+            font-size: 0.8em;
+            font-weight: 600;
+            background-color: alpha(@accent_color, 0.15);
+            color: @accent_color;
+        }
+
+        .status-pill-blue {
+            background-color: alpha(#3584e4, 0.15);
+            color: #3584e4;
+        }
+
+        .status-pill-green {
+            background-color: alpha(#33d17a, 0.15);
+            color: #26a269;
+        }
+
+        .status-pill-red {
+            background-color: alpha(#e01b24, 0.15);
+            color: #e01b24;
+        }
+
+        .status-pill-orange {
+            background-color: alpha(#ff7800, 0.15);
+            color: #e66100;
+        }
+
+        .status-pill-purple {
+            background-color: alpha(#9141ac, 0.15);
+            color: #9141ac;
+        }
+
+        .status-pill-yellow {
+            background-color: alpha(#f6d32d, 0.2);
+            color: #986a44;
+        }
+
+        /* ── Progress bar ── */
+        .sidebar-progress {
+            min-height: 4px;
+            border-radius: 2px;
+        }
+
+        .sidebar-progress trough {
+            min-height: 4px;
+            border-radius: 2px;
+        }
+
+        .sidebar-progress progress {
+            min-height: 4px;
+            border-radius: 2px;
+        }
+
+        /* ── Log entry levels ── */
+        .log-info {
+            color: alpha(@theme_fg_color, 0.55);
+        }
+
+        .log-warning {
+            color: #e66100;
+        }
+
+        .log-error {
+            color: #e01b24;
+        }
+
+        .log-success {
+            color: #26a269;
+        }
+
+        .log-progress {
+            color: #3584e4;
+        }
+
+        /* ── Port badges ── */
+        .port-badge {
+            border-radius: 6px;
+            padding: 0px 4px;
+            font-size: 0.75em;
+            font-weight: 600;
+            background-color: alpha(@theme_fg_color, 0.08);
+            color: alpha(@theme_fg_color, 0.6);
+        }
+
+        /* ── Panel shell ── */
         .panel-shell {
             border: 1px solid rgba(127, 127, 127, 0.18);
             border-radius: 10px;
@@ -489,6 +732,33 @@ fn install_css() {
         .attention-panel {
             border: 2px solid #3584e4;
             background-color: rgba(53, 132, 228, 0.08);
+        }
+
+        /* ── Search overlay ── */
+        .search-overlay {
+            background-color: @theme_bg_color;
+            border: 1px solid alpha(@theme_fg_color, 0.15);
+            border-radius: 8px;
+            padding: 4px 8px;
+            box-shadow: 0 2px 8px alpha(black, 0.15);
+        }
+
+        /* ── Notification panel ── */
+        .notification-row {
+            padding: 8px 12px;
+        }
+
+        .notification-row-unread {
+            background-color: alpha(@accent_color, 0.06);
+        }
+
+        .notification-title {
+            font-weight: 600;
+        }
+
+        .notification-timestamp {
+            color: alpha(@theme_fg_color, 0.45);
+            font-size: 0.85em;
         }
         ",
     );

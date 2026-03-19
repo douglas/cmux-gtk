@@ -308,6 +308,11 @@ impl Workspace {
         self.unread_count = 0;
     }
 
+    /// Clear the attention ring (called when workspace is focused/selected).
+    pub fn clear_attention(&mut self) {
+        self.attention_panel_id = None;
+    }
+
     /// Focus a specific panel and reveal its tab.
     pub fn focus_panel(&mut self, panel_id: Uuid) -> bool {
         if !self.panels.contains_key(&panel_id) {

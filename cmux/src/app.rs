@@ -135,6 +135,10 @@ impl AppState {
 pub enum UiEvent {
     Refresh,
     SendInput { panel_id: Uuid, text: String },
+    SearchTotal { total: isize },
+    SearchSelected { selected: isize },
+    StartSearch,
+    EndSearch,
 }
 
 /// Thread-safe state shared between GTK main thread and socket server.
@@ -181,6 +185,7 @@ pub fn run() -> i32 {
 
     {
         let shared_for_socket = shared.clone();
+        let shared_for_ports = shared.clone();
         app.connect_startup(move |_app| {
             let shared = shared_for_socket.clone();
             std::thread::spawn(move || {
@@ -191,6 +196,8 @@ pub fn run() -> i32 {
                     }
                 });
             });
+
+            crate::port_scanner::spawn(shared_for_ports.clone());
         });
     }
 
@@ -226,6 +233,19 @@ fn activate(app: &adw::Application, state: &Rc<AppState>) {
 
     let (ui_event_tx, ui_event_rx) = tokio::sync::mpsc::unbounded_channel();
     state.shared.install_ui_event_sender(ui_event_tx);
+
+    // Apply saved theme preference
+    {
+        let settings = crate::settings::load();
+        if let Some(display) = gdk4::Display::default() {
+            let style_manager = adw::StyleManager::for_display(&display);
+            style_manager.set_color_scheme(match settings.theme {
+                crate::settings::ThemeMode::System => adw::ColorScheme::Default,
+                crate::settings::ThemeMode::Light => adw::ColorScheme::ForceLight,
+                crate::settings::ThemeMode::Dark => adw::ColorScheme::ForceDark,
+            });
+        }
+    }
 
     init_ghostty(state);
 
@@ -340,7 +360,9 @@ fn init_ghostty(state: &Rc<AppState>) {
         return;
     }
 
-    let handler = CmuxCallbackHandler;
+    let handler = CmuxCallbackHandler {
+        shared: state.shared.clone(),
+    };
 
     let callbacks = ghostty_gtk::callbacks::RuntimeCallbacks::new(Box::new(handler));
 
@@ -358,7 +380,9 @@ fn init_ghostty(state: &Rc<AppState>) {
 }
 
 /// Callback handler that bridges ghostty events to the GTK main loop.
-struct CmuxCallbackHandler;
+struct CmuxCallbackHandler {
+    shared: Arc<SharedState>,
+}
 
 impl ghostty_gtk::callbacks::GhosttyCallbackHandler for CmuxCallbackHandler {
     fn on_wakeup(&self) {
@@ -403,6 +427,25 @@ impl ghostty_gtk::callbacks::GhosttyCallbackHandler for CmuxCallbackHandler {
                 true
             }
             ghostty_action_tag_e::GHOSTTY_ACTION_SET_TITLE => true,
+            ghostty_action_tag_e::GHOSTTY_ACTION_START_SEARCH => {
+                self.shared.send_ui_event(UiEvent::StartSearch);
+                true
+            }
+            ghostty_action_tag_e::GHOSTTY_ACTION_END_SEARCH => {
+                self.shared.send_ui_event(UiEvent::EndSearch);
+                true
+            }
+            ghostty_action_tag_e::GHOSTTY_ACTION_SEARCH_TOTAL => {
+                let total = unsafe { action.action.search_total.total };
+                self.shared.send_ui_event(UiEvent::SearchTotal { total });
+                true
+            }
+            ghostty_action_tag_e::GHOSTTY_ACTION_SEARCH_SELECTED => {
+                let selected = unsafe { action.action.search_selected.selected };
+                self.shared
+                    .send_ui_event(UiEvent::SearchSelected { selected });
+                true
+            }
             _ => {
                 tracing::trace!("Unhandled ghostty action: {:?}", action.tag as u32);
                 false

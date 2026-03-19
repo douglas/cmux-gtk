@@ -1,7 +1,9 @@
 mod app;
 mod model;
 mod notifications;
+mod port_scanner;
 mod session;
+mod settings;
 mod socket;
 mod ui;
 

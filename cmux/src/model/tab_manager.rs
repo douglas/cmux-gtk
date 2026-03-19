@@ -194,6 +194,11 @@ impl TabManager {
         self.workspaces.iter()
     }
 
+    /// Iterate over all workspaces mutably.
+    pub fn iter_mut(&mut self) -> impl Iterator<Item = &mut Workspace> {
+        self.workspaces.iter_mut()
+    }
+
     /// Select the workspace with the newest unread notification.
     pub fn select_latest_unread(&mut self) -> Option<Uuid> {
         let index = self.latest_unread_index()?;
