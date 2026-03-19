@@ -5,6 +5,8 @@ use std::rc::Rc;
 
 use gtk4::prelude::*;
 
+use glib::object::Cast;
+
 use crate::app::{lock_or_recover, AppState};
 use crate::model::Workspace;
 
@@ -53,7 +55,12 @@ pub fn refresh_sidebar(list_box: &gtk4::ListBox, state: &Rc<AppState>) {
         let rows = tab_manager
             .iter()
             .enumerate()
-            .map(|(index, workspace)| create_workspace_row(workspace, index))
+            .map(|(index, workspace)| {
+                let row = create_workspace_row(workspace, index);
+                setup_row_context_menu(&row, index, workspace.is_pinned, state);
+                setup_row_close_button(&row, index, state);
+                row
+            })
             .collect();
         (rows, selected_index)
     };
@@ -129,13 +136,21 @@ fn create_workspace_row(workspace: &Workspace, index: usize) -> gtk4::ListBoxRow
     outer.set_margin_top(8);
     outer.set_margin_bottom(8);
 
-    // ── Header: index + title + unread badge ──
+    // ── Header: index + pin icon + title + unread badge + close button ──
     let header = gtk4::Box::new(gtk4::Orientation::Horizontal, 8);
 
     let index_label = gtk4::Label::new(Some(&format!("{}", index + 1)));
     index_label.add_css_class("dim-label");
     index_label.add_css_class("caption");
     header.append(&index_label);
+
+    // Pin indicator
+    if workspace.is_pinned {
+        let pin_icon = gtk4::Image::from_icon_name("view-pin-symbolic");
+        pin_icon.set_pixel_size(12);
+        pin_icon.add_css_class("dim-label");
+        header.append(&pin_icon);
+    }
 
     let title_label = gtk4::Label::new(Some(workspace.display_title()));
     title_label.set_hexpand(true);
@@ -149,6 +164,15 @@ fn create_workspace_row(workspace: &Workspace, index: usize) -> gtk4::ListBoxRow
         badge.add_css_class("accent");
         header.append(&badge);
     }
+
+    // Hover close button (hidden by default)
+    let close_btn = gtk4::Button::from_icon_name("window-close-symbolic");
+    close_btn.add_css_class("flat");
+    close_btn.add_css_class("circular");
+    close_btn.add_css_class("sidebar-close-btn");
+    close_btn.set_visible(false);
+    close_btn.set_tooltip_text(Some("Close workspace"));
+    header.append(&close_btn);
 
     outer.append(&header);
 
@@ -267,6 +291,23 @@ fn create_workspace_row(workspace: &Workspace, index: usize) -> gtk4::ListBoxRow
         outer.append(&log_label);
     }
 
+    // ── PR status pill ──
+    if let Some(ref pr_status) = workspace.pr_status {
+        let pr_box = gtk4::Box::new(gtk4::Orientation::Horizontal, 4);
+        pr_box.set_halign(gtk4::Align::Start);
+        let pr_label = gtk4::Label::new(Some(&format!("PR: {pr_status}")));
+        pr_label.add_css_class("status-pill");
+        pr_label.add_css_class("caption");
+        match pr_status.as_str() {
+            "merged" => pr_label.add_css_class("status-pill-green"),
+            "open" | "draft" => pr_label.add_css_class("status-pill-yellow"),
+            "closed" => pr_label.add_css_class("status-pill-red"),
+            _ => {}
+        }
+        pr_box.append(&pr_label);
+        outer.append(&pr_box);
+    }
+
     // ── Notification line ──
     let notification_text = workspace
         .latest_notification
@@ -284,8 +325,110 @@ fn create_workspace_row(workspace: &Workspace, index: usize) -> gtk4::ListBoxRow
     }
     outer.append(&notification_label);
 
+    // ── Hover show/hide close button ──
+    let motion = gtk4::EventControllerMotion::new();
+    {
+        let close_btn = close_btn.clone();
+        motion.connect_enter(move |_, _, _| {
+            close_btn.set_visible(true);
+        });
+    }
+    {
+        let close_btn = close_btn.clone();
+        motion.connect_leave(move |_| {
+            close_btn.set_visible(false);
+        });
+    }
+    row.add_controller(motion);
+
     row.set_child(Some(&outer));
     row
+}
+
+/// Set up right-click context menu on a sidebar row.
+fn setup_row_context_menu(
+    row: &gtk4::ListBoxRow,
+    index: usize,
+    is_pinned: bool,
+    state: &Rc<AppState>,
+) {
+    let menu = gtk4::gio::Menu::new();
+    menu.append(
+        Some(if is_pinned { "Unpin" } else { "Pin" }),
+        Some(&format!("sidebar.toggle-pin.{index}")),
+    );
+    menu.append(Some("Close"), Some(&format!("sidebar.close.{index}")));
+
+    let popover = gtk4::PopoverMenu::from_model(Some(&menu));
+    popover.set_parent(row);
+    popover.set_has_arrow(false);
+
+    let gesture = gtk4::GestureClick::new();
+    gesture.set_button(3); // Right click
+    {
+        let popover = popover.clone();
+        gesture.connect_pressed(move |gesture, _n, x, y| {
+            gesture.set_state(gtk4::EventSequenceState::Claimed);
+            popover.set_pointing_to(Some(&gdk4::Rectangle::new(x as i32, y as i32, 1, 1)));
+            popover.popup();
+        });
+    }
+    row.add_controller(gesture);
+
+    // Action: toggle pin
+    let action_group = gtk4::gio::SimpleActionGroup::new();
+    let pin_action = gtk4::gio::SimpleAction::new(&format!("toggle-pin.{index}"), None);
+    {
+        let state = state.clone();
+        pin_action.connect_activate(move |_, _| {
+            let mut tm = lock_or_recover(&state.shared.tab_manager);
+            if let Some(ws) = tm.get_mut(index) {
+                ws.is_pinned = !ws.is_pinned;
+            }
+            drop(tm);
+            state.shared.notify_ui_refresh();
+        });
+    }
+    action_group.add_action(&pin_action);
+
+    let close_action = gtk4::gio::SimpleAction::new(&format!("close.{index}"), None);
+    {
+        let state = state.clone();
+        close_action.connect_activate(move |_, _| {
+            lock_or_recover(&state.shared.tab_manager).remove(index);
+            state.shared.notify_ui_refresh();
+        });
+    }
+    action_group.add_action(&close_action);
+
+    row.insert_action_group("sidebar", Some(&action_group));
+}
+
+/// Wire up the hover close button on a row.
+fn setup_row_close_button(row: &gtk4::ListBoxRow, index: usize, state: &Rc<AppState>) {
+    // Find the close button (it's the last child in the header box)
+    let Some(outer) = row.child() else { return };
+    let outer = outer.downcast_ref::<gtk4::Box>().cloned();
+    let Some(outer) = outer else { return };
+    let Some(header) = outer.first_child() else { return };
+    let header = header.downcast_ref::<gtk4::Box>().cloned();
+    let Some(header) = header else { return };
+
+    // Walk to find the button
+    let mut child = header.first_child();
+    while let Some(c) = child {
+        if c.has_css_class("sidebar-close-btn") {
+            if let Some(btn) = c.downcast_ref::<gtk4::Button>() {
+                let state = state.clone();
+                btn.connect_clicked(move |_| {
+                    lock_or_recover(&state.shared.tab_manager).remove(index);
+                    state.shared.notify_ui_refresh();
+                });
+            }
+            break;
+        }
+        child = c.next_sibling();
+    }
 }
 
 fn workspace_meta_text(workspace: &Workspace) -> String {
@@ -308,7 +451,7 @@ fn workspace_meta_text(workspace: &Workspace) -> String {
     parts.join(" | ")
 }
 
-fn compact_path(path: &str) -> String {
+pub fn compact_path(path: &str) -> String {
     if path.is_empty() {
         return "~".to_string();
     }

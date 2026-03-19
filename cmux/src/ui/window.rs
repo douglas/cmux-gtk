@@ -62,7 +62,7 @@ pub fn create_window(
     let showing_notifications: Rc<Cell<bool>> = Rc::new(Cell::new(false));
 
     bind_sidebar_selection(&list_box, &content_box, state);
-    bind_shared_state_updates(&list_box, &content_box, state, ui_events);
+    bind_shared_state_updates(&list_box, &content_box, &window, state, ui_events);
 
     let header = adw::HeaderBar::new();
 
@@ -177,12 +177,22 @@ pub fn rebuild_content(content_box: &gtk4::Box, state: &Rc<AppState>) {
         let workspace_data = {
             let tab_manager = lock_or_recover(&state.shared.tab_manager);
             tab_manager.selected().map(|ws| {
-                (ws.id, ws.layout.clone(), ws.panels.clone(), ws.attention_panel_id)
+                (
+                    ws.id,
+                    ws.layout.clone(),
+                    ws.panels.clone(),
+                    ws.attention_panel_id,
+                    ws.zoomed_panel_id,
+                )
             })
         };
 
-        if let Some((id, layout, panels, attention_panel_id)) = workspace_data {
-            let widget = split_view::build_layout(id, &layout, &panels, attention_panel_id, &state);
+        if let Some((id, layout, panels, attention_panel_id, zoomed_panel_id)) = workspace_data {
+            let widget = if let Some(zoomed_id) = zoomed_panel_id {
+                split_view::build_zoomed(zoomed_id, &panels, &state)
+            } else {
+                split_view::build_layout(id, &layout, &panels, attention_panel_id, &state)
+            };
             content_box.append(&widget);
         } else {
             let label = gtk4::Label::new(Some("No workspace selected"));
@@ -196,6 +206,23 @@ fn refresh_ui(list_box: &gtk4::ListBox, content_box: &gtk4::Box, state: &Rc<AppS
     state.prune_terminal_cache();
     sidebar::refresh_sidebar(list_box, state);
     rebuild_content(content_box, state);
+
+    // Update window title to reflect selected workspace
+    if let Some(root) = content_box.root() {
+        if let Some(window) = root.downcast_ref::<adw::ApplicationWindow>() {
+            let title = {
+                let tm = lock_or_recover(&state.shared.tab_manager);
+                tm.selected().map(|ws| {
+                    let title = ws.display_title();
+                    let dir = crate::ui::sidebar::compact_path(&ws.current_directory);
+                    format!("{title} — {dir} — cmux")
+                })
+            };
+            if let Some(title) = title {
+                window.set_title(Some(&title));
+            }
+        }
+    }
 }
 
 fn bind_sidebar_selection(list_box: &gtk4::ListBox, content_box: &gtk4::Box, state: &Rc<AppState>) {
@@ -221,12 +248,14 @@ fn bind_sidebar_selection(list_box: &gtk4::ListBox, content_box: &gtk4::Box, sta
 fn bind_shared_state_updates(
     list_box: &gtk4::ListBox,
     content_box: &gtk4::Box,
+    window: &adw::ApplicationWindow,
     state: &Rc<AppState>,
     mut ui_events: UnboundedReceiver<UiEvent>,
 ) {
     let state = state.clone();
     let list_box = list_box.clone();
     let content_box = content_box.clone();
+    let window_weak = window.downgrade();
 
     glib::MainContext::default().spawn_local(async move {
         while let Some(event) = ui_events.recv().await {
@@ -249,6 +278,23 @@ fn bind_shared_state_updates(
                             tracing::warn!(
                                 %panel_id,
                                 "surface.send_input dropped because panel is not ready"
+                            );
+                        }
+                    }
+                    UiEvent::OpenSettings => {
+                        if let Some(window) = window_weak.upgrade() {
+                            super::settings::show_settings(&window);
+                        }
+                    }
+                    UiEvent::TriggerFlash { panel_id } => {
+                        if let Some(surface) = state.terminal_cache.borrow().get(&panel_id) {
+                            let widget = surface.clone().upcast::<gtk4::Widget>();
+                            widget.add_css_class("flash-panel");
+                            glib::timeout_add_local_once(
+                                std::time::Duration::from_millis(300),
+                                move || {
+                                    widget.remove_css_class("flash-panel");
+                                },
                             );
                         }
                     }
@@ -394,6 +440,41 @@ fn setup_shortcuts(
     controller.connect_key_pressed(move |_controller, keyval, _keycode, modifier| {
         let ctrl = modifier.contains(gdk4::ModifierType::CONTROL_MASK);
         let shift = modifier.contains(gdk4::ModifierType::SHIFT_MASK);
+        let alt = modifier.contains(gdk4::ModifierType::ALT_MASK);
+
+        // Alt+Arrow: Directional pane focus
+        if alt && !ctrl && !shift {
+            use crate::model::panel::Direction;
+            let direction = match keyval {
+                gdk4::Key::Left => Some(Direction::Left),
+                gdk4::Key::Right => Some(Direction::Right),
+                gdk4::Key::Up => Some(Direction::Up),
+                gdk4::Key::Down => Some(Direction::Down),
+                _ => None,
+            };
+            if let Some(dir) = direction {
+                let changed = {
+                    let mut tm = lock_or_recover(&state.shared.tab_manager);
+                    if let Some(ws) = tm.selected_mut() {
+                        if let Some(current) = ws.focused_panel_id {
+                            if let Some(neighbor) = ws.layout.neighbor(current, dir) {
+                                ws.focus_panel(neighbor)
+                            } else {
+                                false
+                            }
+                        } else {
+                            false
+                        }
+                    } else {
+                        false
+                    }
+                };
+                if changed {
+                    refresh_ui(&list_box, &content_box, &state);
+                }
+                return glib::Propagation::Stop;
+            }
+        }
 
         match (keyval, ctrl, shift) {
             // Ctrl+Comma: Settings
@@ -427,6 +508,62 @@ fn setup_shortcuts(
                     nav_split_view.set_sidebar(Some(&notif_page));
                     showing_notifications.set(true);
                 }
+                glib::Propagation::Stop
+            }
+            // Ctrl+Shift+P: Command palette
+            (gdk4::Key::P, true, true) => {
+                if let Some(window) = window_weak.upgrade() {
+                    let lb = list_box.clone();
+                    let cb = content_box.clone();
+                    let st = state.clone();
+                    let on_refresh = Rc::new(move || refresh_ui(&lb, &cb, &st));
+                    super::command_palette::show_command_palette(&window, &state, on_refresh);
+                }
+                glib::Propagation::Stop
+            }
+            // Ctrl+Shift+Z: Toggle pane zoom
+            (gdk4::Key::Z, true, true) => {
+                let changed = {
+                    let mut tm = lock_or_recover(&state.shared.tab_manager);
+                    if let Some(ws) = tm.selected_mut() {
+                        if ws.zoomed_panel_id.is_some() {
+                            ws.zoomed_panel_id = None;
+                        } else {
+                            ws.zoomed_panel_id = ws.focused_panel_id;
+                        }
+                        true
+                    } else {
+                        false
+                    }
+                };
+                if changed {
+                    refresh_ui(&list_box, &content_box, &state);
+                }
+                glib::Propagation::Stop
+            }
+            // Ctrl+Shift+H: Flash focused panel
+            (gdk4::Key::H, true, true) => {
+                let panel_id = {
+                    let tm = lock_or_recover(&state.shared.tab_manager);
+                    tm.selected().and_then(|ws| ws.focused_panel_id)
+                };
+                if let Some(panel_id) = panel_id {
+                    if let Some(surface) = state.terminal_cache.borrow().get(&panel_id) {
+                        let widget = surface.clone().upcast::<gtk4::Widget>();
+                        widget.add_css_class("flash-panel");
+                        glib::timeout_add_local_once(
+                            std::time::Duration::from_millis(300),
+                            move || {
+                                widget.remove_css_class("flash-panel");
+                            },
+                        );
+                    }
+                }
+                glib::Propagation::Stop
+            }
+            // Ctrl+Shift+B: Toggle sidebar
+            (gdk4::Key::B, true, true) => {
+                nav_split_view.set_collapsed(!nav_split_view.is_collapsed());
                 glib::Propagation::Stop
             }
             // Ctrl+Shift+R: Rename workspace
@@ -759,6 +896,26 @@ fn install_css() {
         .notification-timestamp {
             color: alpha(@theme_fg_color, 0.45);
             font-size: 0.85em;
+        }
+
+        /* ── Flash panel ── */
+        .flash-panel {
+            background-color: alpha(@accent_color, 0.25);
+        }
+
+        /* ── Command palette ── */
+        .command-palette {
+            background-color: @theme_bg_color;
+            border: 1px solid alpha(@theme_fg_color, 0.15);
+            border-radius: 12px;
+            box-shadow: 0 8px 32px alpha(black, 0.3);
+        }
+
+        /* ── Sidebar close button ── */
+        .sidebar-close-btn {
+            min-width: 16px;
+            min-height: 16px;
+            padding: 0;
         }
         ",
     );

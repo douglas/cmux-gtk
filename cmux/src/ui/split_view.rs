@@ -11,6 +11,19 @@ use crate::app::{lock_or_recover, AppState};
 use crate::model::panel::{LayoutNode, Panel, SplitOrientation};
 use crate::ui::terminal_panel;
 
+/// Build a zoomed view — renders only a single panel full-size.
+pub fn build_zoomed(
+    panel_id: Uuid,
+    panels: &HashMap<Uuid, Panel>,
+    state: &Rc<AppState>,
+) -> gtk4::Widget {
+    if let Some(panel) = panels.get(&panel_id) {
+        terminal_panel::create_panel_widget(panel, false, state)
+    } else {
+        gtk4::Label::new(Some("Panel not found")).upcast()
+    }
+}
+
 /// Build a GTK widget tree from a LayoutNode.
 ///
 /// - `LayoutNode::Pane` → GtkStack (with tabs if multiple panels) wrapping terminal widgets
