@@ -242,6 +242,18 @@ fn build_actions(state: &Rc<AppState>) -> Rc<Vec<PaletteAction>> {
             name: "open_folder".into(),
             label: "Open Folder in File Manager".into(),
         },
+        PaletteAction {
+            name: "surface.flash".into(),
+            label: "Flash Panel".into(),
+        },
+        PaletteAction {
+            name: "surface.clear_screen".into(),
+            label: "Clear Terminal".into(),
+        },
+        PaletteAction {
+            name: "surface.clear_history".into(),
+            label: "Clear Scrollback History".into(),
+        },
     ];
 
     // Add dynamic workspace entries
@@ -451,6 +463,36 @@ fn execute_action(name: &str, state: &Rc<AppState>, on_refresh: &Rc<dyn Fn()>) {
                 let _ = std::process::Command::new("xdg-open").arg(&dir).spawn();
             }
             return; // Don't refresh — external command
+        }
+        "surface.flash" => {
+            if let Some(ws) = lock_or_recover(&state.shared.tab_manager).selected() {
+                if let Some(panel_id) = ws.focused_panel_id {
+                    state
+                        .shared
+                        .send_ui_event(crate::app::UiEvent::TriggerFlash { panel_id });
+                }
+            }
+            return; // UiEvent handled
+        }
+        "surface.clear_screen" => {
+            if let Some(ws) = lock_or_recover(&state.shared.tab_manager).selected() {
+                if let Some(panel_id) = ws.focused_panel_id {
+                    state
+                        .shared
+                        .send_ui_event(crate::app::UiEvent::ClearHistory { panel_id });
+                }
+            }
+            return;
+        }
+        "surface.clear_history" => {
+            if let Some(ws) = lock_or_recover(&state.shared.tab_manager).selected() {
+                if let Some(panel_id) = ws.focused_panel_id {
+                    state
+                        .shared
+                        .send_ui_event(crate::app::UiEvent::ClearHistory { panel_id });
+                }
+            }
+            return;
         }
         name if name.starts_with("workspace.select.") => {
             if let Ok(index) = name[17..].parse::<usize>() {

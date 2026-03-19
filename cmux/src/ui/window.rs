@@ -684,6 +684,24 @@ fn setup_shortcuts(
                 refresh_ui(&list_box, &content_box, &state);
                 glib::Propagation::Stop
             }
+            // Ctrl+Shift+O: Open workspace directory in file manager
+            (gdk4::Key::O, true, true) => {
+                let dir = {
+                    let tm = lock_or_recover(&state.shared.tab_manager);
+                    tm.selected().map(|ws| ws.current_directory.clone())
+                };
+                if let Some(dir) = dir {
+                    let path = if dir.is_empty() {
+                        std::env::var("HOME").unwrap_or_else(|_| "/".to_string())
+                    } else {
+                        dir
+                    };
+                    let _ = std::process::Command::new("xdg-open")
+                        .arg(&path)
+                        .spawn();
+                }
+                glib::Propagation::Stop
+            }
             // Ctrl+Shift+U: Jump to latest unread
             (gdk4::Key::U, true, true) => {
                 if select_latest_unread(&state) {
