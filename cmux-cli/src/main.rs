@@ -330,12 +330,32 @@ enum SurfaceCommands {
         #[arg(long)]
         surface: Option<String>,
     },
+    /// Perform an action on a surface (toggle_zoom, clear_screen, refresh, flash)
+    Action {
+        /// Action name
+        action: String,
+        /// Surface/panel UUID
+        #[arg(long)]
+        surface: Option<String>,
+    },
+    /// Check health/readiness of a surface
+    Health {
+        /// Surface/panel UUID
+        #[arg(long)]
+        surface: Option<String>,
+    },
 }
 
 #[derive(Subcommand)]
 enum PaneCommands {
     /// Create a new split pane
     New {
+        /// Split orientation: horizontal or vertical
+        #[arg(long, default_value = "horizontal")]
+        orientation: String,
+    },
+    /// Create a new pane (alias for new)
+    Create {
         /// Split orientation: horizontal or vertical
         #[arg(long, default_value = "horizontal")]
         orientation: String,
@@ -584,11 +604,22 @@ fn main() -> anyhow::Result<()> {
                 "surface.clear_history",
                 serde_json::json!({"surface": surface}),
             ),
+            SurfaceCommands::Action { action, surface } => (
+                "surface.action",
+                serde_json::json!({"action": action, "surface": surface}),
+            ),
+            SurfaceCommands::Health { surface } => (
+                "surface.health",
+                serde_json::json!({"surface": surface}),
+            ),
         },
 
         Commands::Pane(pane) => match pane {
             PaneCommands::New { orientation } => {
                 ("pane.new", serde_json::json!({"orientation": orientation}))
+            }
+            PaneCommands::Create { orientation } => {
+                ("pane.create", serde_json::json!({"orientation": orientation}))
             }
             PaneCommands::List { workspace } => (
                 "pane.list",

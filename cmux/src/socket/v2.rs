@@ -123,6 +123,7 @@ pub fn dispatch(json_line: &str, state: &Arc<SharedState>) -> Response {
         "pane.swap" => handle_pane_swap(id, &req.params, state),
         "pane.resize" => handle_pane_resize(id, &req.params, state),
         "pane.focus_direction" => handle_pane_focus_direction(id, &req.params, state),
+        "pane.create" => handle_pane_new(id, &req.params, state),
         "pane.break" => handle_pane_break(id, &req.params, state),
         "pane.join" => handle_pane_join(id, &req.params, state),
 
@@ -133,6 +134,8 @@ pub fn dispatch(json_line: &str, state: &Arc<SharedState>) -> Response {
         "surface.focus" => handle_surface_focus(id, &req.params, state),
         "surface.split" => handle_pane_new(id, &req.params, state),
         "surface.close" => handle_pane_close(id, &req.params, state),
+        "surface.action" => handle_surface_action(id, &req.params, state),
+        "surface.health" => handle_surface_health(id, &req.params, state),
         "surface.send_key" => handle_surface_send_key(id, &req.params, state),
         "surface.read_text" => handle_surface_read_text(id, &req.params, state),
         "surface.refresh" => handle_surface_refresh(id, &req.params, state),
@@ -197,6 +200,7 @@ fn handle_capabilities(id: Value) -> Response {
         "pane.close",
         "pane.last",
         "pane.swap",
+        "pane.create",
         "pane.resize",
         "pane.focus_direction",
         "pane.break",
@@ -207,6 +211,8 @@ fn handle_capabilities(id: Value) -> Response {
         "surface.focus",
         "surface.split",
         "surface.close",
+        "surface.action",
+        "surface.health",
         "surface.send_key",
         "surface.read_text",
         "surface.refresh",
@@ -1865,6 +1871,82 @@ fn handle_pane_join(id: Value, params: &Value, state: &Arc<SharedState>) -> Resp
             "panel_id": panel_id.to_string(),
             "workspace_id": selected_ws_id.to_string(),
             "joined": true,
+        }),
+    )
+}
+
+// -----------------------------------------------------------------------
+// surface.action — named actions on a surface
+// -----------------------------------------------------------------------
+
+fn handle_surface_action(id: Value, params: &Value, state: &Arc<SharedState>) -> Response {
+    let panel_id = match resolve_panel_id(&id, params, state) {
+        Ok(pid) => pid,
+        Err(resp) => return resp,
+    };
+
+    let action = params.get("action").and_then(|v| v.as_str());
+    let Some(action) = action else {
+        return Response::error(id, "invalid_params", "Provide 'action'");
+    };
+
+    match action {
+        "toggle_zoom" => {
+            let mut tm = lock_or_recover(&state.tab_manager);
+            if let Some(ws) = tm.find_workspace_with_panel_mut(panel_id) {
+                if ws.zoomed_panel_id == Some(panel_id) {
+                    ws.zoomed_panel_id = None;
+                } else {
+                    ws.zoomed_panel_id = Some(panel_id);
+                }
+                let zoomed = ws.zoomed_panel_id.is_some();
+                drop(tm);
+                state.notify_ui_refresh();
+                Response::success(id, serde_json::json!({"zoomed": zoomed}))
+            } else {
+                Response::error(id, "not_found", "Panel not found")
+            }
+        }
+        "clear_screen" => {
+            state.send_ui_event(UiEvent::ClearHistory { panel_id });
+            Response::success(id, serde_json::json!({"cleared": true}))
+        }
+        "refresh" => {
+            state.send_ui_event(UiEvent::RefreshSurface { panel_id });
+            Response::success(id, serde_json::json!({"refreshed": true}))
+        }
+        "flash" => {
+            state.send_ui_event(UiEvent::TriggerFlash { panel_id });
+            Response::success(id, serde_json::json!({"flashed": true}))
+        }
+        _ => Response::error(
+            id,
+            "invalid_params",
+            "Unknown action. Use: toggle_zoom, clear_screen, refresh, flash",
+        ),
+    }
+}
+
+// -----------------------------------------------------------------------
+// surface.health — report surface readiness
+// -----------------------------------------------------------------------
+
+fn handle_surface_health(id: Value, params: &Value, state: &Arc<SharedState>) -> Response {
+    let panel_id = match resolve_panel_id(&id, params, state) {
+        Ok(pid) => pid,
+        Err(resp) => return resp,
+    };
+
+    let tm = lock_or_recover(&state.tab_manager);
+    let exists = tm.find_workspace_with_panel(panel_id).is_some();
+    drop(tm);
+
+    Response::success(
+        id,
+        serde_json::json!({
+            "panel_id": panel_id.to_string(),
+            "exists": exists,
+            "healthy": exists,
         }),
     )
 }
