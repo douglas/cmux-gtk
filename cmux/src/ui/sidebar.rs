@@ -203,14 +203,14 @@ fn create_workspace_row(
         row.add_css_class("workspace-row");
     }
 
-    let outer = gtk4::Box::new(gtk4::Orientation::Vertical, 3);
+    let outer = gtk4::Box::new(gtk4::Orientation::Vertical, 2);
     outer.set_margin_start(10);
     outer.set_margin_end(10);
-    outer.set_margin_top(6);
-    outer.set_margin_bottom(6);
+    outer.set_margin_top(5);
+    outer.set_margin_bottom(5);
 
     // ── Header: index + pin icon + title + unread badge + close button ──
-    let header = gtk4::Box::new(gtk4::Orientation::Horizontal, 8);
+    let header = gtk4::Box::new(gtk4::Orientation::Horizontal, 6);
 
     let index_label = gtk4::Label::new(Some(&format!("{}", index + 1)));
     index_label.add_css_class("dim-label");
