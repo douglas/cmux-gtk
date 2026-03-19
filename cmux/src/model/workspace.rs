@@ -19,6 +19,12 @@ pub struct Workspace {
     pub current_directory: String,
     pub focused_panel_id: Option<Uuid>,
 
+    /// Previously focused panel ID (for pane.last).
+    pub previous_focused_panel_id: Option<Uuid>,
+
+    /// Zoomed panel ID (when set, only this panel renders full-size).
+    pub zoomed_panel_id: Option<Uuid>,
+
     /// The layout tree describing pane arrangement.
     pub layout: LayoutNode,
 
@@ -45,6 +51,10 @@ pub struct Workspace {
     pub latest_notification_at: Option<f64>,
     /// Panel that most recently requested attention, if known.
     pub attention_panel_id: Option<Uuid>,
+    /// PR status (open, merged, closed, draft).
+    pub pr_status: Option<String>,
+    /// PR URL for the workspace.
+    pub pr_url: Option<String>,
 }
 
 /// Status entry (agent metadata key-value pairs shown in sidebar).
@@ -103,6 +113,8 @@ impl Workspace {
             is_pinned: false,
             current_directory,
             focused_panel_id: Some(panel_id),
+            previous_focused_panel_id: None,
+            zoomed_panel_id: None,
             layout: LayoutNode::single_pane(panel_id),
             panels,
             status_entries: Vec::new(),
@@ -113,6 +125,8 @@ impl Workspace {
             latest_notification: None,
             latest_notification_at: None,
             attention_panel_id: None,
+            pr_status: None,
+            pr_url: None,
         }
     }
 
@@ -170,6 +184,7 @@ impl Workspace {
             self.layout = old.split(orientation, new_id);
         }
 
+        self.previous_focused_panel_id = self.focused_panel_id;
         self.focused_panel_id = Some(new_id);
         new_id
     }
@@ -320,6 +335,9 @@ impl Workspace {
         }
 
         if self.layout.select_panel(panel_id) {
+            if self.focused_panel_id != Some(panel_id) {
+                self.previous_focused_panel_id = self.focused_panel_id;
+            }
             self.focused_panel_id = Some(panel_id);
             true
         } else {

@@ -139,6 +139,8 @@ pub enum UiEvent {
     SearchSelected { selected: isize },
     StartSearch,
     EndSearch,
+    OpenSettings,
+    TriggerFlash { panel_id: Uuid },
 }
 
 /// Thread-safe state shared between GTK main thread and socket server.

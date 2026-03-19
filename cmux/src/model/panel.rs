@@ -1,6 +1,8 @@
 //! Panel model — represents a terminal or browser panel within a workspace.
 
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
+use std::collections::HashMap;
 use uuid::Uuid;
 
 /// Panel type discriminator.
@@ -115,6 +117,15 @@ pub enum LayoutNode {
 pub enum SplitOrientation {
     Horizontal,
     Vertical,
+}
+
+/// Direction for directional pane navigation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Direction {
+    Left,
+    Right,
+    Up,
+    Down,
 }
 
 impl LayoutNode {
@@ -256,6 +267,37 @@ impl LayoutNode {
         }
     }
 
+    /// Adjust the divider position of the split containing the given panel.
+    /// `amount` is a normalized delta (e.g. 0.05 to grow, -0.05 to shrink).
+    pub fn resize_panel(&mut self, panel_id: Uuid, amount: f64) -> bool {
+        match self {
+            LayoutNode::Pane { .. } => false,
+            LayoutNode::Split {
+                divider_position,
+                first,
+                second,
+                ..
+            } => {
+                let in_first = first.all_panel_ids().contains(&panel_id);
+                let in_second = second.all_panel_ids().contains(&panel_id);
+                if in_first || in_second {
+                    // Try to resize in children first (deeper splits)
+                    if in_first && first.resize_panel(panel_id, amount) {
+                        return true;
+                    }
+                    if in_second && second.resize_panel(panel_id, amount) {
+                        return true;
+                    }
+                    // This is the innermost split containing the panel
+                    let delta = if in_first { amount } else { -amount };
+                    *divider_position = (*divider_position + delta).clamp(0.05, 0.95);
+                    return true;
+                }
+                false
+            }
+        }
+    }
+
     /// Return the next panel ID after the given one in layout order,
     /// wrapping around to the first if at the end.
     pub fn next_panel_id(&self, current: Uuid) -> Option<Uuid> {
@@ -272,6 +314,146 @@ impl LayoutNode {
         let pos = ids.iter().position(|&id| id == current)?;
         let prev = if pos == 0 { ids.len() - 1 } else { pos - 1 };
         Some(ids[prev])
+    }
+
+    /// Swap two panels within the layout tree.
+    pub fn swap_panels(&mut self, a: Uuid, b: Uuid) -> bool {
+        // Collect the pane node references by scanning and swapping in-place.
+        // We need to find both panels and swap them in their respective pane nodes.
+        self.swap_panels_recursive(a, b)
+    }
+
+    fn swap_panels_recursive(&mut self, a: Uuid, b: Uuid) -> bool {
+        // Walk the tree and replace a→b and b→a in panel_ids/selected_panel_id
+        match self {
+            LayoutNode::Pane {
+                panel_ids,
+                selected_panel_id,
+            } => {
+                let mut changed = false;
+                for id in panel_ids.iter_mut() {
+                    if *id == a {
+                        *id = b;
+                        changed = true;
+                    } else if *id == b {
+                        *id = a;
+                        changed = true;
+                    }
+                }
+                if let Some(sel) = selected_panel_id {
+                    if *sel == a {
+                        *sel = b;
+                    } else if *sel == b {
+                        *sel = a;
+                    }
+                }
+                changed
+            }
+            LayoutNode::Split { first, second, .. } => {
+                let c1 = first.swap_panels_recursive(a, b);
+                let c2 = second.swap_panels_recursive(a, b);
+                c1 || c2
+            }
+        }
+    }
+
+    /// Serialize the layout tree to JSON with panel metadata.
+    pub fn to_json_tree(&self, panels: &HashMap<Uuid, Panel>) -> Value {
+        match self {
+            LayoutNode::Pane {
+                panel_ids,
+                selected_panel_id,
+            } => {
+                let panels_json: Vec<Value> = panel_ids
+                    .iter()
+                    .filter_map(|id| {
+                        panels.get(id).map(|p| {
+                            serde_json::json!({
+                                "id": id.to_string(),
+                                "type": format!("{:?}", p.panel_type).to_lowercase(),
+                                "title": p.display_title(),
+                                "directory": p.directory,
+                            })
+                        })
+                    })
+                    .collect();
+                serde_json::json!({
+                    "type": "pane",
+                    "panels": panels_json,
+                    "selected": selected_panel_id.map(|id| id.to_string()),
+                })
+            }
+            LayoutNode::Split {
+                orientation,
+                divider_position,
+                first,
+                second,
+            } => {
+                serde_json::json!({
+                    "type": "split",
+                    "orientation": format!("{:?}", orientation).to_lowercase(),
+                    "divider_position": divider_position,
+                    "first": first.to_json_tree(panels),
+                    "second": second.to_json_tree(panels),
+                })
+            }
+        }
+    }
+
+    /// Find the neighboring panel in the given direction relative to `panel_id`.
+    /// Returns None if no neighbor exists in that direction.
+    pub fn neighbor(&self, panel_id: Uuid, direction: Direction) -> Option<Uuid> {
+        self.neighbor_recursive(panel_id, direction)
+    }
+
+    fn neighbor_recursive(&self, panel_id: Uuid, direction: Direction) -> Option<Uuid> {
+        match self {
+            LayoutNode::Pane { .. } => None,
+            LayoutNode::Split {
+                orientation,
+                first,
+                second,
+                ..
+            } => {
+                let first_ids = first.all_panel_ids();
+                let second_ids = second.all_panel_ids();
+                let in_first = first_ids.contains(&panel_id);
+                let in_second = second_ids.contains(&panel_id);
+
+                let matches_axis = match (orientation, direction) {
+                    (SplitOrientation::Horizontal, Direction::Left | Direction::Right) => true,
+                    (SplitOrientation::Vertical, Direction::Up | Direction::Down) => true,
+                    _ => false,
+                };
+
+                if matches_axis {
+                    let want_second = matches!(direction, Direction::Right | Direction::Down);
+                    if in_first && want_second {
+                        // Try deeper first, then take first panel in second half
+                        first
+                            .neighbor_recursive(panel_id, direction)
+                            .or_else(|| second.all_panel_ids().into_iter().next())
+                    } else if in_second && !want_second {
+                        second
+                            .neighbor_recursive(panel_id, direction)
+                            .or_else(|| first.all_panel_ids().into_iter().last())
+                    } else if in_first {
+                        first.neighbor_recursive(panel_id, direction)
+                    } else {
+                        second.neighbor_recursive(panel_id, direction)
+                    }
+                } else {
+                    // Cross-axis: recurse into whichever child has the panel
+                    if in_first {
+                        first.neighbor_recursive(panel_id, direction)
+                    } else if in_second {
+                        second.neighbor_recursive(panel_id, direction)
+                    } else {
+                        None
+                    }
+                }
+            }
+        }
     }
 
     /// Check if this node contains no panels.
