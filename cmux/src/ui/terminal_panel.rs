@@ -15,7 +15,7 @@ pub fn create_panel_widget(
 ) -> gtk4::Widget {
     match panel.panel_type {
         PanelType::Terminal => create_terminal_widget(panel, is_attention_source, state),
-        PanelType::Browser => create_browser_placeholder(panel, is_attention_source),
+        PanelType::Browser => create_browser_widget(panel, is_attention_source),
     }
 }
 
@@ -55,22 +55,11 @@ fn create_terminal_widget(
     container.upcast()
 }
 
-/// Create a placeholder for the browser panel (Phase 4).
-fn create_browser_placeholder(panel: &Panel, is_attention_source: bool) -> gtk4::Widget {
-    let container = gtk4::Box::new(gtk4::Orientation::Vertical, 0);
-    container.set_hexpand(true);
-    container.set_vexpand(true);
-    container.add_css_class("panel-shell");
-    if is_attention_source {
-        container.add_css_class("attention-panel");
-    }
-
-    let label = gtk4::Label::new(Some("Browser panel (coming in Phase 4)"));
-    label.set_hexpand(true);
-    label.set_vexpand(true);
-    label.add_css_class("dim-label");
-    container.append(&label);
-
-    container.set_widget_name(&panel.id.to_string());
-    container.upcast()
+/// Create a browser panel with WebKitWebView.
+fn create_browser_widget(panel: &Panel, is_attention_source: bool) -> gtk4::Widget {
+    super::browser_panel::create_browser_widget(
+        panel.id,
+        panel.directory.as_deref(), // Reuse directory field as initial URL for browser panels
+        is_attention_source,
+    )
 }
