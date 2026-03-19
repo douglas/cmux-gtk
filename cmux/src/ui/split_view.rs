@@ -306,13 +306,23 @@ fn build_tab_button(
     }
     tab.append(&close_btn);
 
-    // Click to select tab
+    // Click to select tab — skip if the click lands on the close button
     let click = gtk4::GestureClick::new();
     click.set_button(1);
     {
         let stack = stack.clone();
         let state = Rc::clone(state);
-        click.connect_pressed(move |gesture, _n, _x, _y| {
+        let close_btn_ref = close_btn.clone();
+        click.connect_pressed(move |gesture, _n, x, _y| {
+            // Don't steal clicks from the close button
+            let Some(tab_widget) = gesture.widget() else {
+                return;
+            };
+            let close_start = close_btn_ref.allocation().x() as f64
+                - tab_widget.allocation().x() as f64;
+            if x >= close_start {
+                return;
+            }
             gesture.set_state(gtk4::EventSequenceState::Claimed);
             stack.set_visible_child_name(&panel_id.to_string());
             // Update model
