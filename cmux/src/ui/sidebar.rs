@@ -34,6 +34,16 @@ pub fn create_sidebar(state: &Rc<AppState>) -> SidebarWidgets {
     scrolled.set_child(Some(&list_box));
     sidebar_box.append(&scrolled);
 
+    // Footer with version label
+    let footer = gtk4::Label::new(Some(&format!("cmux v{}", env!("CARGO_PKG_VERSION"))));
+    footer.add_css_class("dim-label");
+    footer.add_css_class("caption");
+    footer.set_margin_top(4);
+    footer.set_margin_bottom(4);
+    footer.set_halign(gtk4::Align::Center);
+    footer.set_opacity(0.5);
+    sidebar_box.append(&footer);
+
     SidebarWidgets {
         root: sidebar_box,
         list_box,
@@ -372,16 +382,26 @@ fn setup_row_context_menu(
     );
     menu.append(Some("Rename"), Some(&format!("sidebar.rename.{index}")));
 
-    // Color submenu
+    // Color submenu — 16-color palette matching macOS
     let color_menu = gtk4::gio::Menu::new();
     for (label, color) in &[
-        ("Blue", "blue"),
-        ("Green", "green"),
         ("Red", "red"),
+        ("Crimson", "crimson"),
         ("Orange", "orange"),
-        ("Purple", "purple"),
+        ("Amber", "amber"),
         ("Yellow", "yellow"),
-        ("Clear", ""),
+        ("Lime", "lime"),
+        ("Green", "green"),
+        ("Teal", "teal"),
+        ("Cyan", "cyan"),
+        ("Sky", "sky"),
+        ("Blue", "blue"),
+        ("Indigo", "indigo"),
+        ("Purple", "purple"),
+        ("Violet", "violet"),
+        ("Pink", "pink"),
+        ("Rose", "rose"),
+        ("None", ""),
     ] {
         color_menu.append(Some(label), Some(&format!("sidebar.color.{index}.{color}")));
     }
@@ -456,8 +476,11 @@ fn setup_row_context_menu(
     }
     action_group.add_action(&rename_action);
 
-    // Color actions
-    for color in &["blue", "green", "red", "orange", "purple", "yellow", ""] {
+    // Color actions — 16-color palette matching macOS + "" for clear
+    for color in &[
+        "red", "crimson", "orange", "amber", "yellow", "lime", "green", "teal",
+        "cyan", "sky", "blue", "indigo", "purple", "violet", "pink", "rose", "",
+    ] {
         let action_name = format!("color.{index}.{color}");
         let color_action = gtk4::gio::SimpleAction::new(&action_name, None);
         let color_value = if color.is_empty() {
@@ -573,12 +596,22 @@ fn show_rename_for_index(
 
 fn color_css_value(name: &str) -> &str {
     match name {
-        "blue" => "#3584e4",
-        "green" => "#33d17a",
         "red" => "#e01b24",
+        "crimson" => "#dc143c",
         "orange" => "#ff7800",
-        "purple" => "#9141ac",
+        "amber" => "#ffbf00",
         "yellow" => "#f6d32d",
+        "lime" => "#a3be8c",
+        "green" => "#33d17a",
+        "teal" => "#2aa198",
+        "cyan" => "#00bcd4",
+        "sky" => "#87ceeb",
+        "blue" => "#3584e4",
+        "indigo" => "#4b0082",
+        "purple" => "#9141ac",
+        "violet" => "#7c3aed",
+        "pink" => "#e91e8c",
+        "rose" => "#f43f5e",
         _ => "",
     }
 }
@@ -624,10 +657,10 @@ fn workspace_meta_text(workspace: &Workspace, sidebar: &SidebarDisplaySettings) 
             } else {
                 format!("git {}", git_branch.branch)
             });
-        } else if sidebar.show_directory {
-            parts.push(compact_path(&workspace.current_directory));
         }
-    } else if sidebar.show_directory {
+    }
+
+    if sidebar.show_directory {
         parts.push(compact_path(&workspace.current_directory));
     }
 
