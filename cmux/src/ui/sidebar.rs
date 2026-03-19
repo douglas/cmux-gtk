@@ -218,6 +218,21 @@ fn create_workspace_row(
     index_label.add_css_class("workspace-index");
     header.append(&index_label);
 
+    // Workspace type icon — pick based on dominant panel type
+    let has_browser = workspace
+        .panels
+        .values()
+        .any(|p| p.panel_type == crate::model::PanelType::Browser);
+    let icon_name = if has_browser {
+        "web-browser-symbolic"
+    } else {
+        "utilities-terminal-symbolic"
+    };
+    let type_icon = gtk4::Image::from_icon_name(icon_name);
+    type_icon.set_pixel_size(14);
+    type_icon.add_css_class("workspace-type-icon");
+    header.append(&type_icon);
+
     // Pin indicator
     if workspace.is_pinned {
         let pin_icon = gtk4::Image::from_icon_name("view-pin-symbolic");

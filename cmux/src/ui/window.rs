@@ -76,7 +76,13 @@ pub fn create_window(
     );
 
     let header = adw::HeaderBar::new();
-    let header_title = gtk4::Label::new(None);
+    let initial_title = {
+        let tm = lock_or_recover(&state.shared.tab_manager);
+        tm.selected()
+            .map(|ws| ws.display_title().to_string())
+            .unwrap_or_else(|| "cmux".to_string())
+    };
+    let header_title = gtk4::Label::new(Some(&initial_title));
     header_title.add_css_class("heading");
     header_title.set_ellipsize(gtk4::pango::EllipsizeMode::End);
     header.set_title_widget(Some(&header_title));
@@ -1024,9 +1030,21 @@ fn install_css() {
             min-width: 1em;
         }
 
+        /* ── Workspace type icon ── */
+        .workspace-type-icon {
+            opacity: 0.5;
+        }
+
         /* ── Selected row — solid accent highlight with white text ── */
+        .navigation-sidebar row:selected {
+            background-color: @accent_bg_color;
+            color: white;
+        }
         .navigation-sidebar row:selected .workspace-title {
             color: white;
+        }
+        .navigation-sidebar row:selected .workspace-type-icon {
+            opacity: 0.9;
         }
         .navigation-sidebar row:selected .dim-label,
         .navigation-sidebar row:selected .caption {
