@@ -243,6 +243,10 @@ fn build_actions(state: &Rc<AppState>) -> Rc<Vec<PaletteAction>> {
             label: "Open Folder in File Manager".into(),
         },
         PaletteAction {
+            name: "pane.new_browser".into(),
+            label: "New Browser Panel".into(),
+        },
+        PaletteAction {
             name: "surface.flash".into(),
             label: "Flash Panel".into(),
         },
@@ -279,6 +283,24 @@ fn build_actions(state: &Rc<AppState>) -> Rc<Vec<PaletteAction>> {
             label: "Show Notifications".into(),
         },
     ];
+
+    // Add "Open in..." commands for installed editors
+    for (binary, label) in [
+        ("code", "Open in VS Code"),
+        ("zed", "Open in Zed"),
+        ("nvim", "Open in Neovim (terminal)"),
+        ("vim", "Open in Vim (terminal)"),
+        ("emacs", "Open in Emacs"),
+        ("subl", "Open in Sublime Text"),
+        ("idea", "Open in IntelliJ IDEA"),
+    ] {
+        if which_exists(binary) {
+            actions.push(PaletteAction {
+                name: format!("open_in.{binary}"),
+                label: label.into(),
+            });
+        }
+    }
 
     // Add dynamic workspace entries
     {
@@ -339,6 +361,16 @@ fn fuzzy_match(haystack: &str, needle: &str) -> bool {
         }
     }
     true
+}
+
+/// Check if a binary is on PATH.
+fn which_exists(binary: &str) -> bool {
+    std::env::var_os("PATH")
+        .map(|paths| {
+            std::env::split_paths(&paths)
+                .any(|dir| dir.join(binary).is_file())
+        })
+        .unwrap_or(false)
 }
 
 fn execute_action(name: &str, state: &Rc<AppState>, on_refresh: &Rc<dyn Fn()>) {
@@ -485,6 +517,23 @@ fn execute_action(name: &str, state: &Rc<AppState>, on_refresh: &Rc<dyn Fn()>) {
                 .map(|ws| ws.current_directory.clone());
             if let Some(dir) = dir {
                 let _ = std::process::Command::new("xdg-open").arg(&dir).spawn();
+            }
+            return; // Don't refresh — external command
+        }
+        "pane.new_browser" => {
+            if let Some(ws) = lock_or_recover(&state.shared.tab_manager).selected_mut() {
+                ws.split(SplitOrientation::Vertical, PanelType::Browser);
+            }
+        }
+        name if name.starts_with("open_in.") => {
+            let binary = &name[8..];
+            let dir = lock_or_recover(&state.shared.tab_manager)
+                .selected()
+                .map(|ws| ws.current_directory.clone());
+            if let Some(dir) = dir {
+                let _ = std::process::Command::new(binary)
+                    .arg(&dir)
+                    .spawn();
             }
             return; // Don't refresh — external command
         }
