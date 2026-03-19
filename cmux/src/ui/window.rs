@@ -1093,27 +1093,34 @@ fn install_css() {
             background-color: rgba(255, 255, 255, 0.15);
         }
 
+        /* ── Split handle — thin like macOS ── */
+        paned > separator {
+            min-width: 1px;
+            min-height: 1px;
+            background-color: alpha(@theme_fg_color, 0.12);
+        }
+
         /* ── Pane tab bar ── */
         .pane-tab-bar {
             background-color: alpha(@theme_bg_color, 0.6);
             border-bottom: 1px solid alpha(@theme_fg_color, 0.1);
-            padding: 2px 4px;
+            padding: 1px 4px;
         }
         .pane-tab {
             border-radius: 6px;
-            padding: 3px 8px;
+            padding: 2px 6px;
             color: alpha(@theme_fg_color, 0.55);
         }
         .pane-tab:hover {
             background-color: alpha(@theme_fg_color, 0.06);
         }
         .pane-tab-selected {
-            background-color: alpha(@theme_fg_color, 0.1);
+            background-color: alpha(@theme_fg_color, 0.14);
             color: @theme_fg_color;
         }
         .pane-tab-close {
-            min-width: 16px;
-            min-height: 16px;
+            min-width: 14px;
+            min-height: 14px;
             padding: 0;
             opacity: 0.5;
         }
@@ -1121,10 +1128,10 @@ fn install_css() {
             opacity: 1;
         }
         .pane-tab-action {
-            min-width: 20px;
-            min-height: 20px;
-            padding: 2px;
-            opacity: 0.5;
+            min-width: 18px;
+            min-height: 18px;
+            padding: 1px;
+            opacity: 0.4;
         }
         .pane-tab-action:hover {
             opacity: 1;
@@ -1224,9 +1231,9 @@ fn install_css() {
 
         /* ── Panel shell ── */
         .panel-shell {
-            border: 1px solid rgba(127, 127, 127, 0.18);
-            border-radius: 10px;
-            padding: 3px;
+            border: 1px solid alpha(@theme_fg_color, 0.12);
+            border-radius: 8px;
+            padding: 2px;
         }
 
         .attention-panel {

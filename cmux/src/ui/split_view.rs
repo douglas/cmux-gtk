@@ -149,6 +149,14 @@ fn build_pane(
     spacer.set_hexpand(true);
     tab_bar.append(&spacer);
 
+    // Thin separator between tabs and action buttons
+    let sep = gtk4::Separator::new(gtk4::Orientation::Vertical);
+    sep.set_margin_top(4);
+    sep.set_margin_bottom(4);
+    sep.set_margin_start(2);
+    sep.set_margin_end(4);
+    tab_bar.append(&sep);
+
     // Target panel for "add tab" actions (selected or first)
     let target_panel_id = selected_id.or_else(|| panel_ids.first().copied());
 
