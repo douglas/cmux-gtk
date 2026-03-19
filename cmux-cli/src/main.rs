@@ -71,6 +71,8 @@ enum Commands {
 enum WorkspaceCommands {
     /// List all workspaces
     List,
+    /// Show current (selected) workspace
+    Current,
     /// Create a new workspace
     New {
         /// Working directory
@@ -106,6 +108,21 @@ enum WorkspaceCommands {
         /// Workspace index (closes selected if not specified)
         index: Option<usize>,
     },
+    /// Rename a workspace
+    Rename {
+        /// New title
+        title: String,
+        /// Target workspace UUID (defaults to selected)
+        #[arg(long)]
+        workspace: Option<String>,
+    },
+    /// Reorder a workspace
+    Reorder {
+        /// Source index
+        from: usize,
+        /// Destination index
+        to: usize,
+    },
     /// Set status metadata
     SetStatus {
         /// Status key
@@ -133,6 +150,19 @@ enum SurfaceCommands {
         #[arg(long)]
         surface: Option<String>,
     },
+    /// List surfaces (panels) in the current workspace
+    List {
+        /// Target workspace UUID
+        #[arg(long)]
+        workspace: Option<String>,
+    },
+    /// Show the currently focused surface
+    Current,
+    /// Focus a surface by ID
+    Focus {
+        /// Surface/panel UUID
+        id: String,
+    },
 }
 
 #[derive(Subcommand)]
@@ -142,6 +172,22 @@ enum PaneCommands {
         /// Split orientation: horizontal or vertical
         #[arg(long, default_value = "horizontal")]
         orientation: String,
+    },
+    /// List panes in the current workspace
+    List {
+        /// Target workspace UUID
+        #[arg(long)]
+        workspace: Option<String>,
+    },
+    /// Focus a pane by ID
+    Focus {
+        /// Panel UUID
+        id: String,
+    },
+    /// Close a pane by ID (closes focused pane if not specified)
+    Close {
+        /// Panel UUID
+        id: Option<String>,
     },
 }
 
@@ -154,6 +200,7 @@ fn main() -> anyhow::Result<()> {
 
         Commands::Workspace(ws) => match ws {
             WorkspaceCommands::List => ("workspace.list", serde_json::json!({})),
+            WorkspaceCommands::Current => ("workspace.current", serde_json::json!({})),
             WorkspaceCommands::New { directory, title } => (
                 "workspace.new",
                 serde_json::json!({
@@ -179,6 +226,17 @@ fn main() -> anyhow::Result<()> {
                 }
                 ("workspace.close", params)
             }
+            WorkspaceCommands::Rename { title, workspace } => (
+                "workspace.rename",
+                serde_json::json!({
+                    "title": title,
+                    "workspace": workspace,
+                }),
+            ),
+            WorkspaceCommands::Reorder { from, to } => (
+                "workspace.reorder",
+                serde_json::json!({"from": from, "to": to}),
+            ),
             WorkspaceCommands::SetStatus {
                 key,
                 value,
@@ -197,7 +255,6 @@ fn main() -> anyhow::Result<()> {
 
         Commands::Surface(surf) => match surf {
             SurfaceCommands::SendText { text, surface } => {
-                // Unescape \n sequences
                 let unescaped = text.replace("\\n", "\n");
                 (
                     "surface.send_input",
@@ -207,12 +264,33 @@ fn main() -> anyhow::Result<()> {
                     }),
                 )
             }
+            SurfaceCommands::List { workspace } => (
+                "surface.list",
+                serde_json::json!({"workspace": workspace}),
+            ),
+            SurfaceCommands::Current => ("surface.current", serde_json::json!({})),
+            SurfaceCommands::Focus { id } => (
+                "surface.focus",
+                serde_json::json!({"panel": id}),
+            ),
         },
 
         Commands::Pane(pane) => match pane {
             PaneCommands::New { orientation } => {
                 ("pane.new", serde_json::json!({"orientation": orientation}))
             }
+            PaneCommands::List { workspace } => (
+                "pane.list",
+                serde_json::json!({"workspace": workspace}),
+            ),
+            PaneCommands::Focus { id } => (
+                "pane.focus",
+                serde_json::json!({"panel": id}),
+            ),
+            PaneCommands::Close { id } => (
+                "pane.close",
+                serde_json::json!({"panel": id}),
+            ),
         },
 
         Commands::Notify {

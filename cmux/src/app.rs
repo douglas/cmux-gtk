@@ -22,6 +22,7 @@ pub fn lock_or_recover<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
 
 use crate::model::TabManager;
 use crate::notifications::NotificationStore;
+use crate::session;
 use crate::socket;
 use crate::ui;
 use uuid::Uuid;
@@ -198,12 +199,21 @@ pub fn run() -> i32 {
         activate(app, &state_clone);
     });
 
-    app.connect_shutdown(|_app| {
-        *GHOSTTY_APP_PTR.lock().unwrap() = SendAppPtr(std::ptr::null_mut());
-        GHOSTTY_TICK_PENDING.store(false, Ordering::Release);
-        socket::server::cleanup();
-        tracing::info!("Application shutdown");
-    });
+    {
+        let state = state.clone();
+        app.connect_shutdown(move |_app| {
+            // Save session before shutdown
+            let snapshot = session::store::create_snapshot(&state);
+            if let Err(e) = session::store::save_session(&snapshot) {
+                tracing::error!("Failed to save session on shutdown: {}", e);
+            }
+
+            *GHOSTTY_APP_PTR.lock().unwrap() = SendAppPtr(std::ptr::null_mut());
+            GHOSTTY_TICK_PENDING.store(false, Ordering::Release);
+            socket::server::cleanup();
+            tracing::info!("Application shutdown");
+        });
+    }
 
     app.run().into()
 }
@@ -217,11 +227,106 @@ fn activate(app: &adw::Application, state: &Rc<AppState>) {
     let (ui_event_tx, ui_event_rx) = tokio::sync::mpsc::unbounded_channel();
     state.shared.install_ui_event_sender(ui_event_tx);
 
+    // Restore session before creating the window
+    restore_session(state);
+
     init_ghostty(state);
 
     // Create the main window
     let window = ui::window::create_window(app, state, ui_event_rx);
     window.present();
+
+    // Start periodic autosave (every 60 seconds)
+    {
+        let state = state.clone();
+        glib::timeout_add_local(std::time::Duration::from_secs(60), move || {
+            let snapshot = session::store::create_snapshot(&state);
+            if let Err(e) = session::store::save_session(&snapshot) {
+                tracing::warn!("Autosave failed: {}", e);
+            }
+            glib::ControlFlow::Continue
+        });
+    }
+}
+
+/// Restore workspaces from a saved session, if one exists.
+fn restore_session(state: &Rc<AppState>) {
+    let snapshot = match session::store::load_session() {
+        Ok(Some(snapshot)) => snapshot,
+        Ok(None) => return,
+        Err(e) => {
+            tracing::warn!("Failed to load session: {}", e);
+            return;
+        }
+    };
+
+    // Take the first window's tab manager snapshot (Linux typically has one window)
+    let Some(window_snapshot) = snapshot.windows.into_iter().next() else {
+        return;
+    };
+
+    let tm_snapshot = window_snapshot.tab_manager;
+    if tm_snapshot.workspaces.is_empty() {
+        return;
+    }
+
+    let mut tab_manager = lock_or_recover(&state.shared.tab_manager);
+
+    // Replace the default workspace with restored ones
+    *tab_manager = TabManager::empty();
+
+    for ws_snapshot in &tm_snapshot.workspaces {
+        let mut workspace = crate::model::Workspace::with_directory(&ws_snapshot.current_directory);
+        workspace.custom_title = ws_snapshot.custom_title.clone();
+        workspace.custom_color = ws_snapshot.custom_color.clone();
+        workspace.is_pinned = ws_snapshot.is_pinned;
+        workspace.process_title = ws_snapshot.process_title.clone();
+        workspace.status_entries = ws_snapshot.status_entries.clone();
+        workspace.log_entries = ws_snapshot.log_entries.clone();
+        workspace.progress = ws_snapshot.progress.clone();
+        workspace.git_branch = ws_snapshot.git_branch.clone();
+
+        // Restore layout from snapshot
+        let layout = ws_snapshot.layout.to_layout();
+
+        // Rebuild panels map from snapshot panels
+        let mut panels = std::collections::HashMap::new();
+        for panel_snapshot in &ws_snapshot.panels {
+            let panel_type = match panel_snapshot.panel_type.as_str() {
+                "browser" => crate::model::PanelType::Browser,
+                _ => crate::model::PanelType::Terminal,
+            };
+            let panel = crate::model::panel::Panel {
+                id: panel_snapshot.id,
+                panel_type,
+                title: panel_snapshot.title.clone(),
+                custom_title: panel_snapshot.custom_title.clone(),
+                directory: panel_snapshot.directory.clone(),
+                is_pinned: panel_snapshot.is_pinned,
+                is_manually_unread: panel_snapshot.is_manually_unread,
+                git_branch: panel_snapshot.git_branch.clone(),
+                listening_ports: panel_snapshot.listening_ports.clone(),
+                tty_name: panel_snapshot.tty_name.clone(),
+            };
+            panels.insert(panel.id, panel);
+        }
+
+        workspace.layout = layout;
+        workspace.panels = panels;
+        workspace.focused_panel_id = ws_snapshot.focused_panel_id;
+
+        tab_manager.add_workspace(workspace);
+    }
+
+    // Restore selection
+    if let Some(index) = tm_snapshot.selected_workspace_index {
+        tab_manager.select(index);
+    }
+
+    tracing::info!(
+        "Restored {} workspaces from session",
+        tab_manager.len()
+    );
 }
 
 /// Initialize the ghostty embedded runtime and store it in AppState.

@@ -256,6 +256,24 @@ impl LayoutNode {
         }
     }
 
+    /// Return the next panel ID after the given one in layout order,
+    /// wrapping around to the first if at the end.
+    pub fn next_panel_id(&self, current: Uuid) -> Option<Uuid> {
+        let ids = self.all_panel_ids();
+        let pos = ids.iter().position(|&id| id == current)?;
+        let next = (pos + 1) % ids.len();
+        Some(ids[next])
+    }
+
+    /// Return the previous panel ID before the given one in layout order,
+    /// wrapping around to the last if at the beginning.
+    pub fn prev_panel_id(&self, current: Uuid) -> Option<Uuid> {
+        let ids = self.all_panel_ids();
+        let pos = ids.iter().position(|&id| id == current)?;
+        let prev = if pos == 0 { ids.len() - 1 } else { pos - 1 };
+        Some(ids[prev])
+    }
+
     /// Check if this node contains no panels.
     pub fn is_empty(&self) -> bool {
         match self {

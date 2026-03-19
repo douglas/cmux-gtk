@@ -42,11 +42,13 @@ pub enum SocketControlMode {
 
 impl SocketControlMode {
     /// Parse from environment variable or config.
+    /// Default is LocalUser on Linux (CLI is typically run from an external
+    /// terminal, not a cmux child process).
     pub fn from_env() -> Self {
         match std::env::var("CMUX_SOCKET_MODE").as_deref() {
             Ok("allowAll") => Self::AllowAll,
-            Ok("localUser") => Self::LocalUser,
-            _ => Self::CmuxOnly,
+            Ok("cmuxOnly") => Self::CmuxOnly,
+            _ => Self::LocalUser,
         }
     }
 }

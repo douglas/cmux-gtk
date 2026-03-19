@@ -271,12 +271,14 @@ fn setup_shortcuts(
         let shift = modifier.contains(gdk4::ModifierType::SHIFT_MASK);
 
         match (keyval, ctrl, shift) {
+            // Ctrl+Shift+T: New workspace
             (gdk4::Key::T, true, true) => {
                 let workspace = Workspace::new();
                 lock_or_recover(&state.shared.tab_manager).add_workspace(workspace);
                 refresh_ui(&list_box, &content_box, &state);
                 glib::Propagation::Stop
             }
+            // Ctrl+Shift+W: Close workspace
             (gdk4::Key::W, true, true) => {
                 let mut tab_manager = lock_or_recover(&state.shared.tab_manager);
                 if let Some(index) = tab_manager.selected_index() {
@@ -286,6 +288,31 @@ fn setup_shortcuts(
                 refresh_ui(&list_box, &content_box, &state);
                 glib::Propagation::Stop
             }
+            // Ctrl+Shift+Q: Close focused pane
+            (gdk4::Key::Q, true, true) => {
+                let closed = {
+                    let mut tm = lock_or_recover(&state.shared.tab_manager);
+                    if let Some(ws) = tm.selected_mut() {
+                        if let Some(panel_id) = ws.focused_panel_id {
+                            let removed = ws.remove_panel(panel_id);
+                            if removed && ws.is_empty() {
+                                let ws_id = ws.id;
+                                tm.remove_by_id(ws_id);
+                            }
+                            removed
+                        } else {
+                            false
+                        }
+                    } else {
+                        false
+                    }
+                };
+                if closed {
+                    refresh_ui(&list_box, &content_box, &state);
+                }
+                glib::Propagation::Stop
+            }
+            // Ctrl+Shift+D: Split horizontal
             (gdk4::Key::D, true, true) => {
                 if let Some(workspace) = lock_or_recover(&state.shared.tab_manager).selected_mut() {
                     workspace.split(SplitOrientation::Horizontal, PanelType::Terminal);
@@ -293,6 +320,7 @@ fn setup_shortcuts(
                 refresh_ui(&list_box, &content_box, &state);
                 glib::Propagation::Stop
             }
+            // Ctrl+Shift+E: Split vertical
             (gdk4::Key::E, true, true) => {
                 if let Some(workspace) = lock_or_recover(&state.shared.tab_manager).selected_mut() {
                     workspace.split(SplitOrientation::Vertical, PanelType::Terminal);
@@ -300,8 +328,111 @@ fn setup_shortcuts(
                 refresh_ui(&list_box, &content_box, &state);
                 glib::Propagation::Stop
             }
+            // Ctrl+Shift+U: Jump to latest unread
             (gdk4::Key::U, true, true) => {
                 if select_latest_unread(&state) {
+                    refresh_ui(&list_box, &content_box, &state);
+                }
+                glib::Propagation::Stop
+            }
+            // Ctrl+Shift+[: Focus previous pane
+            (gdk4::Key::bracketleft, true, true) => {
+                let changed = {
+                    let mut tm = lock_or_recover(&state.shared.tab_manager);
+                    if let Some(ws) = tm.selected_mut() {
+                        if let Some(current) = ws.focused_panel_id {
+                            if let Some(prev) = ws.layout.prev_panel_id(current) {
+                                ws.focus_panel(prev)
+                            } else {
+                                false
+                            }
+                        } else {
+                            false
+                        }
+                    } else {
+                        false
+                    }
+                };
+                if changed {
+                    refresh_ui(&list_box, &content_box, &state);
+                }
+                glib::Propagation::Stop
+            }
+            // Ctrl+Shift+]: Focus next pane
+            (gdk4::Key::bracketright, true, true) => {
+                let changed = {
+                    let mut tm = lock_or_recover(&state.shared.tab_manager);
+                    if let Some(ws) = tm.selected_mut() {
+                        if let Some(current) = ws.focused_panel_id {
+                            if let Some(next) = ws.layout.next_panel_id(current) {
+                                ws.focus_panel(next)
+                            } else {
+                                false
+                            }
+                        } else {
+                            false
+                        }
+                    } else {
+                        false
+                    }
+                };
+                if changed {
+                    refresh_ui(&list_box, &content_box, &state);
+                }
+                glib::Propagation::Stop
+            }
+            // Ctrl+Shift+PageUp: Move workspace up
+            (gdk4::Key::Page_Up, true, true) => {
+                let mut tm = lock_or_recover(&state.shared.tab_manager);
+                if let Some(idx) = tm.selected_index() {
+                    if idx > 0 {
+                        tm.move_workspace(idx, idx - 1);
+                    }
+                }
+                drop(tm);
+                refresh_ui(&list_box, &content_box, &state);
+                glib::Propagation::Stop
+            }
+            // Ctrl+Shift+PageDown: Move workspace down
+            (gdk4::Key::Page_Down, true, true) => {
+                let mut tm = lock_or_recover(&state.shared.tab_manager);
+                if let Some(idx) = tm.selected_index() {
+                    if idx + 1 < tm.len() {
+                        tm.move_workspace(idx, idx + 1);
+                    }
+                }
+                drop(tm);
+                refresh_ui(&list_box, &content_box, &state);
+                glib::Propagation::Stop
+            }
+            // Ctrl+1-9: Select workspace by number
+            (keyval, true, false)
+                if matches!(
+                    keyval,
+                    gdk4::Key::_1
+                        | gdk4::Key::_2
+                        | gdk4::Key::_3
+                        | gdk4::Key::_4
+                        | gdk4::Key::_5
+                        | gdk4::Key::_6
+                        | gdk4::Key::_7
+                        | gdk4::Key::_8
+                        | gdk4::Key::_9
+                ) =>
+            {
+                let index = match keyval {
+                    gdk4::Key::_1 => 0,
+                    gdk4::Key::_2 => 1,
+                    gdk4::Key::_3 => 2,
+                    gdk4::Key::_4 => 3,
+                    gdk4::Key::_5 => 4,
+                    gdk4::Key::_6 => 5,
+                    gdk4::Key::_7 => 6,
+                    gdk4::Key::_8 => 7,
+                    gdk4::Key::_9 => 8,
+                    _ => unreachable!(),
+                };
+                if select_workspace_by_index(&state, index) {
                     refresh_ui(&list_box, &content_box, &state);
                 }
                 glib::Propagation::Stop
