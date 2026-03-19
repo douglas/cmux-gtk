@@ -69,6 +69,18 @@ enum Commands {
 
     /// List available API methods
     Capabilities,
+
+    /// Identify the cmux server (platform, version)
+    Identify,
+
+    /// Show the layout tree for all workspaces
+    Tree,
+
+    /// Open the settings window
+    Settings,
+
+    /// Show sidebar state (selected workspace)
+    SidebarState,
 }
 
 #[derive(Subcommand)]
@@ -191,6 +203,25 @@ enum WorkspaceCommands {
         #[arg(long)]
         workspace: Option<String>,
     },
+    /// Report PR status for a workspace
+    ReportPr {
+        /// PR status: open, merged, closed, draft
+        status: String,
+        /// PR URL
+        #[arg(long)]
+        url: Option<String>,
+        /// Target workspace UUID
+        #[arg(long)]
+        workspace: Option<String>,
+    },
+    /// Perform an action on a workspace (pin, unpin, toggle_pin)
+    Action {
+        /// Action name: pin, unpin, toggle_pin
+        action: String,
+        /// Target workspace UUID
+        #[arg(long)]
+        workspace: Option<String>,
+    },
     /// Report git branch for workspace
     ReportGit {
         /// Branch name
@@ -250,6 +281,12 @@ enum SurfaceCommands {
         /// Surface/panel UUID
         id: String,
     },
+    /// Flash a surface to attract attention
+    Flash {
+        /// Surface/panel UUID (flashes focused panel if not specified)
+        #[arg(long)]
+        surface: Option<String>,
+    },
 }
 
 #[derive(Subcommand)]
@@ -276,6 +313,32 @@ enum PaneCommands {
         /// Panel UUID
         id: Option<String>,
     },
+    /// Switch to the previously focused pane
+    Last {
+        /// Target workspace UUID
+        #[arg(long)]
+        workspace: Option<String>,
+    },
+    /// Swap two panes in the layout
+    Swap {
+        /// First panel UUID
+        a: String,
+        /// Second panel UUID
+        b: String,
+    },
+    /// Resize the split containing a pane
+    Resize {
+        /// Amount to adjust (-0.05 to shrink, 0.05 to grow)
+        amount: f64,
+        /// Panel UUID (defaults to focused)
+        #[arg(long)]
+        panel: Option<String>,
+    },
+    /// Focus the neighboring pane in a direction
+    FocusDirection {
+        /// Direction: left, right, up, down
+        direction: String,
+    },
 }
 
 fn main() -> anyhow::Result<()> {
@@ -284,6 +347,10 @@ fn main() -> anyhow::Result<()> {
     let (method, params) = match &cli.command {
         Commands::Ping => ("system.ping", serde_json::json!({})),
         Commands::Capabilities => ("system.capabilities", serde_json::json!({})),
+        Commands::Identify => ("system.identify", serde_json::json!({})),
+        Commands::Tree => ("system.tree", serde_json::json!({})),
+        Commands::Settings => ("settings.open", serde_json::json!({})),
+        Commands::SidebarState => ("workspace.current", serde_json::json!({})),
 
         Commands::Workspace(ws) => match ws {
             WorkspaceCommands::List => ("workspace.list", serde_json::json!({})),
@@ -374,6 +441,25 @@ fn main() -> anyhow::Result<()> {
                 "workspace.list_log",
                 serde_json::json!({"workspace": workspace}),
             ),
+            WorkspaceCommands::ReportPr {
+                status,
+                url,
+                workspace,
+            } => (
+                "workspace.report_pr",
+                serde_json::json!({
+                    "status": status,
+                    "url": url,
+                    "workspace": workspace,
+                }),
+            ),
+            WorkspaceCommands::Action { action, workspace } => (
+                "workspace.action",
+                serde_json::json!({
+                    "action": action,
+                    "workspace": workspace,
+                }),
+            ),
             WorkspaceCommands::ReportGit { branch, dirty } => (
                 "workspace.report_git_branch",
                 serde_json::json!({"branch": branch, "is_dirty": dirty}),
@@ -400,6 +486,10 @@ fn main() -> anyhow::Result<()> {
                 "surface.focus",
                 serde_json::json!({"panel": id}),
             ),
+            SurfaceCommands::Flash { surface } => (
+                "surface.trigger_flash",
+                serde_json::json!({"surface": surface}),
+            ),
         },
 
         Commands::Pane(pane) => match pane {
@@ -417,6 +507,22 @@ fn main() -> anyhow::Result<()> {
             PaneCommands::Close { id } => (
                 "pane.close",
                 serde_json::json!({"panel": id}),
+            ),
+            PaneCommands::Last { workspace } => (
+                "pane.last",
+                serde_json::json!({"workspace": workspace}),
+            ),
+            PaneCommands::Swap { a, b } => (
+                "pane.swap",
+                serde_json::json!({"a": a, "b": b}),
+            ),
+            PaneCommands::Resize { amount, panel } => (
+                "pane.resize",
+                serde_json::json!({"amount": amount, "panel": panel}),
+            ),
+            PaneCommands::FocusDirection { direction } => (
+                "pane.focus_direction",
+                serde_json::json!({"direction": direction}),
             ),
         },
 
@@ -566,6 +672,15 @@ fn format_response(method: &str, response: &Value) {
                     let marker = if selected { "*" } else { " " };
                     println!("{}{} {} ({} panels)", marker, index, title, panels);
                 }
+            }
+        }
+
+        "system.identify" => {
+            if let Some(r) = result {
+                let app = r.get("app").and_then(|v| v.as_str()).unwrap_or("?");
+                let platform = r.get("platform").and_then(|v| v.as_str()).unwrap_or("?");
+                let version = r.get("version").and_then(|v| v.as_str()).unwrap_or("?");
+                println!("{} {} v{}", app, platform, version);
             }
         }
 
