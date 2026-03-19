@@ -903,7 +903,7 @@ fn setup_shortcuts(
 }
 
 /// Show a dialog to rename a panel tab.
-fn show_rename_tab_dialog(
+pub fn show_rename_tab_dialog(
     window: &adw::ApplicationWindow,
     state: &Rc<AppState>,
     panel_id: uuid::Uuid,

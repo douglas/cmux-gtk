@@ -5,6 +5,7 @@ use std::collections::HashMap;
 use std::rc::Rc;
 
 use gtk4::prelude::*;
+use gtk4::gio;
 use uuid::Uuid;
 
 use crate::app::{lock_or_recover, AppState};
@@ -313,6 +314,83 @@ fn build_tab_button(
         });
     }
     tab.append(&close_btn);
+
+    // Right-click context menu (Rename / Close)
+    let right_click = gtk4::GestureClick::new();
+    right_click.set_button(3);
+    {
+        let state = Rc::clone(state);
+        right_click.connect_pressed(move |gesture, _n, x, y| {
+            gesture.set_state(gtk4::EventSequenceState::Claimed);
+            let Some(widget) = gesture.widget() else {
+                return;
+            };
+
+            let menu = gio::Menu::new();
+            menu.append(Some("Rename"), Some("tab.rename"));
+            menu.append(Some("Close"), Some("tab.close"));
+
+            let group = gio::SimpleActionGroup::new();
+
+            let rename_action = gio::SimpleAction::new("rename", None);
+            {
+                let state = Rc::clone(&state);
+                let widget_for_rename = widget.clone();
+                rename_action.connect_activate(move |_, _| {
+                    let root = widget_for_rename.root();
+                    let window = root
+                        .as_ref()
+                        .and_then(|r| r.downcast_ref::<libadwaita::ApplicationWindow>());
+                    if let Some(window) = window {
+                        crate::ui::window::show_rename_tab_dialog(window, &state, panel_id);
+                    }
+                });
+            }
+            group.add_action(&rename_action);
+
+            let close_action = gio::SimpleAction::new("close", None);
+            {
+                let state = Rc::clone(&state);
+                close_action.connect_activate(move |_, _| {
+                    let mut tm = lock_or_recover(&state.shared.tab_manager);
+                    if let Some(ws) = tm.find_workspace_with_panel_mut(panel_id) {
+                        ws.remove_panel(panel_id);
+                        if ws.is_empty() {
+                            let ws_id = ws.id;
+                            tm.remove_by_id(ws_id);
+                        }
+                    }
+                    drop(tm);
+                    state.shared.notify_ui_refresh();
+                });
+            }
+            group.add_action(&close_action);
+
+            widget.insert_action_group("tab", Some(&group));
+
+            let popover = gtk4::PopoverMenu::from_model(Some(&menu));
+            popover.set_parent(&widget);
+            popover.set_pointing_to(Some(&gdk4::Rectangle::new(
+                x as i32,
+                y as i32,
+                1,
+                1,
+            )));
+            popover.set_has_arrow(false);
+            // Clean up parent ref when popover closes — defer so
+            // action activation completes before we remove the group.
+            let widget_ref = widget.clone();
+            popover.connect_closed(move |p| {
+                p.unparent();
+                let w = widget_ref.clone();
+                glib::idle_add_local_once(move || {
+                    w.insert_action_group("tab", gio::ActionGroup::NONE);
+                });
+            });
+            popover.popup();
+        });
+    }
+    tab.add_controller(right_click);
 
     // Click to select tab — skip if the click lands on the close button
     let click = gtk4::GestureClick::new();
