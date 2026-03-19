@@ -37,7 +37,6 @@ fn create_terminal_widget(
     let container = gtk4::Box::new(gtk4::Orientation::Vertical, 0);
     container.set_hexpand(true);
     container.set_vexpand(true);
-    container.add_css_class("panel-shell");
     if is_attention_source {
         container.add_css_class("attention-panel");
     }
