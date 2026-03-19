@@ -129,6 +129,8 @@ pub fn dispatch(json_line: &str, state: &Arc<SharedState>) -> Response {
         "surface.list" => handle_surface_list(id, &req.params, state),
         "surface.current" => handle_surface_current(id, state),
         "surface.focus" => handle_surface_focus(id, &req.params, state),
+        "surface.send_key" => handle_surface_send_key(id, &req.params, state),
+        "surface.read_text" => handle_surface_read_text(id, &req.params, state),
         "surface.trigger_flash" => handle_surface_trigger_flash(id, &req.params, state),
 
         // Settings
@@ -195,6 +197,8 @@ fn handle_capabilities(id: Value) -> Response {
         "surface.list",
         "surface.current",
         "surface.focus",
+        "surface.send_key",
+        "surface.read_text",
         "surface.trigger_flash",
         "settings.open",
         "notification.create",
@@ -1494,6 +1498,178 @@ fn handle_workspace_report_pr(id: Value, params: &Value, state: &Arc<SharedState
     drop(tm);
     state.notify_ui_refresh();
     Response::success(id, serde_json::json!({"updated": true}))
+}
+
+// -----------------------------------------------------------------------
+// surface.send_key
+// -----------------------------------------------------------------------
+
+fn handle_surface_send_key(id: Value, params: &Value, state: &Arc<SharedState>) -> Response {
+    let key_name = params.get("key").and_then(|v| v.as_str());
+    let mods_arr = params.get("mods").and_then(|v| v.as_array());
+
+    let Some(key_name) = key_name else {
+        return Response::error(id, "invalid_params", "Provide 'key' (e.g. 'c', 'Return', 'Escape')");
+    };
+
+    // Parse modifier names to ghostty mods bitmask
+    let mut mods: u32 = 0;
+    if let Some(arr) = mods_arr {
+        for m in arr {
+            if let Some(s) = m.as_str() {
+                match s.to_lowercase().as_str() {
+                    "ctrl" | "control" => {
+                        mods |=
+                            ghostty_sys::ghostty_input_mods_e::GHOSTTY_MODS_CTRL as u32;
+                    }
+                    "shift" => {
+                        mods |=
+                            ghostty_sys::ghostty_input_mods_e::GHOSTTY_MODS_SHIFT as u32;
+                    }
+                    "alt" => {
+                        mods |=
+                            ghostty_sys::ghostty_input_mods_e::GHOSTTY_MODS_ALT as u32;
+                    }
+                    "super" | "meta" => {
+                        mods |=
+                            ghostty_sys::ghostty_input_mods_e::GHOSTTY_MODS_SUPER as u32;
+                    }
+                    _ => {}
+                }
+            }
+        }
+    }
+
+    // Convert key name to GDK keyval. Try the name directly first,
+    // then try common aliases.
+    let keyval = resolve_key_name(key_name);
+    let Some(keyval) = keyval else {
+        return Response::error(
+            id,
+            "invalid_params",
+            &format!("Unknown key name: '{key_name}'"),
+        );
+    };
+
+    // Resolve the panel
+    let panel_str = params
+        .get("panel")
+        .or_else(|| params.get("surface"))
+        .and_then(|v| v.as_str());
+    let panel_id = if let Some(s) = panel_str {
+        match uuid::Uuid::parse_str(s) {
+            Ok(pid) => pid,
+            Err(_) => return Response::error(id, "invalid_params", "Invalid panel UUID"),
+        }
+    } else {
+        let tm = lock_or_recover(&state.tab_manager);
+        let Some(ws) = tm.selected() else {
+            return Response::error(id, "not_found", "No workspace selected");
+        };
+        let Some(pid) = ws.focused_panel_id else {
+            return Response::error(id, "not_found", "No focused panel");
+        };
+        pid
+    };
+
+    state.send_ui_event(UiEvent::SendKey {
+        panel_id,
+        keyval,
+        keycode: 0,
+        mods,
+    });
+    Response::success(id, serde_json::json!({"sent": true}))
+}
+
+/// Resolve a key name string to a GDK keyval.
+fn resolve_key_name(name: &str) -> Option<u32> {
+    // Single character → use its unicode value as keyval
+    let mut chars = name.chars();
+    if let Some(ch) = chars.next() {
+        if chars.next().is_none() && ch.is_ascii() {
+            // Single ASCII char: GDK keyvals for ASCII match the codepoint
+            // for a-z, 0-9, punctuation
+            return Some(ch as u32);
+        }
+    }
+
+    // Common key name aliases
+    match name.to_lowercase().as_str() {
+        "return" | "enter" => Some(0xff0d),
+        "escape" | "esc" => Some(0xff1b),
+        "tab" => Some(0xff09),
+        "backspace" => Some(0xff08),
+        "delete" | "del" => Some(0xffff),
+        "space" => Some(0x0020),
+        "up" | "arrow_up" => Some(0xff52),
+        "down" | "arrow_down" => Some(0xff54),
+        "left" | "arrow_left" => Some(0xff51),
+        "right" | "arrow_right" => Some(0xff53),
+        "home" => Some(0xff50),
+        "end" => Some(0xff57),
+        "page_up" | "pageup" => Some(0xff55),
+        "page_down" | "pagedown" => Some(0xff56),
+        "insert" => Some(0xff63),
+        "f1" => Some(0xffbe),
+        "f2" => Some(0xffbf),
+        "f3" => Some(0xffc0),
+        "f4" => Some(0xffc1),
+        "f5" => Some(0xffc2),
+        "f6" => Some(0xffc3),
+        "f7" => Some(0xffc4),
+        "f8" => Some(0xffc5),
+        "f9" => Some(0xffc6),
+        "f10" => Some(0xffc7),
+        "f11" => Some(0xffc8),
+        "f12" => Some(0xffc9),
+        _ => None,
+    }
+}
+
+// -----------------------------------------------------------------------
+// surface.read_text
+// -----------------------------------------------------------------------
+
+fn handle_surface_read_text(id: Value, params: &Value, state: &Arc<SharedState>) -> Response {
+    let panel_str = params
+        .get("panel")
+        .or_else(|| params.get("surface"))
+        .and_then(|v| v.as_str());
+
+    let panel_id = if let Some(s) = panel_str {
+        match uuid::Uuid::parse_str(s) {
+            Ok(pid) => pid,
+            Err(_) => return Response::error(id, "invalid_params", "Invalid panel UUID"),
+        }
+    } else {
+        let tm = lock_or_recover(&state.tab_manager);
+        let Some(ws) = tm.selected() else {
+            return Response::error(id, "not_found", "No workspace selected");
+        };
+        let Some(pid) = ws.focused_panel_id else {
+            return Response::error(id, "not_found", "No focused panel");
+        };
+        pid
+    };
+
+    let (tx, rx) = tokio::sync::oneshot::channel();
+    state.send_ui_event(UiEvent::ReadText {
+        panel_id,
+        reply: tx,
+    });
+
+    // Block waiting for the GTK thread to reply.
+    // The socket handler runs on a tokio thread so this is safe.
+    match rx.blocking_recv() {
+        Ok(Some(text)) => Response::success(
+            id,
+            serde_json::json!({
+                "text": text,
+            }),
+        ),
+        Ok(None) => Response::error(id, "not_found", "Surface not ready or not found"),
+        Err(_) => Response::error(id, "internal", "GTK thread did not reply"),
+    }
 }
 
 fn handle_surface_trigger_flash(id: Value, params: &Value, state: &Arc<SharedState>) -> Response {

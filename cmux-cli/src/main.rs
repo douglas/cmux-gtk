@@ -281,6 +281,23 @@ enum SurfaceCommands {
         /// Surface/panel UUID
         id: String,
     },
+    /// Send a key event to a terminal
+    SendKey {
+        /// Key name (e.g. "c", "Return", "Escape", "F1")
+        key: String,
+        /// Modifier keys (ctrl, shift, alt, super)
+        #[arg(long, value_delimiter = ',')]
+        mods: Vec<String>,
+        /// Surface/panel UUID (sends to focused panel if not specified)
+        #[arg(long)]
+        surface: Option<String>,
+    },
+    /// Read the visible screen text from a terminal
+    ReadScreen {
+        /// Surface/panel UUID (reads focused panel if not specified)
+        #[arg(long)]
+        surface: Option<String>,
+    },
     /// Flash a surface to attract attention
     Flash {
         /// Surface/panel UUID (flashes focused panel if not specified)
@@ -485,6 +502,22 @@ fn main() -> anyhow::Result<()> {
             SurfaceCommands::Focus { id } => (
                 "surface.focus",
                 serde_json::json!({"panel": id}),
+            ),
+            SurfaceCommands::SendKey {
+                key,
+                mods,
+                surface,
+            } => (
+                "surface.send_key",
+                serde_json::json!({
+                    "key": key,
+                    "mods": mods,
+                    "surface": surface,
+                }),
+            ),
+            SurfaceCommands::ReadScreen { surface } => (
+                "surface.read_text",
+                serde_json::json!({"surface": surface}),
             ),
             SurfaceCommands::Flash { surface } => (
                 "surface.trigger_flash",

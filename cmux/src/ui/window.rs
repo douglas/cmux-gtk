@@ -298,6 +298,24 @@ fn bind_shared_state_updates(
                             );
                         }
                     }
+                    UiEvent::SendKey {
+                        panel_id,
+                        keyval,
+                        keycode,
+                        mods,
+                    } => {
+                        if let Some(surface) = state.terminal_cache.borrow().get(&panel_id) {
+                            surface.send_key(keyval, keycode, mods);
+                        }
+                    }
+                    UiEvent::ReadText { panel_id, reply } => {
+                        let text = state
+                            .terminal_cache
+                            .borrow()
+                            .get(&panel_id)
+                            .and_then(|s| s.read_screen_text());
+                        let _ = reply.send(text);
+                    }
                     // Search events are handled but we don't have the search
                     // overlay widget refs here. The search overlay reads state
                     // directly via its own callbacks.
