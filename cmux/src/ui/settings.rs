@@ -4,7 +4,7 @@ use gtk4::prelude::*;
 use libadwaita as adw;
 use libadwaita::prelude::*;
 
-use crate::settings::{self, AppSettings, SocketAccess, ThemeMode};
+use crate::settings::{self, AppSettings, SidebarDisplaySettings, SocketAccess, ThemeMode};
 
 /// Create and show the settings preferences window.
 pub fn show_settings(parent: &adw::ApplicationWindow) {
@@ -37,6 +37,48 @@ pub fn show_settings(parent: &adw::ApplicationWindow) {
     });
     theme_group.add(&theme_row);
     appearance_page.add(&theme_group);
+
+    // ── Sidebar display group ──
+    let sidebar_group = adw::PreferencesGroup::new();
+    sidebar_group.set_title("Sidebar Display");
+    sidebar_group.set_description(Some("Choose which metadata to show in workspace rows"));
+
+    let git_row = adw::SwitchRow::new();
+    git_row.set_title("Git Branch");
+    git_row.set_active(current_settings.sidebar.show_git_branch);
+    sidebar_group.add(&git_row);
+
+    let dir_row = adw::SwitchRow::new();
+    dir_row.set_title("Directory Path");
+    dir_row.set_active(current_settings.sidebar.show_directory);
+    sidebar_group.add(&dir_row);
+
+    let pr_row = adw::SwitchRow::new();
+    pr_row.set_title("PR Status");
+    pr_row.set_active(current_settings.sidebar.show_pr_status);
+    sidebar_group.add(&pr_row);
+
+    let ports_row = adw::SwitchRow::new();
+    ports_row.set_title("Listening Ports");
+    ports_row.set_active(current_settings.sidebar.show_ports);
+    sidebar_group.add(&ports_row);
+
+    let logs_row = adw::SwitchRow::new();
+    logs_row.set_title("Log Entries");
+    logs_row.set_active(current_settings.sidebar.show_logs);
+    sidebar_group.add(&logs_row);
+
+    let progress_row = adw::SwitchRow::new();
+    progress_row.set_title("Progress Bars");
+    progress_row.set_active(current_settings.sidebar.show_progress);
+    sidebar_group.add(&progress_row);
+
+    let pills_row = adw::SwitchRow::new();
+    pills_row.set_title("Status Pills");
+    pills_row.set_active(current_settings.sidebar.show_status_pills);
+    sidebar_group.add(&pills_row);
+
+    appearance_page.add(&sidebar_group);
 
     window.add(&appearance_page);
 
@@ -126,6 +168,13 @@ pub fn show_settings(parent: &adw::ApplicationWindow) {
         let sound_row = sound_row.clone();
         let command_row = command_row.clone();
         let socket_row = socket_row.clone();
+        let git_row = git_row.clone();
+        let dir_row = dir_row.clone();
+        let pr_row = pr_row.clone();
+        let ports_row = ports_row.clone();
+        let logs_row = logs_row.clone();
+        let progress_row = progress_row.clone();
+        let pills_row = pills_row.clone();
         window.connect_close_request(move |_| {
             let theme = match theme_row.selected() {
                 1 => ThemeMode::Light,
@@ -153,6 +202,15 @@ pub fn show_settings(parent: &adw::ApplicationWindow) {
                     custom_command,
                 },
                 socket_access,
+                sidebar: SidebarDisplaySettings {
+                    show_git_branch: git_row.is_active(),
+                    show_directory: dir_row.is_active(),
+                    show_pr_status: pr_row.is_active(),
+                    show_ports: ports_row.is_active(),
+                    show_logs: logs_row.is_active(),
+                    show_progress: progress_row.is_active(),
+                    show_status_pills: pills_row.is_active(),
+                },
                 shortcuts: settings::shortcuts::ShortcutConfig::default(),
             };
 

@@ -15,6 +15,8 @@ pub struct AppSettings {
     pub notifications: NotificationSettings,
     /// Socket access mode.
     pub socket_access: SocketAccess,
+    /// Sidebar display toggles.
+    pub sidebar: SidebarDisplaySettings,
     /// Keyboard shortcuts.
     #[serde(skip)]
     pub shortcuts: shortcuts::ShortcutConfig,
@@ -48,12 +50,40 @@ pub enum SocketAccess {
     AllowAll,
 }
 
+/// Sidebar display toggles — which metadata to show in workspace rows.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct SidebarDisplaySettings {
+    pub show_git_branch: bool,
+    pub show_directory: bool,
+    pub show_pr_status: bool,
+    pub show_ports: bool,
+    pub show_logs: bool,
+    pub show_progress: bool,
+    pub show_status_pills: bool,
+}
+
+impl Default for SidebarDisplaySettings {
+    fn default() -> Self {
+        Self {
+            show_git_branch: true,
+            show_directory: true,
+            show_pr_status: true,
+            show_ports: true,
+            show_logs: true,
+            show_progress: true,
+            show_status_pills: true,
+        }
+    }
+}
+
 impl Default for AppSettings {
     fn default() -> Self {
         Self {
             theme: ThemeMode::System,
             notifications: NotificationSettings::default(),
             socket_access: SocketAccess::CmuxOnly,
+            sidebar: SidebarDisplaySettings::default(),
             shortcuts: shortcuts::ShortcutConfig::default(),
         }
     }
