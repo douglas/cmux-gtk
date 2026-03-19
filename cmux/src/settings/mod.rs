@@ -17,6 +17,8 @@ pub struct AppSettings {
     pub socket_access: SocketAccess,
     /// Sidebar display toggles.
     pub sidebar: SidebarDisplaySettings,
+    /// Browser settings.
+    pub browser: BrowserSettings,
     /// Keyboard shortcuts.
     #[serde(skip)]
     pub shortcuts: shortcuts::ShortcutConfig,
@@ -48,6 +50,83 @@ pub enum SocketAccess {
     Off,
     CmuxOnly,
     AllowAll,
+}
+
+/// Browser panel settings.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct BrowserSettings {
+    /// Default search engine for non-URL queries.
+    pub search_engine: SearchEngine,
+    /// Home page URL (shown when clicking home button).
+    pub home_url: String,
+}
+
+impl Default for BrowserSettings {
+    fn default() -> Self {
+        Self {
+            search_engine: SearchEngine::DuckDuckGo,
+            home_url: "https://duckduckgo.com".to_string(),
+        }
+    }
+}
+
+/// Search engine for browser URL bar queries.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum SearchEngine {
+    Google,
+    DuckDuckGo,
+    Bing,
+    Kagi,
+}
+
+impl SearchEngine {
+    /// Return the search URL template (query appended after).
+    pub fn search_url(self, query: &str) -> String {
+        let encoded = query.replace(' ', "+");
+        match self {
+            Self::Google => format!("https://www.google.com/search?q={encoded}"),
+            Self::DuckDuckGo => format!("https://duckduckgo.com/?q={encoded}"),
+            Self::Bing => format!("https://www.bing.com/search?q={encoded}"),
+            Self::Kagi => format!("https://kagi.com/search?q={encoded}"),
+        }
+    }
+
+    pub const ALL: &[Self] = &[
+        Self::Google,
+        Self::DuckDuckGo,
+        Self::Bing,
+        Self::Kagi,
+    ];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Google => "Google",
+            Self::DuckDuckGo => "DuckDuckGo",
+            Self::Bing => "Bing",
+            Self::Kagi => "Kagi",
+        }
+    }
+
+    pub fn from_index(i: u32) -> Self {
+        match i {
+            0 => Self::Google,
+            1 => Self::DuckDuckGo,
+            2 => Self::Bing,
+            3 => Self::Kagi,
+            _ => Self::DuckDuckGo,
+        }
+    }
+
+    pub fn to_index(self) -> u32 {
+        match self {
+            Self::Google => 0,
+            Self::DuckDuckGo => 1,
+            Self::Bing => 2,
+            Self::Kagi => 3,
+        }
+    }
 }
 
 /// Sidebar display toggles — which metadata to show in workspace rows.
@@ -84,6 +163,7 @@ impl Default for AppSettings {
             notifications: NotificationSettings::default(),
             socket_access: SocketAccess::CmuxOnly,
             sidebar: SidebarDisplaySettings::default(),
+            browser: BrowserSettings::default(),
             shortcuts: shortcuts::ShortcutConfig::default(),
         }
     }
@@ -111,7 +191,7 @@ pub fn save(settings: &AppSettings) -> Result<(), std::io::Error> {
 
     let path = dir.join("settings.json");
     let json = serde_json::to_string_pretty(settings)
-        .map_err(|e| std::io::Error::other(e))?;
+        .map_err(std::io::Error::other)?;
     std::fs::write(path, json)?;
 
     shortcuts::save(&settings.shortcuts)?;

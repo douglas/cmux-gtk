@@ -1,14 +1,21 @@
 //! Browser panel — embedded WebKit browser (webkit6 / WebKitGTK 6.0).
 
+use std::cell::Cell;
+use std::rc::Rc;
+
 use gtk4::prelude::*;
 use webkit6::prelude::*;
+
+use crate::settings;
 
 /// Create an embedded browser panel widget.
 ///
 /// Layout:
 /// ```text
 /// VBox:
-///   ├─ nav_bar (HBox): [back] [fwd] [reload/stop] [url_entry]
+///   ├─ nav_bar (HBox): [back] [fwd] [reload/stop] [home] [url_entry] [find] [devtools]
+///   ├─ progress_bar (ProgressBar): thin load indicator
+///   ├─ find_bar (HBox): [find_entry] [prev] [next] [match_count] [close]  (hidden by default)
 ///   └─ web_view (WebView): fills remaining space
 /// ```
 pub fn create_browser_widget(
@@ -16,6 +23,8 @@ pub fn create_browser_widget(
     initial_url: Option<&str>,
     is_attention_source: bool,
 ) -> gtk4::Widget {
+    let browser_settings = settings::load().browser;
+
     let container = gtk4::Box::new(gtk4::Orientation::Vertical, 0);
     container.set_hexpand(true);
     container.set_vexpand(true);
@@ -45,20 +54,76 @@ pub fn create_browser_widget(
     reload_btn.set_tooltip_text(Some("Reload"));
     nav_bar.append(&reload_btn);
 
+    let home_btn = gtk4::Button::from_icon_name("go-home-symbolic");
+    home_btn.set_tooltip_text(Some("Home"));
+    nav_bar.append(&home_btn);
+
     let url_entry = gtk4::Entry::new();
     url_entry.set_hexpand(true);
-    url_entry.set_placeholder_text(Some("Enter URL..."));
+    url_entry.set_placeholder_text(Some("Enter URL or search..."));
     if let Some(url) = initial_url {
         url_entry.set_text(url);
     }
     nav_bar.append(&url_entry);
 
+    let find_toggle_btn = gtk4::ToggleButton::new();
+    find_toggle_btn.set_icon_name("edit-find-symbolic");
+    find_toggle_btn.set_tooltip_text(Some("Find in Page (Ctrl+F)"));
+    nav_bar.append(&find_toggle_btn);
+
+    let devtools_btn = gtk4::ToggleButton::new();
+    devtools_btn.set_icon_name("utilities-terminal-symbolic");
+    devtools_btn.set_tooltip_text(Some("Developer Tools"));
+    nav_bar.append(&devtools_btn);
+
     container.append(&nav_bar);
+
+    // ── Progress bar ──
+    let progress_bar = gtk4::ProgressBar::new();
+    progress_bar.add_css_class("osd");
+    progress_bar.set_visible(false);
+    container.append(&progress_bar);
+
+    // ── Find bar (hidden by default) ──
+    let find_bar = gtk4::Box::new(gtk4::Orientation::Horizontal, 4);
+    find_bar.set_margin_start(4);
+    find_bar.set_margin_end(4);
+    find_bar.set_margin_top(2);
+    find_bar.set_margin_bottom(2);
+    find_bar.set_visible(false);
+
+    let find_entry = gtk4::SearchEntry::new();
+    find_entry.set_hexpand(true);
+    find_entry.set_placeholder_text(Some("Find in page..."));
+    find_bar.append(&find_entry);
+
+    let find_prev_btn = gtk4::Button::from_icon_name("go-up-symbolic");
+    find_prev_btn.set_tooltip_text(Some("Previous Match"));
+    find_bar.append(&find_prev_btn);
+
+    let find_next_btn = gtk4::Button::from_icon_name("go-down-symbolic");
+    find_next_btn.set_tooltip_text(Some("Next Match"));
+    find_bar.append(&find_next_btn);
+
+    let match_label = gtk4::Label::new(None);
+    match_label.add_css_class("dim-label");
+    find_bar.append(&match_label);
+
+    let find_close_btn = gtk4::Button::from_icon_name("window-close-symbolic");
+    find_close_btn.set_tooltip_text(Some("Close Find"));
+    find_bar.append(&find_close_btn);
+
+    container.append(&find_bar);
 
     // ── WebView ──
     let web_view = webkit6::WebView::new();
     web_view.set_hexpand(true);
     web_view.set_vexpand(true);
+
+    // Enable developer extras for inspector
+    if let Some(ws) = webkit6::prelude::WebViewExt::settings(&web_view) {
+        ws.set_enable_developer_extras(true);
+    }
 
     // Apply dark mode stylesheet if system is dark
     apply_dark_mode(&web_view);
@@ -91,11 +156,21 @@ pub fn create_browser_widget(
         });
     }
 
+    // Home button
+    {
+        let wv = web_view.clone();
+        let home_url = browser_settings.home_url.clone();
+        home_btn.connect_clicked(move |_| {
+            wv.load_uri(&home_url);
+        });
+    }
+
     // ── URL entry navigation ──
     {
         let wv = web_view.clone();
+        let engine = browser_settings.search_engine;
         url_entry.connect_activate(move |entry| {
-            let url = normalize_url(&entry.text());
+            let url = normalize_url(&entry.text(), engine);
             wv.load_uri(&url);
         });
     }
@@ -128,13 +203,18 @@ pub fn create_browser_widget(
         });
     }
 
-    // ── Title notify: update URL entry on title change (optional feedback) ──
+    // ── Progress bar: track estimated load progress ──
     {
-        let _entry = url_entry.clone();
-        web_view.connect_title_notify(move |wv| {
-            // Title is available for model updates — the panel title sync
-            // is handled by the caller via periodic model refresh.
-            let _title = wv.title();
+        let pbar = progress_bar.clone();
+        web_view.connect_estimated_load_progress_notify(move |wv| {
+            let progress = wv.estimated_load_progress();
+            if progress < 1.0 {
+                pbar.set_visible(true);
+                pbar.set_fraction(progress);
+            } else {
+                pbar.set_visible(false);
+                pbar.set_fraction(0.0);
+            }
         });
     }
 
@@ -148,8 +228,105 @@ pub fn create_browser_widget(
         });
     }
 
+    // ── Find-in-page wiring ──
+    let devtools_open = Rc::new(Cell::new(false));
+    {
+        let find_bar = find_bar.clone();
+        let find_entry = find_entry.clone();
+        find_toggle_btn.connect_toggled(move |btn| {
+            let active = btn.is_active();
+            find_bar.set_visible(active);
+            if active {
+                find_entry.grab_focus();
+            }
+        });
+    }
+    {
+        let wv = web_view.clone();
+        let match_label = match_label.clone();
+        find_entry.connect_search_changed(move |entry| {
+            let text = entry.text().to_string();
+            if let Some(fc) = wv.find_controller() {
+                if text.is_empty() {
+                    fc.search_finish();
+                    match_label.set_text("");
+                } else {
+                    let opts = webkit6::FindOptions::CASE_INSENSITIVE
+                        | webkit6::FindOptions::WRAP_AROUND;
+                    fc.search(&text, opts.bits(), 0);
+                }
+            }
+        });
+    }
+    {
+        let wv = web_view.clone();
+        find_next_btn.connect_clicked(move |_| {
+            if let Some(fc) = wv.find_controller() {
+                fc.search_next();
+            }
+        });
+    }
+    {
+        let wv = web_view.clone();
+        find_prev_btn.connect_clicked(move |_| {
+            if let Some(fc) = wv.find_controller() {
+                fc.search_previous();
+            }
+        });
+    }
+    // Enter in find entry = next match
+    {
+        let wv = web_view.clone();
+        find_entry.connect_activate(move |_| {
+            if let Some(fc) = wv.find_controller() {
+                fc.search_next();
+            }
+        });
+    }
+    // Close find bar
+    {
+        let find_toggle = find_toggle_btn.clone();
+        let wv = web_view.clone();
+        find_close_btn.connect_clicked(move |_| {
+            find_toggle.set_active(false);
+            if let Some(fc) = wv.find_controller() {
+                fc.search_finish();
+            }
+        });
+    }
+    // Match count signal
+    {
+        let match_label = match_label;
+        if let Some(fc) = web_view.find_controller() {
+            fc.connect_counted_matches(move |_fc, count| {
+                if count == 0 {
+                    match_label.set_text("No matches");
+                } else {
+                    match_label.set_text(&format!("{count} matches"));
+                }
+            });
+        }
+    }
+
+    // ── Dev tools toggle ──
+    {
+        let wv = web_view.clone();
+        let open = devtools_open.clone();
+        devtools_btn.connect_toggled(move |btn| {
+            if let Some(inspector) = wv.inspector() {
+                if btn.is_active() {
+                    inspector.show();
+                    open.set(true);
+                } else {
+                    inspector.close();
+                    open.set(false);
+                }
+            }
+        });
+    }
+
     // ── Load initial URL ──
-    let url = initial_url.map(normalize_url);
+    let url = initial_url.map(|u| normalize_url(u, browser_settings.search_engine));
     if let Some(ref url) = url {
         if url != "about:blank" {
             web_view.load_uri(url);
@@ -208,7 +385,7 @@ fn inject_dark_stylesheet(web_view: &webkit6::WebView) {
     }
 }
 
-fn normalize_url(input: &str) -> String {
+fn normalize_url(input: &str, engine: settings::SearchEngine) -> String {
     let trimmed = input.trim();
     if trimmed.is_empty() {
         return "about:blank".to_string();
@@ -222,5 +399,5 @@ fn normalize_url(input: &str) -> String {
     if trimmed.contains('.') && !trimmed.contains(' ') {
         return format!("https://{trimmed}");
     }
-    format!("https://duckduckgo.com/?q={}", trimmed.replace(' ', "+"))
+    engine.search_url(trimmed)
 }
