@@ -62,7 +62,18 @@ pub fn create_window(
     let showing_notifications: Rc<Cell<bool>> = Rc::new(Cell::new(false));
 
     bind_sidebar_selection(&list_box, &content_box, state);
-    bind_shared_state_updates(&list_box, &content_box, &window, state, ui_events);
+    bind_shared_state_updates(
+        &list_box,
+        &content_box,
+        &window,
+        state,
+        ui_events,
+        &split_view,
+        &sidebar_page,
+        &notif_page,
+        &showing_notifications,
+        &notif_panel,
+    );
 
     let header = adw::HeaderBar::new();
 
@@ -255,17 +266,28 @@ fn bind_sidebar_selection(list_box: &gtk4::ListBox, content_box: &gtk4::Box, sta
     });
 }
 
+#[allow(clippy::too_many_arguments)]
 fn bind_shared_state_updates(
     list_box: &gtk4::ListBox,
     content_box: &gtk4::Box,
     window: &adw::ApplicationWindow,
     state: &Rc<AppState>,
     mut ui_events: UnboundedReceiver<UiEvent>,
+    nav_split_view: &adw::NavigationSplitView,
+    sidebar_page: &adw::NavigationPage,
+    notif_page: &adw::NavigationPage,
+    showing_notifications: &Rc<Cell<bool>>,
+    notif_panel: &notifications_panel::NotificationsPanel,
 ) {
     let state = state.clone();
     let list_box = list_box.clone();
     let content_box = content_box.clone();
     let window_weak = window.downgrade();
+    let nav_split_view = nav_split_view.clone();
+    let sidebar_page = sidebar_page.clone();
+    let notif_page = notif_page.clone();
+    let showing_notifications = showing_notifications.clone();
+    let notif_panel = notif_panel.clone();
 
     glib::MainContext::default().spawn_local(async move {
         while let Some(event) = ui_events.recv().await {
@@ -351,6 +373,22 @@ fn bind_shared_state_updates(
                         if let Some(surface) = state.terminal_cache.borrow().get(&panel_id) {
                             surface.binding_action("clear_screen");
                             surface.refresh();
+                        }
+                    }
+                    UiEvent::ToggleNotifications => {
+                        if showing_notifications.get() {
+                            nav_split_view.set_sidebar(Some(&sidebar_page));
+                            showing_notifications.set(false);
+                        } else {
+                            notif_panel.refresh(&state);
+                            nav_split_view.set_sidebar(Some(&notif_page));
+                            showing_notifications.set(true);
+                        }
+                    }
+                    UiEvent::RenameTab { panel_id } => {
+                        if let Some(window) = window_weak.upgrade() {
+                            show_rename_tab_dialog(&window, &state, panel_id);
+                            needs_refresh = true;
                         }
                     }
                     // Search events are handled but we don't have the search
@@ -840,6 +878,105 @@ fn setup_shortcuts(
     });
 
     window.add_controller(controller);
+}
+
+/// Show a dialog to rename a panel tab.
+fn show_rename_tab_dialog(
+    window: &adw::ApplicationWindow,
+    state: &Rc<AppState>,
+    panel_id: uuid::Uuid,
+) {
+    let current_title = {
+        let tm = lock_or_recover(&state.shared.tab_manager);
+        tm.find_workspace_with_panel(panel_id)
+            .and_then(|ws| ws.panels.get(&panel_id))
+            .map(|p| p.display_title().to_string())
+            .unwrap_or_default()
+    };
+
+    let dialog = gtk4::Window::builder()
+        .transient_for(window)
+        .modal(true)
+        .title("Rename Tab")
+        .default_width(320)
+        .build();
+
+    let vbox = gtk4::Box::new(gtk4::Orientation::Vertical, 12);
+    vbox.set_margin_start(16);
+    vbox.set_margin_end(16);
+    vbox.set_margin_top(16);
+    vbox.set_margin_bottom(16);
+
+    let entry = gtk4::Entry::new();
+    entry.set_text(&current_title);
+    entry.set_activates_default(true);
+    vbox.append(&entry);
+
+    let btn_box = gtk4::Box::new(gtk4::Orientation::Horizontal, 8);
+    btn_box.set_halign(gtk4::Align::End);
+
+    let cancel_btn = gtk4::Button::with_label("Cancel");
+    let ok_btn = gtk4::Button::with_label("Rename");
+    ok_btn.add_css_class("suggested-action");
+    btn_box.append(&cancel_btn);
+    btn_box.append(&ok_btn);
+    vbox.append(&btn_box);
+
+    dialog.set_child(Some(&vbox));
+
+    {
+        let dialog = dialog.clone();
+        cancel_btn.connect_clicked(move |_| dialog.close());
+    }
+
+    {
+        let state = state.clone();
+        let dialog = dialog.clone();
+        let entry = entry.clone();
+        ok_btn.connect_clicked(move |_| {
+            let new_title = entry.text().to_string();
+            let mut tm = lock_or_recover(&state.shared.tab_manager);
+            if let Some(ws) = tm.find_workspace_with_panel_mut(panel_id) {
+                if let Some(panel) = ws.panels.get_mut(&panel_id) {
+                    if new_title.is_empty() {
+                        panel.custom_title = None;
+                    } else {
+                        panel.custom_title = Some(new_title);
+                    }
+                }
+            }
+            drop(tm);
+            state.shared.notify_ui_refresh();
+            dialog.close();
+        });
+    }
+
+    // Enter activates OK
+    {
+        let ok_btn = ok_btn.clone();
+        entry.connect_activate(move |_| {
+            ok_btn.emit_clicked();
+        });
+    }
+
+    // Escape closes
+    let key_controller = gtk4::EventControllerKey::new();
+    {
+        let dialog = dialog.clone();
+        key_controller.connect_key_pressed(move |_, keyval, _, _| {
+            if keyval == gdk4::Key::Escape {
+                dialog.close();
+                glib::Propagation::Stop
+            } else {
+                glib::Propagation::Proceed
+            }
+        });
+    }
+    dialog.add_controller(key_controller);
+
+    dialog.present();
+    entry.grab_focus();
+    entry.select_region(0, -1);
 }
 
 fn install_css() {

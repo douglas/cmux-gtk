@@ -254,6 +254,30 @@ fn build_actions(state: &Rc<AppState>) -> Rc<Vec<PaletteAction>> {
             name: "surface.clear_history".into(),
             label: "Clear Scrollback History".into(),
         },
+        PaletteAction {
+            name: "pane.equalize".into(),
+            label: "Equalize Splits".into(),
+        },
+        PaletteAction {
+            name: "tab.close".into(),
+            label: "Close Tab".into(),
+        },
+        PaletteAction {
+            name: "tab.rename".into(),
+            label: "Rename Tab".into(),
+        },
+        PaletteAction {
+            name: "tab.next_in_pane".into(),
+            label: "Next Tab in Pane".into(),
+        },
+        PaletteAction {
+            name: "tab.prev_in_pane".into(),
+            label: "Previous Tab in Pane".into(),
+        },
+        PaletteAction {
+            name: "notifications.toggle".into(),
+            label: "Show Notifications".into(),
+        },
     ];
 
     // Add dynamic workspace entries
@@ -493,6 +517,57 @@ fn execute_action(name: &str, state: &Rc<AppState>, on_refresh: &Rc<dyn Fn()>) {
                 }
             }
             return;
+        }
+        "pane.equalize" => {
+            if let Some(ws) = lock_or_recover(&state.shared.tab_manager).selected_mut() {
+                ws.layout.equalize();
+            }
+        }
+        "tab.close" => {
+            let mut tm = lock_or_recover(&state.shared.tab_manager);
+            if let Some(ws) = tm.selected_mut() {
+                if let Some(panel_id) = ws.focused_panel_id {
+                    ws.remove_panel(panel_id);
+                    if ws.is_empty() {
+                        let ws_id = ws.id;
+                        tm.remove_by_id(ws_id);
+                    }
+                }
+            }
+        }
+        "tab.rename" => {
+            if let Some(ws) = lock_or_recover(&state.shared.tab_manager).selected() {
+                if let Some(panel_id) = ws.focused_panel_id {
+                    state
+                        .shared
+                        .send_ui_event(crate::app::UiEvent::RenameTab { panel_id });
+                }
+            }
+            return; // UiEvent handled
+        }
+        "tab.next_in_pane" => {
+            if let Some(ws) = lock_or_recover(&state.shared.tab_manager).selected_mut() {
+                if let Some(current) = ws.focused_panel_id {
+                    if let Some(next) = ws.layout.next_panel_in_pane(current) {
+                        ws.focus_panel(next);
+                    }
+                }
+            }
+        }
+        "tab.prev_in_pane" => {
+            if let Some(ws) = lock_or_recover(&state.shared.tab_manager).selected_mut() {
+                if let Some(current) = ws.focused_panel_id {
+                    if let Some(prev) = ws.layout.prev_panel_in_pane(current) {
+                        ws.focus_panel(prev);
+                    }
+                }
+            }
+        }
+        "notifications.toggle" => {
+            state
+                .shared
+                .send_ui_event(crate::app::UiEvent::ToggleNotifications);
+            return; // UiEvent handled
         }
         name if name.starts_with("workspace.select.") => {
             if let Ok(index) = name[17..].parse::<usize>() {

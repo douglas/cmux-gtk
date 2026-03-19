@@ -157,6 +157,10 @@ pub enum UiEvent {
     ClearHistory {
         panel_id: Uuid,
     },
+    ToggleNotifications,
+    RenameTab {
+        panel_id: Uuid,
+    },
 }
 
 /// Thread-safe state shared between GTK main thread and socket server.
