@@ -101,7 +101,7 @@ fn build_pane(
         return label.upcast();
     }
 
-    // Multiple panels — use GtkStack with switcher
+    // Multiple panels — use GtkStack with custom tab bar
     let stack = gtk4::Stack::new();
     stack.set_hexpand(true);
     stack.set_vexpand(true);
@@ -126,17 +126,151 @@ fn build_pane(
         stack.set_visible_child_name(&sel_id.to_string());
     }
 
-    // If there are tabs, add a tab switcher
     let vbox = gtk4::Box::new(gtk4::Orientation::Vertical, 0);
+
+    // Build custom tab bar with close buttons and drag-drop reorder
     if panel_ids.len() > 1 {
-        let switcher = gtk4::StackSwitcher::new();
-        switcher.set_stack(Some(&stack));
-        vbox.append(&switcher);
+        let tab_bar = gtk4::Box::new(gtk4::Orientation::Horizontal, 0);
+        tab_bar.add_css_class("pane-tab-bar");
+
+        for (tab_index, &panel_id) in panel_ids.iter().enumerate() {
+            let title = panels
+                .get(&panel_id)
+                .map(|p| p.display_title().to_string())
+                .unwrap_or_else(|| "?".to_string());
+            let is_selected = selected_id == Some(panel_id);
+
+            let tab_btn = build_tab_button(
+                panel_id,
+                tab_index,
+                &title,
+                is_selected,
+                &stack,
+                state,
+            );
+            tab_bar.append(&tab_btn);
+        }
+
+        vbox.append(&tab_bar);
     }
+
     vbox.append(&stack);
     vbox.set_hexpand(true);
     vbox.set_vexpand(true);
     vbox.upcast()
+}
+
+/// Build a single tab button with label, close button, and drag-drop reorder.
+fn build_tab_button(
+    panel_id: Uuid,
+    tab_index: usize,
+    title: &str,
+    is_selected: bool,
+    stack: &gtk4::Stack,
+    state: &Rc<AppState>,
+) -> gtk4::Box {
+    let tab = gtk4::Box::new(gtk4::Orientation::Horizontal, 4);
+    tab.add_css_class("pane-tab");
+    if is_selected {
+        tab.add_css_class("pane-tab-selected");
+    }
+    tab.set_margin_start(2);
+    tab.set_margin_end(2);
+    tab.set_margin_top(2);
+    tab.set_margin_bottom(2);
+
+    let label = gtk4::Label::new(Some(title));
+    label.set_ellipsize(gtk4::pango::EllipsizeMode::End);
+    label.set_max_width_chars(20);
+    tab.append(&label);
+
+    // Close button
+    let close_btn = gtk4::Button::from_icon_name("window-close-symbolic");
+    close_btn.add_css_class("flat");
+    close_btn.add_css_class("circular");
+    close_btn.add_css_class("pane-tab-close");
+    close_btn.set_tooltip_text(Some("Close tab"));
+    {
+        let state = Rc::clone(state);
+        close_btn.connect_clicked(move |_| {
+            let mut tm = lock_or_recover(&state.shared.tab_manager);
+            if let Some(ws) = tm.find_workspace_with_panel_mut(panel_id) {
+                ws.remove_panel(panel_id);
+                if ws.is_empty() {
+                    let ws_id = ws.id;
+                    tm.remove_by_id(ws_id);
+                }
+            }
+            drop(tm);
+            state.shared.notify_ui_refresh();
+        });
+    }
+    tab.append(&close_btn);
+
+    // Click to select tab
+    let click = gtk4::GestureClick::new();
+    click.set_button(1);
+    {
+        let stack = stack.clone();
+        let state = Rc::clone(state);
+        click.connect_pressed(move |gesture, _n, _x, _y| {
+            gesture.set_state(gtk4::EventSequenceState::Claimed);
+            stack.set_visible_child_name(&panel_id.to_string());
+            // Update model
+            let mut tm = lock_or_recover(&state.shared.tab_manager);
+            if let Some(ws) = tm.find_workspace_with_panel_mut(panel_id) {
+                ws.focus_panel(panel_id);
+            }
+            drop(tm);
+            state.shared.notify_ui_refresh();
+        });
+    }
+    tab.add_controller(click);
+
+    // Drag source for reordering
+    let drag_source = gtk4::DragSource::new();
+    drag_source.set_actions(gdk4::DragAction::MOVE);
+    {
+        let index_str = tab_index.to_string();
+        let id_str = panel_id.to_string();
+        drag_source.connect_prepare(move |_source, _x, _y| {
+            let data = format!("{}/{}", index_str, id_str);
+            let content = gdk4::ContentProvider::for_value(&data.to_value());
+            Some(content)
+        });
+    }
+    tab.add_controller(drag_source);
+
+    // Drop target for reordering
+    let drop_target = gtk4::DropTarget::new(glib::Type::STRING, gdk4::DragAction::MOVE);
+    {
+        let state = Rc::clone(state);
+        let target_index = tab_index;
+        drop_target.connect_drop(move |_target, value, _x, _y| {
+            let Ok(data) = value.get::<String>() else {
+                return false;
+            };
+            let parts: Vec<&str> = data.splitn(2, '/').collect();
+            if parts.len() != 2 {
+                return false;
+            }
+            let Ok(source_panel_id) = uuid::Uuid::parse_str(parts[1]) else {
+                return false;
+            };
+
+            let mut tm = lock_or_recover(&state.shared.tab_manager);
+            if let Some(ws) = tm.find_workspace_with_panel_mut(source_panel_id) {
+                ws.layout
+                    .reorder_panel_in_pane(source_panel_id, target_index);
+            }
+            drop(tm);
+            state.shared.notify_ui_refresh();
+            true
+        });
+    }
+    tab.add_controller(drop_target);
+
+    tab
 }
 
 /// Build a split widget (GtkPaned with two children).
