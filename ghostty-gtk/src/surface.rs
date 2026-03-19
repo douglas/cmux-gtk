@@ -297,37 +297,29 @@ impl GhosttyGlSurface {
 
         #[cfg(feature = "link-ghostty")]
         {
-            let mut config = unsafe { ghostty_surface_config_new() };
+            // Zero-initialize the entire config to avoid garbage in fields
+            // we don't explicitly set. In release builds, the optimizer reuses
+            // stack slots aggressively and uninitialized fields (env_vars,
+            // env_var_count, initial_input, etc.) can contain garbage → SIGSEGV.
+            let mut config: ghostty_surface_config_s = unsafe { std::mem::zeroed() };
             let callback_userdata = Box::new(crate::callbacks::SurfaceUserdata::new(self));
 
-            // Set platform to Linux with our GtkGLArea
             config.platform_tag = ghostty_platform_e::GHOSTTY_PLATFORM_LINUX;
             config.platform = ghostty_platform_u {
                 linux: ghostty_platform_linux_s {
                     gl_area: self.as_ptr() as *mut c_void,
                 },
             };
-
-            // Set scale factor
             config.scale_factor = self.scale_factor() as f64;
-
-            // Set working directory
-            let wd_cstr;
-            if let Some(wd) = _working_directory {
-                wd_cstr = std::ffi::CString::new(wd).ok();
-                config.working_directory = wd_cstr.as_ref().map_or(ptr::null(), |c| c.as_ptr());
-            }
-
-            // Set command
-            let cmd_cstr;
-            if let Some(cmd) = _command {
-                cmd_cstr = std::ffi::CString::new(cmd).ok();
-                config.command = cmd_cstr.as_ref().map_or(ptr::null(), |c| c.as_ptr());
-            }
-
             config.context = ghostty_surface_context_e::GHOSTTY_SURFACE_CONTEXT_SPLIT;
             config.userdata =
                 (&*callback_userdata as *const crate::callbacks::SurfaceUserdata) as *mut c_void;
+
+            let wd_cstr = _working_directory.and_then(|wd| std::ffi::CString::new(wd).ok());
+            config.working_directory = wd_cstr.as_ref().map_or(ptr::null(), |c| c.as_ptr());
+
+            let cmd_cstr = _command.and_then(|cmd| std::ffi::CString::new(cmd).ok());
+            config.command = cmd_cstr.as_ref().map_or(ptr::null(), |c| c.as_ptr());
 
             let surface = unsafe { ghostty_surface_new(app, &config) };
             if surface.is_null() {
