@@ -8,7 +8,7 @@ use gtk4::prelude::*;
 use uuid::Uuid;
 
 use crate::app::{lock_or_recover, AppState};
-use crate::model::panel::{LayoutNode, Panel, SplitOrientation};
+use crate::model::panel::{LayoutNode, Panel, PanelType, SplitOrientation};
 use crate::ui::terminal_panel;
 
 /// Build a zoomed view — renders only a single panel full-size.
@@ -140,11 +140,16 @@ fn build_pane(
                 .unwrap_or_else(|| "?".to_string());
             let is_selected = selected_id == Some(panel_id);
 
+            let panel_type = panels
+                .get(&panel_id)
+                .map(|p| p.panel_type)
+                .unwrap_or(PanelType::Terminal);
             let tab_btn = build_tab_button(
                 panel_id,
                 tab_index,
                 &title,
                 is_selected,
+                panel_type,
                 &stack,
                 state,
             );
@@ -166,6 +171,7 @@ fn build_tab_button(
     tab_index: usize,
     title: &str,
     is_selected: bool,
+    panel_type: PanelType,
     stack: &gtk4::Stack,
     state: &Rc<AppState>,
 ) -> gtk4::Box {
@@ -178,6 +184,15 @@ fn build_tab_button(
     tab.set_margin_end(2);
     tab.set_margin_top(2);
     tab.set_margin_bottom(2);
+
+    // Panel type icon
+    let icon_name = match panel_type {
+        PanelType::Terminal => "utilities-terminal-symbolic",
+        PanelType::Browser => "web-browser-symbolic",
+    };
+    let icon = gtk4::Image::from_icon_name(icon_name);
+    icon.set_pixel_size(14);
+    tab.append(&icon);
 
     let label = gtk4::Label::new(Some(title));
     label.set_ellipsize(gtk4::pango::EllipsizeMode::End);
