@@ -151,6 +151,12 @@ pub enum UiEvent {
         panel_id: Uuid,
         reply: tokio::sync::oneshot::Sender<Option<String>>,
     },
+    RefreshSurface {
+        panel_id: Uuid,
+    },
+    ClearHistory {
+        panel_id: Uuid,
+    },
 }
 
 /// Thread-safe state shared between GTK main thread and socket server.

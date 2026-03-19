@@ -316,6 +316,17 @@ fn bind_shared_state_updates(
                             .and_then(|s| s.read_screen_text());
                         let _ = reply.send(text);
                     }
+                    UiEvent::RefreshSurface { panel_id } => {
+                        if let Some(surface) = state.terminal_cache.borrow().get(&panel_id) {
+                            surface.refresh();
+                        }
+                    }
+                    UiEvent::ClearHistory { panel_id } => {
+                        if let Some(surface) = state.terminal_cache.borrow().get(&panel_id) {
+                            surface.binding_action("clear_screen");
+                            surface.refresh();
+                        }
+                    }
                     // Search events are handled but we don't have the search
                     // overlay widget refs here. The search overlay reads state
                     // directly via its own callbacks.
