@@ -244,6 +244,82 @@ impl TabManager {
         true
     }
 
+    /// Find the index of a workspace by ID.
+    pub fn workspace_index(&self, id: Uuid) -> Option<usize> {
+        self.workspaces.iter().position(|w| w.id == id)
+    }
+
+    /// Close all non-pinned workspaces except the given one. Returns the count closed.
+    pub fn close_others(&mut self, keep_id: Uuid) -> usize {
+        let to_remove: Vec<usize> = self
+            .workspaces
+            .iter()
+            .enumerate()
+            .filter(|(_, ws)| ws.id != keep_id && !ws.is_pinned)
+            .map(|(i, _)| i)
+            .collect();
+        let count = to_remove.len();
+        for &i in to_remove.iter().rev() {
+            self.workspaces.remove(i);
+        }
+        // Fix selection
+        if let Some(new_idx) = self.workspaces.iter().position(|ws| ws.id == keep_id) {
+            self.selected_index = Some(new_idx);
+        } else if self.workspaces.is_empty() {
+            self.selected_index = None;
+        } else {
+            self.selected_index = Some(0);
+        }
+        count
+    }
+
+    /// Close all non-pinned workspaces above (before) the given one. Returns the count closed.
+    pub fn close_above(&mut self, workspace_id: Uuid) -> usize {
+        let Some(target_idx) = self.workspace_index(workspace_id) else {
+            return 0;
+        };
+        let to_remove: Vec<usize> = self.workspaces[..target_idx]
+            .iter()
+            .enumerate()
+            .filter(|(_, ws)| !ws.is_pinned)
+            .map(|(i, _)| i)
+            .collect();
+        let count = to_remove.len();
+        for &i in to_remove.iter().rev() {
+            self.workspaces.remove(i);
+        }
+        // Fix selection to follow the target workspace
+        if let Some(new_idx) = self.workspaces.iter().position(|ws| ws.id == workspace_id) {
+            self.selected_index = Some(new_idx);
+        }
+        count
+    }
+
+    /// Close all non-pinned workspaces below (after) the given one. Returns the count closed.
+    pub fn close_below(&mut self, workspace_id: Uuid) -> usize {
+        let Some(target_idx) = self.workspace_index(workspace_id) else {
+            return 0;
+        };
+        let to_remove: Vec<usize> = self.workspaces[(target_idx + 1)..]
+            .iter()
+            .enumerate()
+            .filter(|(_, ws)| !ws.is_pinned)
+            .map(|(i, _)| target_idx + 1 + i)
+            .collect();
+        let count = to_remove.len();
+        for &i in to_remove.iter().rev() {
+            self.workspaces.remove(i);
+        }
+        // Fix selection
+        if let Some(sel) = self.selected_index {
+            if sel >= self.workspaces.len() {
+                self.selected_index =
+                    Some(self.workspaces.len().saturating_sub(1));
+            }
+        }
+        count
+    }
+
     /// Find the workspace containing a panel with the given UUID.
     pub fn find_workspace_with_panel(&self, panel_id: Uuid) -> Option<&Workspace> {
         self.workspaces
@@ -363,6 +439,89 @@ mod tests {
         tm.select(1);
         assert!(tm.move_workspace(3, 0));
         assert_eq!(tm.selected_index(), Some(2));
+    }
+
+    #[test]
+    fn test_workspace_index() {
+        let mut tm = TabManager::new();
+        let ws2 = Workspace::new();
+        let id2 = ws2.id;
+        tm.add_workspace(ws2);
+        assert_eq!(tm.workspace_index(id2), Some(1));
+    }
+
+    #[test]
+    fn test_close_others_preserves_pinned() {
+        let mut tm = TabManager::empty();
+        let mut ws1 = Workspace::new();
+        ws1.is_pinned = true;
+        let ws1_id = ws1.id;
+        tm.add_workspace(ws1);
+        let ws2 = Workspace::new();
+        let ws2_id = ws2.id;
+        tm.add_workspace(ws2);
+        let ws3 = Workspace::new();
+        tm.add_workspace(ws3);
+
+        let closed = tm.close_others(ws2_id);
+        assert_eq!(closed, 1); // ws3 closed, ws1 pinned kept
+        assert_eq!(tm.len(), 2);
+        assert!(tm.workspace(ws1_id).is_some());
+        assert!(tm.workspace(ws2_id).is_some());
+    }
+
+    #[test]
+    fn test_close_above() {
+        let mut tm = TabManager::empty();
+        let ws1 = Workspace::new();
+        tm.add_workspace(ws1);
+        let ws2 = Workspace::new();
+        tm.add_workspace(ws2);
+        let ws3 = Workspace::new();
+        let ws3_id = ws3.id;
+        tm.add_workspace(ws3);
+        let ws4 = Workspace::new();
+        tm.add_workspace(ws4);
+
+        let closed = tm.close_above(ws3_id);
+        assert_eq!(closed, 2);
+        assert_eq!(tm.len(), 2);
+        assert_eq!(tm.workspace_index(ws3_id), Some(0));
+    }
+
+    #[test]
+    fn test_close_below() {
+        let mut tm = TabManager::empty();
+        let ws1 = Workspace::new();
+        let ws1_id = ws1.id;
+        tm.add_workspace(ws1);
+        let ws2 = Workspace::new();
+        tm.add_workspace(ws2);
+        let ws3 = Workspace::new();
+        tm.add_workspace(ws3);
+
+        let closed = tm.close_below(ws1_id);
+        assert_eq!(closed, 2);
+        assert_eq!(tm.len(), 1);
+    }
+
+    #[test]
+    fn test_close_below_preserves_pinned() {
+        let mut tm = TabManager::empty();
+        let ws1 = Workspace::new();
+        let ws1_id = ws1.id;
+        tm.add_workspace(ws1);
+        let mut ws2 = Workspace::new();
+        ws2.is_pinned = true;
+        let ws2_id = ws2.id;
+        tm.add_workspace(ws2);
+        let ws3 = Workspace::new();
+        tm.add_workspace(ws3);
+
+        let closed = tm.close_below(ws1_id);
+        assert_eq!(closed, 1); // ws3 closed, ws2 pinned kept
+        assert_eq!(tm.len(), 2);
+        assert!(tm.workspace(ws2_id).is_some());
     }
 
     #[test]

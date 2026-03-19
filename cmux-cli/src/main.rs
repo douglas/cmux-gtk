@@ -220,7 +220,7 @@ enum WorkspaceCommands {
     },
     /// Perform an action on a workspace
     Action {
-        /// Action: pin, unpin, toggle_pin, mark_read, mark_unread, clear_name, set_color, clear_color
+        /// Action: pin, unpin, toggle_pin, mark_read, mark_unread, clear_name, set_color, clear_color, rename, move_up, move_down, move_top, close_others, close_above, close_below
         action: String,
         /// Target workspace UUID
         #[arg(long)]
@@ -228,7 +228,45 @@ enum WorkspaceCommands {
         /// Color value (required for set_color)
         #[arg(long)]
         color: Option<String>,
+        /// Title (required for rename)
+        #[arg(long)]
+        title: Option<String>,
     },
+    /// Report working directory for a panel
+    ReportPwd {
+        /// Directory path
+        directory: String,
+        /// Panel UUID
+        #[arg(long)]
+        panel: Option<String>,
+        /// Target workspace UUID
+        #[arg(long)]
+        workspace: Option<String>,
+    },
+    /// Report listening ports for a panel
+    ReportPorts {
+        /// Port numbers
+        ports: Vec<u16>,
+        /// Panel UUID
+        #[arg(long)]
+        panel: Option<String>,
+    },
+    /// Clear listening ports for a panel
+    ClearPorts {
+        /// Panel UUID
+        #[arg(long)]
+        panel: Option<String>,
+    },
+    /// Report TTY name for a panel
+    ReportTty {
+        /// TTY device path (e.g. /dev/pts/0)
+        tty: String,
+        /// Panel UUID
+        #[arg(long)]
+        panel: Option<String>,
+    },
+    /// Trigger port scanning (no-op on Linux, API parity)
+    PortsKick,
     /// Report git branch for workspace
     ReportGit {
         /// Branch name
@@ -470,6 +508,12 @@ enum PaneCommands {
         #[arg(long, default_value = "horizontal")]
         orientation: String,
     },
+    /// Equalize all split dividers in the current workspace
+    Equalize {
+        /// Target workspace UUID
+        #[arg(long)]
+        workspace: Option<String>,
+    },
     /// List surfaces (panels) in the pane containing a panel
     Surfaces {
         /// Panel UUID (uses focused panel if not specified)
@@ -594,13 +638,46 @@ fn main() -> anyhow::Result<()> {
                 action,
                 workspace,
                 color,
+                title,
             } => (
                 "workspace.action",
                 serde_json::json!({
                     "action": action,
                     "workspace": workspace,
                     "color": color,
+                    "title": title,
                 }),
+            ),
+            WorkspaceCommands::ReportPwd {
+                directory,
+                panel,
+                workspace,
+            } => (
+                "workspace.report_pwd",
+                serde_json::json!({
+                    "directory": directory,
+                    "panel": panel,
+                    "workspace": workspace,
+                }),
+            ),
+            WorkspaceCommands::ReportPorts { ports, panel } => (
+                "workspace.report_ports",
+                serde_json::json!({
+                    "ports": ports,
+                    "panel": panel,
+                }),
+            ),
+            WorkspaceCommands::ClearPorts { panel } => (
+                "workspace.clear_ports",
+                serde_json::json!({"panel": panel}),
+            ),
+            WorkspaceCommands::ReportTty { tty, panel } => (
+                "workspace.report_tty",
+                serde_json::json!({"tty": tty, "panel": panel}),
+            ),
+            WorkspaceCommands::PortsKick => (
+                "workspace.ports_kick",
+                serde_json::json!({}),
             ),
             WorkspaceCommands::ReportGit { branch, dirty } => (
                 "workspace.report_git_branch",
@@ -761,6 +838,10 @@ fn main() -> anyhow::Result<()> {
             PaneCommands::Join { id, orientation } => (
                 "pane.join",
                 serde_json::json!({"panel": id, "orientation": orientation}),
+            ),
+            PaneCommands::Equalize { workspace } => (
+                "pane.equalize",
+                serde_json::json!({"workspace": workspace}),
             ),
             PaneCommands::Surfaces { panel } => (
                 "pane.surfaces",

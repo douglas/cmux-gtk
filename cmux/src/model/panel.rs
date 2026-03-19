@@ -555,6 +555,58 @@ impl LayoutNode {
         }
     }
 
+    /// Recursively set all split divider_positions to 0.5 (equalize).
+    /// Returns true if any divider was changed.
+    pub fn equalize(&mut self) -> bool {
+        match self {
+            LayoutNode::Pane { .. } => false,
+            LayoutNode::Split {
+                divider_position,
+                first,
+                second,
+                ..
+            } => {
+                let changed = (*divider_position - 0.5).abs() > f64::EPSILON;
+                *divider_position = 0.5;
+                let c1 = first.equalize();
+                let c2 = second.equalize();
+                changed || c1 || c2
+            }
+        }
+    }
+
+    /// Next panel within the same pane (tab cycling, wraps around).
+    pub fn next_panel_in_pane(&self, current: Uuid) -> Option<Uuid> {
+        match self {
+            LayoutNode::Pane { panel_ids, .. } => {
+                let pos = panel_ids.iter().position(|&id| id == current)?;
+                let next = (pos + 1) % panel_ids.len();
+                Some(panel_ids[next])
+            }
+            LayoutNode::Split { first, second, .. } => first
+                .next_panel_in_pane(current)
+                .or_else(|| second.next_panel_in_pane(current)),
+        }
+    }
+
+    /// Previous panel within the same pane (tab cycling, wraps around).
+    pub fn prev_panel_in_pane(&self, current: Uuid) -> Option<Uuid> {
+        match self {
+            LayoutNode::Pane { panel_ids, .. } => {
+                let pos = panel_ids.iter().position(|&id| id == current)?;
+                let prev = if pos == 0 {
+                    panel_ids.len() - 1
+                } else {
+                    pos - 1
+                };
+                Some(panel_ids[prev])
+            }
+            LayoutNode::Split { first, second, .. } => first
+                .prev_panel_in_pane(current)
+                .or_else(|| second.prev_panel_in_pane(current)),
+        }
+    }
+
     /// Check if this node contains no panels.
     pub fn is_empty(&self) -> bool {
         match self {
@@ -692,6 +744,69 @@ mod tests {
         } else {
             panic!("expected pane");
         }
+    }
+
+    #[test]
+    fn test_equalize() {
+        let id1 = Uuid::new_v4();
+        let id2 = Uuid::new_v4();
+        let id3 = Uuid::new_v4();
+        let mut node = LayoutNode::Split {
+            orientation: SplitOrientation::Horizontal,
+            divider_position: 0.3,
+            first: Box::new(LayoutNode::single_pane(id1)),
+            second: Box::new(LayoutNode::Split {
+                orientation: SplitOrientation::Vertical,
+                divider_position: 0.7,
+                first: Box::new(LayoutNode::single_pane(id2)),
+                second: Box::new(LayoutNode::single_pane(id3)),
+            }),
+        };
+        assert!(node.equalize());
+        match &node {
+            LayoutNode::Split {
+                divider_position,
+                second,
+                ..
+            } => {
+                assert_eq!(*divider_position, 0.5);
+                if let LayoutNode::Split {
+                    divider_position, ..
+                } = second.as_ref()
+                {
+                    assert_eq!(*divider_position, 0.5);
+                } else {
+                    panic!("expected nested split");
+                }
+            }
+            _ => panic!("expected split"),
+        }
+    }
+
+    #[test]
+    fn test_next_panel_in_pane() {
+        let id1 = Uuid::new_v4();
+        let id2 = Uuid::new_v4();
+        let id3 = Uuid::new_v4();
+        let node = LayoutNode::Pane {
+            panel_ids: vec![id1, id2, id3],
+            selected_panel_id: Some(id1),
+        };
+        assert_eq!(node.next_panel_in_pane(id1), Some(id2));
+        assert_eq!(node.next_panel_in_pane(id3), Some(id1)); // wraps
+    }
+
+    #[test]
+    fn test_prev_panel_in_pane() {
+        let id1 = Uuid::new_v4();
+        let id2 = Uuid::new_v4();
+        let id3 = Uuid::new_v4();
+        let node = LayoutNode::Pane {
+            panel_ids: vec![id1, id2, id3],
+            selected_panel_id: Some(id1),
+        };
+        assert_eq!(node.prev_panel_in_pane(id1), Some(id3)); // wraps
+        assert_eq!(node.prev_panel_in_pane(id2), Some(id1));
     }
 
     #[test]
