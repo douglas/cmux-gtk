@@ -17,10 +17,11 @@ cargo build --release # Release build
 - `ghostty-gtk/` — Safe Rust wrapper: GhosttyApp, GhosttyGlSurface, key mapping
 - `cmux/` — Main application (GTK4/libadwaita)
   - `model/` — TabManager, Workspace, Panel, LayoutNode
-  - `ui/` — Window, Sidebar, SplitView, TerminalPanel
+  - `ui/` — Window, Sidebar, SplitView, TerminalPanel, BrowserPanel, CommandPalette, Settings
   - `socket/` — Unix socket server, v2 JSON protocol, auth
   - `session/` — Session persistence (XDG, JSON compatible with macOS cmux)
-  - `notifications.rs` — Notification store + desktop notifications
+  - `settings/` — AppSettings, ShortcutConfig (XDG config persistence)
+  - `notifications.rs` — Notification store + desktop notifications (gio::Notification)
 - `cmux-cli/` — CLI client (`cmux workspace list`, `cmux surface send-text`, etc.)
 
 ## Architecture Review

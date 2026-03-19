@@ -4,7 +4,10 @@ use gtk4::prelude::*;
 use libadwaita as adw;
 use libadwaita::prelude::*;
 
-use crate::settings::{self, AppSettings, SidebarDisplaySettings, SocketAccess, ThemeMode};
+use crate::settings::{
+    self, AppSettings, BrowserSettings, SearchEngine, SidebarDisplaySettings, SocketAccess,
+    ThemeMode,
+};
 
 /// Create and show the settings preferences window.
 pub fn show_settings(parent: &adw::ApplicationWindow) {
@@ -106,6 +109,31 @@ pub fn show_settings(parent: &adw::ApplicationWindow) {
     notif_page.add(&notif_group);
     window.add(&notif_page);
 
+    // ── Browser page ──
+    let browser_page = adw::PreferencesPage::new();
+    browser_page.set_title("Browser");
+    browser_page.set_icon_name(Some("web-browser-symbolic"));
+
+    let browser_group = adw::PreferencesGroup::new();
+    browser_group.set_title("Browser Panel");
+
+    let engine_row = adw::ComboRow::new();
+    engine_row.set_title("Search Engine");
+    engine_row.set_subtitle("Default search engine for URL bar queries");
+    let engine_labels: Vec<&str> = SearchEngine::ALL.iter().map(|e| e.label()).collect();
+    let engine_list = gtk4::StringList::new(&engine_labels);
+    engine_row.set_model(Some(&engine_list));
+    engine_row.set_selected(current_settings.browser.search_engine.to_index());
+    browser_group.add(&engine_row);
+
+    let home_row = adw::EntryRow::new();
+    home_row.set_title("Home Page URL");
+    home_row.set_text(&current_settings.browser.home_url);
+    browser_group.add(&home_row);
+
+    browser_page.add(&browser_group);
+    window.add(&browser_page);
+
     // ── Socket page ──
     let socket_page = adw::PreferencesPage::new();
     socket_page.set_title("Socket");
@@ -144,20 +172,147 @@ pub fn show_settings(parent: &adw::ApplicationWindow) {
     let shortcuts_group = adw::PreferencesGroup::new();
     shortcuts_group.set_title("Keyboard Shortcuts");
     shortcuts_group.set_description(Some(
-        "Edit ~/.config/cmux/shortcuts.json to customize keybindings",
+        "Click a shortcut to record a new binding. Press Escape to cancel.",
     ));
 
-    // Show current shortcuts (read-only for now)
+    let shortcuts_state = std::rc::Rc::new(std::cell::RefCell::new(
+        current_settings.shortcuts.clone(),
+    ));
+
     let mut sorted_bindings: Vec<_> = current_settings.shortcuts.bindings.iter().collect();
     sorted_bindings.sort_by_key(|(action, _)| (*action).clone());
-    for (action, binding) in sorted_bindings {
+    for (action, binding) in &sorted_bindings {
         let row = adw::ActionRow::new();
-        row.set_title(action);
-        let label = gtk4::Label::new(Some(&binding.display()));
-        label.add_css_class("dim-label");
-        row.add_suffix(&label);
+        row.set_title(action.as_str());
+        row.set_activatable(true);
+
+        let shortcut_label = gtk4::Label::new(Some(&binding.display()));
+        shortcut_label.add_css_class("dim-label");
+        row.add_suffix(&shortcut_label);
+
+        // Click-to-record: when the row is activated, listen for a key press
+        let action_name = (*action).clone();
+        let label_clone = shortcut_label.clone();
+        let state = shortcuts_state.clone();
+        row.connect_activated(move |row| {
+            label_clone.set_text("Press a key...");
+            label_clone.remove_css_class("dim-label");
+            label_clone.add_css_class("accent");
+
+            let controller = gtk4::EventControllerKey::new();
+            let label_inner = label_clone.clone();
+            let action_inner = action_name.clone();
+            let state_inner = state.clone();
+            let row_weak = row.downgrade();
+            controller.connect_key_pressed(move |ctl, keyval, _keycode, modifiers| {
+                // Escape cancels
+                if keyval == gdk4::Key::Escape {
+                    let current = state_inner.borrow();
+                    if let Some(b) = current.bindings.get(&action_inner) {
+                        label_inner.set_text(&b.display());
+                    }
+                    label_inner.remove_css_class("accent");
+                    label_inner.add_css_class("dim-label");
+                    if let Some(row) = row_weak.upgrade() {
+                        row.remove_controller(ctl);
+                    }
+                    return glib::Propagation::Stop;
+                }
+
+                // Ignore bare modifier keys
+                if matches!(
+                    keyval,
+                    gdk4::Key::Shift_L
+                        | gdk4::Key::Shift_R
+                        | gdk4::Key::Control_L
+                        | gdk4::Key::Control_R
+                        | gdk4::Key::Alt_L
+                        | gdk4::Key::Alt_R
+                        | gdk4::Key::Super_L
+                        | gdk4::Key::Super_R
+                ) {
+                    return glib::Propagation::Proceed;
+                }
+
+                let ctrl = modifiers.contains(gdk4::ModifierType::CONTROL_MASK);
+                let shift = modifiers.contains(gdk4::ModifierType::SHIFT_MASK);
+                let alt = modifiers.contains(gdk4::ModifierType::ALT_MASK);
+                let key_name = keyval.name().map(|n| n.to_string()).unwrap_or_default();
+
+                let new_binding = settings::shortcuts::Keybinding {
+                    key: key_name,
+                    ctrl,
+                    shift,
+                    alt,
+                };
+
+                label_inner.set_text(&new_binding.display());
+                label_inner.remove_css_class("accent");
+                label_inner.add_css_class("dim-label");
+
+                state_inner
+                    .borrow_mut()
+                    .bindings
+                    .insert(action_inner.clone(), new_binding);
+
+                if let Some(row) = row_weak.upgrade() {
+                    row.remove_controller(ctl);
+                }
+                glib::Propagation::Stop
+            });
+            row.add_controller(controller);
+        });
+
         shortcuts_group.add(&row);
     }
+
+    // Reset to defaults button
+    let reset_row = adw::ActionRow::new();
+    reset_row.set_title("Reset All to Defaults");
+    reset_row.set_activatable(true);
+    reset_row.add_css_class("error");
+    {
+        let state = shortcuts_state.clone();
+        let shortcuts_group_weak = shortcuts_group.downgrade();
+        reset_row.connect_activated(move |_| {
+            *state.borrow_mut() = settings::shortcuts::ShortcutConfig::default();
+            // Update all labels in the group
+            if let Some(group) = shortcuts_group_weak.upgrade() {
+                let defaults = settings::shortcuts::ShortcutConfig::default();
+                // Walk children and update suffix labels
+                let mut child = group.first_child();
+                while let Some(widget) = child {
+                    if let Ok(row) = widget.clone().downcast::<adw::ActionRow>() {
+                        let action_name = row.title().to_string();
+                        if let Some(binding) = defaults.bindings.get(&action_name) {
+                            // Find the suffix label
+                            let mut suffix = row.first_child();
+                            while let Some(s) = suffix {
+                                if let Ok(label) = s.clone().downcast::<gtk4::Label>() {
+                                    label.set_text(&binding.display());
+                                    break;
+                                }
+                                // Check inside Box containers (Adw wraps suffixes)
+                                if let Ok(bx) = s.clone().downcast::<gtk4::Box>() {
+                                    let mut inner = bx.first_child();
+                                    while let Some(ic) = inner {
+                                        if let Ok(label) = ic.clone().downcast::<gtk4::Label>() {
+                                            label.set_text(&binding.display());
+                                            break;
+                                        }
+                                        inner = ic.next_sibling();
+                                    }
+                                }
+                                suffix = s.next_sibling();
+                            }
+                        }
+                    }
+                    child = widget.next_sibling();
+                }
+            }
+        });
+    }
+    shortcuts_group.add(&reset_row);
 
     keyboard_page.add(&shortcuts_group);
     window.add(&keyboard_page);
@@ -175,6 +330,9 @@ pub fn show_settings(parent: &adw::ApplicationWindow) {
         let logs_row = logs_row.clone();
         let progress_row = progress_row.clone();
         let pills_row = pills_row.clone();
+        let engine_row = engine_row.clone();
+        let home_row = home_row.clone();
+        let shortcuts_state = shortcuts_state.clone();
         window.connect_close_request(move |_| {
             let theme = match theme_row.selected() {
                 1 => ThemeMode::Light,
@@ -194,6 +352,14 @@ pub fn show_settings(parent: &adw::ApplicationWindow) {
                     Some(text)
                 }
             };
+            let home_url = {
+                let text = home_row.text().to_string();
+                if text.is_empty() {
+                    BrowserSettings::default().home_url
+                } else {
+                    text
+                }
+            };
 
             let new_settings = AppSettings {
                 theme,
@@ -211,7 +377,11 @@ pub fn show_settings(parent: &adw::ApplicationWindow) {
                     show_progress: progress_row.is_active(),
                     show_status_pills: pills_row.is_active(),
                 },
-                shortcuts: settings::shortcuts::ShortcutConfig::default(),
+                browser: BrowserSettings {
+                    search_engine: SearchEngine::from_index(engine_row.selected()),
+                    home_url,
+                },
+                shortcuts: shortcuts_state.borrow().clone(),
             };
 
             if let Err(e) = settings::save(&new_settings) {
