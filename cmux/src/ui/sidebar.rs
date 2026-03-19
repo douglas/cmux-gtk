@@ -14,12 +14,22 @@ use crate::settings::SidebarDisplaySettings;
 pub struct SidebarWidgets {
     pub root: gtk4::Box,
     pub list_box: gtk4::ListBox,
+    pub search_entry: gtk4::SearchEntry,
 }
 
 /// Create the sidebar widget containing the workspace list.
 pub fn create_sidebar(state: &Rc<AppState>) -> SidebarWidgets {
     let sidebar_box = gtk4::Box::new(gtk4::Orientation::Vertical, 0);
     sidebar_box.add_css_class("sidebar");
+
+    // Search/filter entry at top of sidebar
+    let search_entry = gtk4::SearchEntry::new();
+    search_entry.set_placeholder_text(Some("Filter workspaces..."));
+    search_entry.set_margin_start(8);
+    search_entry.set_margin_end(8);
+    search_entry.set_margin_top(4);
+    search_entry.set_margin_bottom(4);
+    sidebar_box.append(&search_entry);
 
     let scrolled = gtk4::ScrolledWindow::new();
     scrolled.set_policy(gtk4::PolicyType::Never, gtk4::PolicyType::Automatic);
@@ -28,6 +38,49 @@ pub fn create_sidebar(state: &Rc<AppState>) -> SidebarWidgets {
     let list_box = gtk4::ListBox::new();
     list_box.set_selection_mode(gtk4::SelectionMode::Single);
     list_box.add_css_class("navigation-sidebar");
+
+    // Wire search entry to filter list rows
+    {
+        let search_entry_weak = search_entry.downgrade();
+        list_box.set_filter_func(move |row| {
+            let Some(search_entry) = search_entry_weak.upgrade() else {
+                return true;
+            };
+            let query = search_entry.text().to_string().to_lowercase();
+            if query.is_empty() {
+                return true;
+            }
+            // Walk the row's widget tree to find the workspace-title label
+            let Some(outer) = row.child() else {
+                return true;
+            };
+            let Some(outer_box) = outer.downcast_ref::<gtk4::Box>() else {
+                return true;
+            };
+            let Some(header) = outer_box.first_child() else {
+                return true;
+            };
+            let Some(header_box) = header.downcast_ref::<gtk4::Box>() else {
+                return true;
+            };
+            // Find the title label (has workspace-title class)
+            let mut child = header_box.first_child();
+            while let Some(c) = child {
+                if c.has_css_class("workspace-title") {
+                    if let Some(label) = c.downcast_ref::<gtk4::Label>() {
+                        return label.text().to_lowercase().contains(&query);
+                    }
+                }
+                child = c.next_sibling();
+            }
+            true
+        });
+
+        let list_box_clone = list_box.clone();
+        search_entry.connect_search_changed(move |_| {
+            list_box_clone.invalidate_filter();
+        });
+    }
 
     refresh_sidebar(&list_box, state);
 
@@ -47,6 +100,7 @@ pub fn create_sidebar(state: &Rc<AppState>) -> SidebarWidgets {
     SidebarWidgets {
         root: sidebar_box,
         list_box,
+        search_entry,
     }
 }
 
@@ -85,6 +139,9 @@ pub fn refresh_sidebar(list_box: &gtk4::ListBox, state: &Rc<AppState>) {
             list_box.select_row(Some(row));
         }
     }
+
+    // Reapply search filter after rebuild
+    list_box.invalidate_filter();
 }
 
 /// Set up drag-and-drop on a sidebar workspace row for reordering.
@@ -146,11 +203,11 @@ fn create_workspace_row(
         row.add_css_class("workspace-row");
     }
 
-    let outer = gtk4::Box::new(gtk4::Orientation::Vertical, 4);
+    let outer = gtk4::Box::new(gtk4::Orientation::Vertical, 3);
     outer.set_margin_start(10);
     outer.set_margin_end(10);
-    outer.set_margin_top(8);
-    outer.set_margin_bottom(8);
+    outer.set_margin_top(6);
+    outer.set_margin_bottom(6);
 
     // ── Header: index + pin icon + title + unread badge + close button ──
     let header = gtk4::Box::new(gtk4::Orientation::Horizontal, 8);
@@ -158,6 +215,7 @@ fn create_workspace_row(
     let index_label = gtk4::Label::new(Some(&format!("{}", index + 1)));
     index_label.add_css_class("dim-label");
     index_label.add_css_class("caption");
+    index_label.add_css_class("workspace-index");
     header.append(&index_label);
 
     // Pin indicator
@@ -172,6 +230,7 @@ fn create_workspace_row(
     title_label.set_hexpand(true);
     title_label.set_halign(gtk4::Align::Start);
     title_label.set_ellipsize(gtk4::pango::EllipsizeMode::End);
+    title_label.add_css_class("workspace-title");
     header.append(&title_label);
 
     if workspace.unread_count > 0 {

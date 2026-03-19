@@ -76,6 +76,10 @@ pub fn create_window(
     );
 
     let header = adw::HeaderBar::new();
+    let header_title = gtk4::Label::new(None);
+    header_title.add_css_class("heading");
+    header_title.set_ellipsize(gtk4::pango::EllipsizeMode::End);
+    header.set_title_widget(Some(&header_title));
 
     let new_ws_btn = gtk4::Button::from_icon_name("tab-new-symbolic");
     new_ws_btn.set_tooltip_text(Some("New Workspace"));
@@ -231,16 +235,28 @@ fn refresh_ui(list_box: &gtk4::ListBox, content_box: &gtk4::Box, state: &Rc<AppS
     // Update window title to reflect selected workspace
     if let Some(root) = content_box.root() {
         if let Some(window) = root.downcast_ref::<adw::ApplicationWindow>() {
-            let title = {
+            let titles = {
                 let tm = lock_or_recover(&state.shared.tab_manager);
                 tm.selected().map(|ws| {
                     let title = ws.display_title();
                     let dir = crate::ui::sidebar::compact_path(&ws.current_directory);
-                    format!("{title} — {dir} — cmux")
+                    (format!("{title} — {dir} — cmux"), title.to_string())
                 })
             };
-            if let Some(title) = title {
-                window.set_title(Some(&title));
+            if let Some((full_title, ws_title)) = titles {
+                window.set_title(Some(&full_title));
+                // Update the header bar's title label
+                if let Some(outer) = window.content() {
+                    if let Some(hb) = outer.first_child() {
+                        if let Some(header) = hb.downcast_ref::<adw::HeaderBar>() {
+                            if let Some(tw) = header.title_widget() {
+                                if let Some(lbl) = tw.downcast_ref::<gtk4::Label>() {
+                                    lbl.set_text(&ws_title);
+                                }
+                            }
+                        }
+                    }
+                }
             }
         }
     }
@@ -985,13 +1001,94 @@ fn install_css() {
         "
         /* ── Workspace rows ── */
         .workspace-row {
-            border-radius: 10px;
+            border-radius: 8px;
+            margin: 1px 4px;
         }
 
         .workspace-row-colored {
-            border-radius: 10px;
+            border-radius: 8px;
             border-left: 4px solid transparent;
             padding-left: 0px;
+            margin: 1px 4px;
+        }
+
+        /* ── Workspace title — bolder, slightly larger ── */
+        .workspace-title {
+            font-weight: 600;
+            font-size: 1.05em;
+        }
+
+        /* ── Index label — tabular numerals ── */
+        .workspace-index {
+            font-variant-numeric: tabular-nums;
+            min-width: 1em;
+        }
+
+        /* ── Selected row — solid accent highlight with white text ── */
+        .navigation-sidebar row:selected .workspace-title {
+            color: white;
+        }
+        .navigation-sidebar row:selected .dim-label,
+        .navigation-sidebar row:selected .caption {
+            color: rgba(255, 255, 255, 0.8);
+        }
+        .navigation-sidebar row:selected .sidebar-notification {
+            color: rgba(255, 255, 255, 0.95);
+        }
+        .navigation-sidebar row:selected .status-pill,
+        .navigation-sidebar row:selected .status-pill-blue,
+        .navigation-sidebar row:selected .status-pill-green,
+        .navigation-sidebar row:selected .status-pill-red,
+        .navigation-sidebar row:selected .status-pill-orange,
+        .navigation-sidebar row:selected .status-pill-purple,
+        .navigation-sidebar row:selected .status-pill-yellow {
+            background-color: rgba(255, 255, 255, 0.18);
+            color: rgba(255, 255, 255, 0.95);
+        }
+        .navigation-sidebar row:selected .port-badge {
+            background-color: rgba(255, 255, 255, 0.15);
+            color: rgba(255, 255, 255, 0.85);
+        }
+        .navigation-sidebar row:selected .log-info,
+        .navigation-sidebar row:selected .log-warning,
+        .navigation-sidebar row:selected .log-error,
+        .navigation-sidebar row:selected .log-success,
+        .navigation-sidebar row:selected .log-progress {
+            color: rgba(255, 255, 255, 0.8);
+        }
+        .navigation-sidebar row:selected .sidebar-progress progress {
+            background-color: rgba(255, 255, 255, 0.8);
+        }
+        .navigation-sidebar row:selected .sidebar-progress trough {
+            background-color: rgba(255, 255, 255, 0.15);
+        }
+
+        /* ── Pane tab bar ── */
+        .pane-tab-bar {
+            background-color: alpha(@theme_bg_color, 0.6);
+            border-bottom: 1px solid alpha(@theme_fg_color, 0.1);
+            padding: 2px 4px;
+        }
+        .pane-tab {
+            border-radius: 6px;
+            padding: 3px 8px;
+            color: alpha(@theme_fg_color, 0.55);
+        }
+        .pane-tab:hover {
+            background-color: alpha(@theme_fg_color, 0.06);
+        }
+        .pane-tab-selected {
+            background-color: alpha(@theme_fg_color, 0.1);
+            color: @theme_fg_color;
+        }
+        .pane-tab-close {
+            min-width: 16px;
+            min-height: 16px;
+            padding: 0;
+            opacity: 0.5;
+        }
+        .pane-tab-close:hover {
+            opacity: 1;
         }
 
         .sidebar-notification {
