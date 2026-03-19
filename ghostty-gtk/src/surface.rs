@@ -737,6 +737,28 @@ impl GhosttyGlSurface {
         }
     }
 
+    /// Execute a ghostty binding action by name (e.g., "open_search", "close_search").
+    pub fn binding_action(&self, action: &str) -> bool {
+        let surface = self.imp().surface.get();
+        if surface.is_null() {
+            return false;
+        }
+
+        #[cfg(feature = "link-ghostty")]
+        unsafe {
+            ghostty_surface_binding_action(
+                surface,
+                action.as_ptr() as *const std::os::raw::c_char,
+                action.len(),
+            )
+        }
+        #[cfg(not(feature = "link-ghostty"))]
+        {
+            let _ = (surface, action);
+            false
+        }
+    }
+
     /// Send text input to the terminal (e.g., from IME commit).
     pub fn send_text(&self, text: &str) -> bool {
         let surface = self.imp().surface.get();

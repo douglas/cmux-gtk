@@ -100,6 +100,11 @@ pub fn dispatch(json_line: &str, state: &Arc<SharedState>) -> Response {
         "workspace.set_progress" => handle_workspace_set_progress(id, &req.params, state),
         "workspace.append_log" => handle_workspace_append_log(id, &req.params, state),
         "workspace.reorder" => handle_workspace_reorder(id, &req.params, state),
+        "workspace.clear_status" => handle_workspace_clear_status(id, &req.params, state),
+        "workspace.list_status" => handle_workspace_list_status(id, &req.params, state),
+        "workspace.clear_progress" => handle_workspace_clear_progress(id, &req.params, state),
+        "workspace.clear_log" => handle_workspace_clear_log(id, &req.params, state),
+        "workspace.list_log" => handle_workspace_list_log(id, &req.params, state),
 
         // Workspace query commands
         "workspace.current" => handle_workspace_current(id, state),
@@ -119,6 +124,8 @@ pub fn dispatch(json_line: &str, state: &Arc<SharedState>) -> Response {
 
         // Notification commands
         "notification.create" => handle_notification_create(id, &req.params, state),
+        "notification.list" => handle_notification_list(id, state),
+        "notification.clear" => handle_notification_clear(id, state),
 
         _ => Response::error(
             id,
@@ -154,7 +161,12 @@ fn handle_capabilities(id: Value) -> Response {
         "workspace.set_status",
         "workspace.report_git_branch",
         "workspace.set_progress",
+        "workspace.clear_progress",
         "workspace.append_log",
+        "workspace.clear_status",
+        "workspace.list_status",
+        "workspace.clear_log",
+        "workspace.list_log",
         "pane.new",
         "pane.list",
         "pane.focus",
@@ -164,6 +176,8 @@ fn handle_capabilities(id: Value) -> Response {
         "surface.current",
         "surface.focus",
         "notification.create",
+        "notification.list",
+        "notification.clear",
     ];
     Response::success(id, serde_json::json!({"methods": methods}))
 }
@@ -544,6 +558,150 @@ fn handle_workspace_append_log(id: Value, params: &Value, state: &Arc<SharedStat
     }
 }
 
+fn handle_workspace_clear_status(
+    id: Value,
+    params: &Value,
+    state: &Arc<SharedState>,
+) -> Response {
+    let ws_id = match parse_workspace_param(params) {
+        Ok(v) => v,
+        Err(()) => return Response::error(id, "invalid_params", "Invalid workspace UUID"),
+    };
+    let mut tm = lock_or_recover(&state.tab_manager);
+    let ws = if let Some(wid) = ws_id {
+        tm.workspace_mut(wid)
+    } else {
+        tm.selected_mut()
+    };
+    if let Some(ws) = ws {
+        ws.status_entries.clear();
+        drop(tm);
+        state.notify_ui_refresh();
+        Response::success(id, serde_json::json!({"ok": true}))
+    } else {
+        Response::error(id, "not_found", "Workspace not found")
+    }
+}
+
+fn handle_workspace_list_status(
+    id: Value,
+    params: &Value,
+    state: &Arc<SharedState>,
+) -> Response {
+    let ws_id = match parse_workspace_param(params) {
+        Ok(v) => v,
+        Err(()) => return Response::error(id, "invalid_params", "Invalid workspace UUID"),
+    };
+    let tm = lock_or_recover(&state.tab_manager);
+    let ws = if let Some(wid) = ws_id {
+        tm.iter().find(|ws| ws.id == wid)
+    } else {
+        tm.selected()
+    };
+    if let Some(ws) = ws {
+        let entries: Vec<Value> = ws
+            .status_entries
+            .iter()
+            .map(|e| {
+                serde_json::json!({
+                    "key": e.key,
+                    "value": e.value,
+                    "icon": e.icon,
+                    "color": e.color,
+                    "timestamp": e.timestamp,
+                })
+            })
+            .collect();
+        Response::success(id, serde_json::json!({"entries": entries}))
+    } else {
+        Response::error(id, "not_found", "Workspace not found")
+    }
+}
+
+fn handle_workspace_clear_progress(
+    id: Value,
+    params: &Value,
+    state: &Arc<SharedState>,
+) -> Response {
+    let ws_id = match parse_workspace_param(params) {
+        Ok(v) => v,
+        Err(()) => return Response::error(id, "invalid_params", "Invalid workspace UUID"),
+    };
+    let mut tm = lock_or_recover(&state.tab_manager);
+    let ws = if let Some(wid) = ws_id {
+        tm.workspace_mut(wid)
+    } else {
+        tm.selected_mut()
+    };
+    if let Some(ws) = ws {
+        ws.progress = None;
+        drop(tm);
+        state.notify_ui_refresh();
+        Response::success(id, serde_json::json!({"ok": true}))
+    } else {
+        Response::error(id, "not_found", "Workspace not found")
+    }
+}
+
+fn handle_workspace_clear_log(
+    id: Value,
+    params: &Value,
+    state: &Arc<SharedState>,
+) -> Response {
+    let ws_id = match parse_workspace_param(params) {
+        Ok(v) => v,
+        Err(()) => return Response::error(id, "invalid_params", "Invalid workspace UUID"),
+    };
+    let mut tm = lock_or_recover(&state.tab_manager);
+    let ws = if let Some(wid) = ws_id {
+        tm.workspace_mut(wid)
+    } else {
+        tm.selected_mut()
+    };
+    if let Some(ws) = ws {
+        ws.log_entries.clear();
+        drop(tm);
+        state.notify_ui_refresh();
+        Response::success(id, serde_json::json!({"ok": true}))
+    } else {
+        Response::error(id, "not_found", "Workspace not found")
+    }
+}
+
+fn handle_workspace_list_log(
+    id: Value,
+    params: &Value,
+    state: &Arc<SharedState>,
+) -> Response {
+    let ws_id = match parse_workspace_param(params) {
+        Ok(v) => v,
+        Err(()) => return Response::error(id, "invalid_params", "Invalid workspace UUID"),
+    };
+    let tm = lock_or_recover(&state.tab_manager);
+    let ws = if let Some(wid) = ws_id {
+        tm.iter().find(|ws| ws.id == wid)
+    } else {
+        tm.selected()
+    };
+    if let Some(ws) = ws {
+        let entries: Vec<Value> = ws
+            .log_entries
+            .iter()
+            .map(|e| {
+                serde_json::json!({
+                    "message": e.message,
+                    "level": e.level,
+                    "source": e.source,
+                    "timestamp": e.timestamp,
+                })
+            })
+            .collect();
+        Response::success(id, serde_json::json!({"entries": entries}))
+    } else {
+        Response::error(id, "not_found", "Workspace not found")
+    }
+}
+
 // -----------------------------------------------------------------------
 // Pane handlers
 // -----------------------------------------------------------------------
@@ -718,6 +876,38 @@ fn handle_notification_create(id: Value, params: &Value, state: &Arc<SharedState
             "surface": resolved_panel_id.map(|panel_id| panel_id.to_string()),
         }),
     )
+}
+
+fn handle_notification_list(id: Value, state: &Arc<SharedState>) -> Response {
+    let store = lock_or_recover(&state.notifications);
+    let notifications: Vec<Value> = store
+        .all()
+        .iter()
+        .map(|n| {
+            serde_json::json!({
+                "id": n.id.to_string(),
+                "title": n.title,
+                "body": n.body,
+                "workspace_id": n.source_workspace_id.map(|id| id.to_string()),
+                "panel_id": n.source_panel_id.map(|id| id.to_string()),
+                "timestamp": n.timestamp,
+                "is_read": n.is_read,
+            })
+        })
+        .collect();
+    Response::success(
+        id,
+        serde_json::json!({
+            "notifications": notifications,
+            "count": notifications.len(),
+        }),
+    )
+}
+
+fn handle_notification_clear(id: Value, state: &Arc<SharedState>) -> Response {
+    lock_or_recover(&state.notifications).clear();
+    state.notify_ui_refresh();
+    Response::success(id, serde_json::json!({"ok": true}))
 }
 
 // -----------------------------------------------------------------------
