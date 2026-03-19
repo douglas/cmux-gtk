@@ -194,6 +194,54 @@ fn build_actions(state: &Rc<AppState>) -> Rc<Vec<PaletteAction>> {
             name: "pane.last".into(),
             label: "Focus Last Pane".into(),
         },
+        PaletteAction {
+            name: "pane.break".into(),
+            label: "Break Pane to New Workspace".into(),
+        },
+        PaletteAction {
+            name: "pane.join".into(),
+            label: "Join Pane from Other Workspace".into(),
+        },
+        PaletteAction {
+            name: "workspace.next".into(),
+            label: "Next Workspace".into(),
+        },
+        PaletteAction {
+            name: "workspace.previous".into(),
+            label: "Previous Workspace".into(),
+        },
+        PaletteAction {
+            name: "workspace.last".into(),
+            label: "Last Workspace".into(),
+        },
+        PaletteAction {
+            name: "workspace.latest_unread".into(),
+            label: "Jump to Latest Unread".into(),
+        },
+        PaletteAction {
+            name: "workspace.rename".into(),
+            label: "Rename Workspace".into(),
+        },
+        PaletteAction {
+            name: "workspace.pin".into(),
+            label: "Pin/Unpin Workspace".into(),
+        },
+        PaletteAction {
+            name: "sidebar.toggle".into(),
+            label: "Toggle Sidebar".into(),
+        },
+        PaletteAction {
+            name: "workspace.mark_read".into(),
+            label: "Mark Workspace as Read".into(),
+        },
+        PaletteAction {
+            name: "workspace.mark_unread".into(),
+            label: "Mark Workspace as Unread".into(),
+        },
+        PaletteAction {
+            name: "open_folder".into(),
+            label: "Open Folder in File Manager".into(),
+        },
     ];
 
     // Add dynamic workspace entries
@@ -327,6 +375,82 @@ fn execute_action(name: &str, state: &Rc<AppState>, on_refresh: &Rc<dyn Fn()>) {
                     ws.focus_panel(prev_id);
                 }
             }
+        }
+        "pane.break" => {
+            let mut tm = lock_or_recover(&state.shared.tab_manager);
+            if let Some(ws) = tm.selected_mut() {
+                if let Some(panel_id) = ws.focused_panel_id {
+                    if ws.panels.len() > 1 {
+                        let source_dir = ws.current_directory.clone();
+                        if let Some(panel) = ws.detach_panel(panel_id) {
+                            let source_ws_id = ws.id;
+                            if ws.is_empty() {
+                                tm.remove_by_id(source_ws_id);
+                            }
+                            let mut new_ws = Workspace::new();
+                            let default_pid = new_ws.focused_panel_id;
+                            if let Some(dpid) = default_pid {
+                                new_ws.panels.remove(&dpid);
+                            }
+                            new_ws.current_directory = source_dir;
+                            new_ws.panels.insert(panel_id, panel);
+                            new_ws.layout =
+                                crate::model::panel::LayoutNode::single_pane(panel_id);
+                            new_ws.focused_panel_id = Some(panel_id);
+                            tm.add_workspace(new_ws);
+                        }
+                    }
+                }
+            }
+        }
+        "pane.join" => {
+            // Join is interactive — not practical in palette without a picker.
+            // No-op for now; the socket command / CLI covers this.
+        }
+        "workspace.next" => {
+            lock_or_recover(&state.shared.tab_manager).select_next(true);
+        }
+        "workspace.previous" => {
+            lock_or_recover(&state.shared.tab_manager).select_previous(true);
+        }
+        "workspace.last" => {
+            lock_or_recover(&state.shared.tab_manager).select_last();
+        }
+        "workspace.latest_unread" => {
+            let mut tm = lock_or_recover(&state.shared.tab_manager);
+            tm.select_latest_unread();
+        }
+        "workspace.rename" => {
+            // Can't show dialog from here easily — use the keyboard shortcut instead.
+            // Trigger via UiEvent would be needed; skip for palette.
+        }
+        "workspace.pin" => {
+            if let Some(ws) = lock_or_recover(&state.shared.tab_manager).selected_mut() {
+                ws.is_pinned = !ws.is_pinned;
+            }
+        }
+        "sidebar.toggle" => {
+            // We can't access the NavigationSplitView from here.
+            // The keyboard shortcut (Ctrl+Shift+B) handles this.
+        }
+        "workspace.mark_read" => {
+            if let Some(ws) = lock_or_recover(&state.shared.tab_manager).selected_mut() {
+                ws.mark_notifications_read();
+            }
+        }
+        "workspace.mark_unread" => {
+            if let Some(ws) = lock_or_recover(&state.shared.tab_manager).selected_mut() {
+                ws.unread_count = ws.unread_count.max(1);
+            }
+        }
+        "open_folder" => {
+            let dir = lock_or_recover(&state.shared.tab_manager)
+                .selected()
+                .map(|ws| ws.current_directory.clone());
+            if let Some(dir) = dir {
+                let _ = std::process::Command::new("xdg-open").arg(&dir).spawn();
+            }
+            return; // Don't refresh — external command
         }
         name if name.starts_with("workspace.select.") => {
             if let Ok(index) = name[17..].parse::<usize>() {

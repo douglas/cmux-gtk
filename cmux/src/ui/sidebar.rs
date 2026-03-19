@@ -9,6 +9,7 @@ use glib::object::Cast;
 
 use crate::app::{lock_or_recover, AppState};
 use crate::model::Workspace;
+use crate::settings::SidebarDisplaySettings;
 
 pub struct SidebarWidgets {
     pub root: gtk4::Box,
@@ -49,6 +50,7 @@ pub fn refresh_sidebar(list_box: &gtk4::ListBox, state: &Rc<AppState>) {
     // release the lock before calling list_box.select_row.  select_row emits
     // `row-selected` synchronously; the connected handler tries to acquire
     // the same tab_manager lock, which would deadlock on std::sync::Mutex.
+    let sidebar_settings = crate::settings::load().sidebar;
     let (rows, selected_index): (Vec<gtk4::ListBoxRow>, Option<usize>) = {
         let tab_manager = lock_or_recover(&state.shared.tab_manager);
         let selected_index = tab_manager.selected_index();
@@ -56,7 +58,7 @@ pub fn refresh_sidebar(list_box: &gtk4::ListBox, state: &Rc<AppState>) {
             .iter()
             .enumerate()
             .map(|(index, workspace)| {
-                let row = create_workspace_row(workspace, index);
+                let row = create_workspace_row(workspace, index, &sidebar_settings);
                 setup_row_context_menu(&row, index, workspace.is_pinned, state);
                 setup_row_close_button(&row, index, state);
                 row
@@ -114,7 +116,11 @@ fn setup_row_drag_drop(row: &gtk4::ListBoxRow, index: usize, state: &Rc<AppState
     row.add_controller(drop_target);
 }
 
-fn create_workspace_row(workspace: &Workspace, index: usize) -> gtk4::ListBoxRow {
+fn create_workspace_row(
+    workspace: &Workspace,
+    index: usize,
+    sidebar: &SidebarDisplaySettings,
+) -> gtk4::ListBoxRow {
     let row = gtk4::ListBoxRow::new();
 
     // Workspace color indicator: colored left border when custom_color is set.
@@ -177,7 +183,7 @@ fn create_workspace_row(workspace: &Workspace, index: usize) -> gtk4::ListBoxRow
     outer.append(&header);
 
     // ── Meta line: agent status | git branch | directory ──
-    let meta_label = gtk4::Label::new(Some(&workspace_meta_text(workspace)));
+    let meta_label = gtk4::Label::new(Some(&workspace_meta_text(workspace, sidebar)));
     meta_label.set_halign(gtk4::Align::Start);
     meta_label.set_wrap(false);
     meta_label.set_ellipsize(gtk4::pango::EllipsizeMode::End);
@@ -186,7 +192,7 @@ fn create_workspace_row(workspace: &Workspace, index: usize) -> gtk4::ListBoxRow
     outer.append(&meta_label);
 
     // ── Status pills ──
-    if !workspace.status_entries.is_empty() {
+    if sidebar.show_status_pills && !workspace.status_entries.is_empty() {
         let pills_box = gtk4::Box::new(gtk4::Orientation::Horizontal, 4);
         pills_box.set_halign(gtk4::Align::Start);
         // Show up to 4 most recent status entries
@@ -219,29 +225,31 @@ fn create_workspace_row(workspace: &Workspace, index: usize) -> gtk4::ListBoxRow
     }
 
     // ── Progress bar ──
-    if let Some(ref progress) = workspace.progress {
-        let progress_box = gtk4::Box::new(gtk4::Orientation::Vertical, 2);
-        if let Some(ref label_text) = progress.label {
-            let label = gtk4::Label::new(Some(label_text));
-            label.set_halign(gtk4::Align::Start);
-            label.add_css_class("caption");
-            label.add_css_class("dim-label");
-            label.set_ellipsize(gtk4::pango::EllipsizeMode::End);
-            progress_box.append(&label);
+    if sidebar.show_progress {
+        if let Some(ref progress) = workspace.progress {
+            let progress_box = gtk4::Box::new(gtk4::Orientation::Vertical, 2);
+            if let Some(ref label_text) = progress.label {
+                let label = gtk4::Label::new(Some(label_text));
+                label.set_halign(gtk4::Align::Start);
+                label.add_css_class("caption");
+                label.add_css_class("dim-label");
+                label.set_ellipsize(gtk4::pango::EllipsizeMode::End);
+                progress_box.append(&label);
+            }
+            let bar = gtk4::ProgressBar::new();
+            bar.add_css_class("sidebar-progress");
+            if progress.value > 1.0 {
+                bar.pulse();
+            } else {
+                bar.set_fraction(progress.value.clamp(0.0, 1.0));
+            }
+            progress_box.append(&bar);
+            outer.append(&progress_box);
         }
-        let bar = gtk4::ProgressBar::new();
-        bar.add_css_class("sidebar-progress");
-        if progress.value > 1.0 {
-            // Indeterminate — pulse
-            bar.pulse();
-        } else {
-            bar.set_fraction(progress.value.clamp(0.0, 1.0));
-        }
-        progress_box.append(&bar);
-        outer.append(&progress_box);
     }
 
     // ── Listening ports ──
+    if sidebar.show_ports {
     let all_ports: Vec<u16> = workspace
         .panels
         .values()
@@ -268,8 +276,10 @@ fn create_workspace_row(workspace: &Workspace, index: usize) -> gtk4::ListBoxRow
         }
         outer.append(&ports_box);
     }
+    }
 
     // ── Latest log entry ──
+    if sidebar.show_logs {
     if let Some(log_entry) = workspace.log_entries.last() {
         let log_text = if let Some(ref source) = log_entry.source {
             format!("[{}] {}", source, log_entry.message)
@@ -290,8 +300,10 @@ fn create_workspace_row(workspace: &Workspace, index: usize) -> gtk4::ListBoxRow
         }
         outer.append(&log_label);
     }
+    }
 
     // ── PR status pill ──
+    if sidebar.show_pr_status {
     if let Some(ref pr_status) = workspace.pr_status {
         let pr_box = gtk4::Box::new(gtk4::Orientation::Horizontal, 4);
         pr_box.set_halign(gtk4::Align::Start);
@@ -306,6 +318,7 @@ fn create_workspace_row(workspace: &Workspace, index: usize) -> gtk4::ListBoxRow
         }
         pr_box.append(&pr_label);
         outer.append(&pr_box);
+    }
     }
 
     // ── Notification line ──
@@ -357,6 +370,31 @@ fn setup_row_context_menu(
         Some(if is_pinned { "Unpin" } else { "Pin" }),
         Some(&format!("sidebar.toggle-pin.{index}")),
     );
+    menu.append(Some("Rename"), Some(&format!("sidebar.rename.{index}")));
+
+    // Color submenu
+    let color_menu = gtk4::gio::Menu::new();
+    for (label, color) in &[
+        ("Blue", "blue"),
+        ("Green", "green"),
+        ("Red", "red"),
+        ("Orange", "orange"),
+        ("Purple", "purple"),
+        ("Yellow", "yellow"),
+        ("Clear", ""),
+    ] {
+        color_menu.append(Some(label), Some(&format!("sidebar.color.{index}.{color}")));
+    }
+    menu.append_submenu(Some("Set Color"), &color_menu);
+
+    menu.append(
+        Some("Mark as Read"),
+        Some(&format!("sidebar.mark-read.{index}")),
+    );
+    menu.append(
+        Some("Mark as Unread"),
+        Some(&format!("sidebar.mark-unread.{index}")),
+    );
     menu.append(Some("Close"), Some(&format!("sidebar.close.{index}")));
 
     let popover = gtk4::PopoverMenu::from_model(Some(&menu));
@@ -375,8 +413,10 @@ fn setup_row_context_menu(
     }
     row.add_controller(gesture);
 
-    // Action: toggle pin
+    // Actions
     let action_group = gtk4::gio::SimpleActionGroup::new();
+
+    // Toggle pin
     let pin_action = gtk4::gio::SimpleAction::new(&format!("toggle-pin.{index}"), None);
     {
         let state = state.clone();
@@ -391,6 +431,85 @@ fn setup_row_context_menu(
     }
     action_group.add_action(&pin_action);
 
+    // Rename
+    let rename_action = gtk4::gio::SimpleAction::new(&format!("rename.{index}"), None);
+    {
+        let state = state.clone();
+        let row_weak = row.downgrade();
+        rename_action.connect_activate(move |_, _| {
+            let current_title = {
+                let tm = lock_or_recover(&state.shared.tab_manager);
+                tm.get(index).map(|ws| ws.display_title().to_string())
+            };
+            if let Some(title) = current_title {
+                if let Some(row) = row_weak.upgrade() {
+                    if let Some(root) = row.root() {
+                        if let Some(window) =
+                            root.downcast_ref::<libadwaita::ApplicationWindow>()
+                        {
+                            show_rename_for_index(window, &state, index, &title);
+                        }
+                    }
+                }
+            }
+        });
+    }
+    action_group.add_action(&rename_action);
+
+    // Color actions
+    for color in &["blue", "green", "red", "orange", "purple", "yellow", ""] {
+        let action_name = format!("color.{index}.{color}");
+        let color_action = gtk4::gio::SimpleAction::new(&action_name, None);
+        let color_value = if color.is_empty() {
+            None
+        } else {
+            Some(color_css_value(color).to_string())
+        };
+        {
+            let state = state.clone();
+            color_action.connect_activate(move |_, _| {
+                let mut tm = lock_or_recover(&state.shared.tab_manager);
+                if let Some(ws) = tm.get_mut(index) {
+                    ws.custom_color = color_value.clone();
+                }
+                drop(tm);
+                state.shared.notify_ui_refresh();
+            });
+        }
+        action_group.add_action(&color_action);
+    }
+
+    // Mark read
+    let mark_read_action = gtk4::gio::SimpleAction::new(&format!("mark-read.{index}"), None);
+    {
+        let state = state.clone();
+        mark_read_action.connect_activate(move |_, _| {
+            let mut tm = lock_or_recover(&state.shared.tab_manager);
+            if let Some(ws) = tm.get_mut(index) {
+                ws.mark_notifications_read();
+            }
+            drop(tm);
+            state.shared.notify_ui_refresh();
+        });
+    }
+    action_group.add_action(&mark_read_action);
+
+    // Mark unread
+    let mark_unread_action = gtk4::gio::SimpleAction::new(&format!("mark-unread.{index}"), None);
+    {
+        let state = state.clone();
+        mark_unread_action.connect_activate(move |_, _| {
+            let mut tm = lock_or_recover(&state.shared.tab_manager);
+            if let Some(ws) = tm.get_mut(index) {
+                ws.unread_count = ws.unread_count.max(1);
+            }
+            drop(tm);
+            state.shared.notify_ui_refresh();
+        });
+    }
+    action_group.add_action(&mark_unread_action);
+
+    // Close
     let close_action = gtk4::gio::SimpleAction::new(&format!("close.{index}"), None);
     {
         let state = state.clone();
@@ -402,6 +521,66 @@ fn setup_row_context_menu(
     action_group.add_action(&close_action);
 
     row.insert_action_group("sidebar", Some(&action_group));
+}
+
+fn show_rename_for_index(
+    window: &libadwaita::ApplicationWindow,
+    state: &Rc<AppState>,
+    index: usize,
+    current_title: &str,
+) {
+    use libadwaita::prelude::*;
+
+    let dialog = libadwaita::MessageDialog::new(
+        Some(window),
+        Some("Rename Workspace"),
+        None::<&str>,
+    );
+    dialog.set_body("Enter a new name for this workspace:");
+
+    let entry = gtk4::Entry::new();
+    entry.set_text(current_title);
+    entry.set_activates_default(true);
+    dialog.set_extra_child(Some(&entry));
+
+    dialog.add_response("cancel", "Cancel");
+    dialog.add_response("rename", "Rename");
+    dialog.set_default_response(Some("rename"));
+    dialog.set_response_appearance("rename", libadwaita::ResponseAppearance::Suggested);
+
+    let state = state.clone();
+    dialog.connect_response(None::<&str>, move |dialog, response| {
+        if response == "rename" {
+            let entry = dialog
+                .extra_child()
+                .and_then(|w| w.downcast::<gtk4::Entry>().ok());
+            if let Some(entry) = entry {
+                let new_name = entry.text().to_string();
+                if !new_name.is_empty() {
+                    let mut tm = lock_or_recover(&state.shared.tab_manager);
+                    if let Some(ws) = tm.get_mut(index) {
+                        ws.custom_title = Some(new_name);
+                    }
+                    drop(tm);
+                    state.shared.notify_ui_refresh();
+                }
+            }
+        }
+    });
+
+    dialog.present();
+}
+
+fn color_css_value(name: &str) -> &str {
+    match name {
+        "blue" => "#3584e4",
+        "green" => "#33d17a",
+        "red" => "#e01b24",
+        "orange" => "#ff7800",
+        "purple" => "#9141ac",
+        "yellow" => "#f6d32d",
+        _ => "",
+    }
 }
 
 /// Wire up the hover close button on a row.
@@ -431,20 +610,24 @@ fn setup_row_close_button(row: &gtk4::ListBoxRow, index: usize, state: &Rc<AppSt
     }
 }
 
-fn workspace_meta_text(workspace: &Workspace) -> String {
+fn workspace_meta_text(workspace: &Workspace, sidebar: &SidebarDisplaySettings) -> String {
     let mut parts = Vec::new();
 
     if let Some(status) = workspace.sidebar_status_label() {
         parts.push(status.to_string());
     }
 
-    if let Some(git_branch) = &workspace.git_branch {
-        parts.push(if git_branch.is_dirty {
-            format!("git {} *", git_branch.branch)
-        } else {
-            format!("git {}", git_branch.branch)
-        });
-    } else {
+    if sidebar.show_git_branch {
+        if let Some(git_branch) = &workspace.git_branch {
+            parts.push(if git_branch.is_dirty {
+                format!("git {} *", git_branch.branch)
+            } else {
+                format!("git {}", git_branch.branch)
+            });
+        } else if sidebar.show_directory {
+            parts.push(compact_path(&workspace.current_directory));
+        }
+    } else if sidebar.show_directory {
         parts.push(compact_path(&workspace.current_directory));
     }
 
