@@ -1,6 +1,7 @@
 //! Browser panel — embedded WebKit browser (webkit6 / WebKitGTK 6.0).
 
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
+use std::collections::HashMap;
 use std::rc::Rc;
 
 use gdk4;
@@ -8,6 +9,22 @@ use gtk4::prelude::*;
 use webkit6::prelude::*;
 
 use crate::settings;
+
+thread_local! {
+    /// Registry of panel_id → WebView for browser automation socket commands.
+    static WEBVIEW_REGISTRY: RefCell<HashMap<uuid::Uuid, webkit6::WebView>> = RefCell::new(HashMap::new());
+}
+
+/// Look up the WebView for a panel_id (GTK main thread only).
+pub fn get_webview(panel_id: uuid::Uuid) -> Option<webkit6::WebView> {
+    WEBVIEW_REGISTRY.with(|r| r.borrow().get(&panel_id).cloned())
+}
+
+/// Remove a panel from the WebView registry.
+#[allow(dead_code)]
+pub fn unregister_webview(panel_id: uuid::Uuid) {
+    WEBVIEW_REGISTRY.with(|r| r.borrow_mut().remove(&panel_id));
+}
 
 /// Create an embedded browser panel widget.
 ///
@@ -139,6 +156,9 @@ pub fn create_browser_widget(
     let web_view = webkit6::WebView::new();
     web_view.set_hexpand(true);
     web_view.set_vexpand(true);
+
+    // Register in the thread-local WebView registry for socket command access
+    WEBVIEW_REGISTRY.with(|r| r.borrow_mut().insert(panel_id, web_view.clone()));
 
     // Enable developer extras for inspector
     if let Some(ws) = webkit6::prelude::WebViewExt::settings(&web_view) {

@@ -9,6 +9,9 @@ use tokio::sync::mpsc::UnboundedReceiver;
 
 use std::cell::Cell;
 
+use gtk4::gio;
+use webkit6::prelude::WebViewExt;
+
 use crate::app::{lock_or_recover, AppState, UiEvent};
 use crate::model::panel::{GitBranch, SplitOrientation};
 use crate::model::{PanelType, Workspace};
@@ -587,6 +590,114 @@ fn bind_shared_state_updates(
                             }
                             drop(tm);
                             needs_refresh = true;
+                        }
+                    }
+                    UiEvent::OpenMarkdownFile => {
+                        let Some(window) = window_weak.upgrade() else {
+                            continue;
+                        };
+                        let list_box = list_box.clone();
+                        let content_box = content_box.clone();
+                        let state = Rc::clone(&state);
+                        #[allow(deprecated)]
+                        let dialog = gtk4::FileChooserNative::new(
+                            Some("Open Markdown File"),
+                            Some(&window),
+                            gtk4::FileChooserAction::Open,
+                            Some("Open"),
+                            Some("Cancel"),
+                        );
+                        let filter = gtk4::FileFilter::new();
+                        filter.set_name(Some("Markdown files"));
+                        filter.add_pattern("*.md");
+                        filter.add_pattern("*.markdown");
+                        filter.add_pattern("*.mdx");
+                        dialog.add_filter(&filter);
+                        dialog.connect_response(move |dialog, response| {
+                            if response == gtk4::ResponseType::Accept {
+                                if let Some(file) = dialog.file() {
+                                    if let Some(path) = file.path() {
+                                        let path_str = path.to_string_lossy().to_string();
+                                        let panel =
+                                            crate::model::panel::Panel::new_markdown(&path_str);
+                                        let panel_id = panel.id;
+                                        let mut tm =
+                                            lock_or_recover(&state.shared.tab_manager);
+                                        if let Some(ws) = tm.selected_mut() {
+                                            ws.panels.insert(panel_id, panel);
+                                            if let Some(focused) = ws.focused_panel_id {
+                                                ws.layout
+                                                    .add_panel_to_pane(focused, panel_id);
+                                            }
+                                            ws.previous_focused_panel_id =
+                                                ws.focused_panel_id;
+                                            ws.focused_panel_id = Some(panel_id);
+                                        }
+                                        drop(tm);
+                                        refresh_ui(&list_box, &content_box, &state);
+                                    }
+                                }
+                            }
+                        });
+                        dialog.show();
+                    }
+                    UiEvent::BrowserNavigate { panel_id, url } => {
+                        if let Some(wv) = crate::ui::browser_panel::get_webview(panel_id) {
+                            wv.load_uri(&url);
+                        }
+                    }
+                    UiEvent::BrowserEval { panel_id, script, reply } => {
+                        if let Some(wv) = crate::ui::browser_panel::get_webview(panel_id) {
+                            wv.evaluate_javascript(
+                                &script, None, None, None::<&gio::Cancellable>,
+                                move |result| {
+                                    let text = result.ok()
+                                        .map(|val| val.to_str().to_string());
+                                    let _ = reply.send(text);
+                                },
+                            );
+                        } else {
+                            let _ = reply.send(None);
+                        }
+                    }
+                    UiEvent::BrowserGetUrl { panel_id, reply } => {
+                        let url = crate::ui::browser_panel::get_webview(panel_id)
+                            .and_then(|wv| wv.uri().map(|u| u.to_string()));
+                        let _ = reply.send(url);
+                    }
+                    UiEvent::BrowserGetText { panel_id, reply } => {
+                        if let Some(wv) = crate::ui::browser_panel::get_webview(panel_id) {
+                            wv.evaluate_javascript(
+                                "document.body.innerText",
+                                None, None, None::<&gio::Cancellable>,
+                                move |result| {
+                                    let text = result.ok()
+                                        .map(|val| val.to_str().to_string());
+                                    let _ = reply.send(text);
+                                },
+                            );
+                        } else {
+                            let _ = reply.send(None);
+                        }
+                    }
+                    UiEvent::BrowserGoBack { panel_id } => {
+                        if let Some(wv) = crate::ui::browser_panel::get_webview(panel_id) {
+                            wv.go_back();
+                        }
+                    }
+                    UiEvent::BrowserGoForward { panel_id } => {
+                        if let Some(wv) = crate::ui::browser_panel::get_webview(panel_id) {
+                            wv.go_forward();
+                        }
+                    }
+                    UiEvent::BrowserReload { panel_id } => {
+                        if let Some(wv) = crate::ui::browser_panel::get_webview(panel_id) {
+                            wv.reload();
+                        }
+                    }
+                    UiEvent::BrowserSetZoom { panel_id, zoom } => {
+                        if let Some(wv) = crate::ui::browser_panel::get_webview(panel_id) {
+                            wv.set_zoom_level(zoom);
                         }
                     }
                     // directly via its own callbacks.

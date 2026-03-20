@@ -93,6 +93,7 @@ pub struct SessionPanelSnapshot {
     pub tty_name: Option<String>,
     pub terminal: Option<SessionTerminalPanelSnapshot>,
     pub browser: Option<SessionBrowserPanelSnapshot>,
+    pub markdown: Option<SessionMarkdownPanelSnapshot>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -109,6 +110,12 @@ pub struct SessionBrowserPanelSnapshot {
     pub should_render_web_view: bool,
     pub page_zoom: f64,
     pub developer_tools_visible: bool,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionMarkdownPanelSnapshot {
+    pub file_path: String,
 }
 
 /// Window geometry.
@@ -190,6 +197,7 @@ impl SessionPanelSnapshot {
         let panel_type = match panel.panel_type {
             crate::model::PanelType::Terminal => "terminal".to_string(),
             crate::model::PanelType::Browser => "browser".to_string(),
+            crate::model::PanelType::Markdown => "markdown".to_string(),
         };
 
         Self {
@@ -217,6 +225,15 @@ impl SessionPanelSnapshot {
                     should_render_web_view: true,
                     page_zoom: 1.0,
                     developer_tools_visible: false,
+                })
+            } else {
+                None
+            },
+            markdown: if panel.panel_type == crate::model::PanelType::Markdown {
+                panel.markdown_file.as_ref().map(|f| {
+                    SessionMarkdownPanelSnapshot {
+                        file_path: f.clone(),
+                    }
                 })
             } else {
                 None

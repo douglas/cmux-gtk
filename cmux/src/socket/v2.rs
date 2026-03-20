@@ -171,6 +171,24 @@ pub fn dispatch(json_line: &str, state: &Arc<SharedState>) -> Response {
         "notification.list" => handle_notification_list(id, state),
         "notification.clear" => handle_notification_clear(id, state),
 
+        // Browser automation commands
+        "browser.navigate" => handle_browser_navigate(id, &req.params, state),
+        "browser.execute_js" => handle_browser_execute_js(id, &req.params, state),
+        "browser.get_url" => handle_browser_get_url(id, &req.params, state),
+        "browser.get_text" => handle_browser_get_text(id, &req.params, state),
+        "browser.back" => handle_browser_back(id, &req.params, state),
+        "browser.forward" => handle_browser_forward(id, &req.params, state),
+        "browser.reload" => handle_browser_reload(id, &req.params, state),
+        "browser.set_zoom" => handle_browser_set_zoom(id, &req.params, state),
+        "browser.screenshot" => handle_browser_screenshot(id, &req.params, state),
+
+        // Markdown commands
+        "markdown.open" => handle_markdown_open(id, &req.params, state),
+
+        // Window commands
+        "window.new" => handle_window_new(id, state),
+        "window.list" => handle_window_list(id, state),
+
         _ => Response::error(
             id,
             "unknown_method",
@@ -258,6 +276,18 @@ fn handle_capabilities(id: Value) -> Response {
         "notification.create_for_target",
         "notification.list",
         "notification.clear",
+        "browser.navigate",
+        "browser.execute_js",
+        "browser.get_url",
+        "browser.get_text",
+        "browser.back",
+        "browser.forward",
+        "browser.reload",
+        "browser.set_zoom",
+        "browser.screenshot",
+        "markdown.open",
+        "window.new",
+        "window.list",
     ];
     Response::success(id, serde_json::json!({"methods": methods}))
 }
@@ -1160,6 +1190,7 @@ fn handle_pane_list(id: Value, params: &Value, state: &Arc<SharedState>) -> Resp
                 "type": panel.map(|p| match p.panel_type {
                     crate::model::PanelType::Terminal => "terminal",
                     crate::model::PanelType::Browser => "browser",
+                    crate::model::PanelType::Markdown => "markdown",
                 }).unwrap_or("unknown"),
                 "title": panel.map(|p| p.display_title()).unwrap_or("?"),
                 "directory": panel.and_then(|p| p.directory.as_deref()),
@@ -1291,6 +1322,7 @@ fn handle_surface_current(id: Value, state: &Arc<SharedState>) -> Response {
             "type": panel.map(|p| match p.panel_type {
                 crate::model::PanelType::Terminal => "terminal",
                 crate::model::PanelType::Browser => "browser",
+                crate::model::PanelType::Markdown => "markdown",
             }).unwrap_or("unknown"),
             "title": panel.map(|p| p.display_title()).unwrap_or("?"),
             "directory": panel.and_then(|p| p.directory.as_deref()),
@@ -2498,6 +2530,7 @@ fn handle_surface_create(id: Value, params: &Value, state: &Arc<SharedState>) ->
     let mut new_panel = match panel_type {
         crate::model::PanelType::Terminal => crate::model::Panel::new_terminal(),
         crate::model::PanelType::Browser => crate::model::Panel::new_browser(),
+        crate::model::PanelType::Markdown => crate::model::Panel::new_markdown(""),
     };
     if panel_type == crate::model::PanelType::Browser {
         new_panel.browser_url = url;
@@ -2570,6 +2603,7 @@ fn handle_pane_surfaces(id: Value, params: &Value, state: &Arc<SharedState>) -> 
                 "type": panel.map(|p| match p.panel_type {
                     crate::model::PanelType::Terminal => "terminal",
                     crate::model::PanelType::Browser => "browser",
+                    crate::model::PanelType::Markdown => "markdown",
                 }).unwrap_or("unknown"),
                 "title": panel.map(|p| p.display_title()).unwrap_or("?"),
                 "focused": ws.focused_panel_id == Some(pid),
@@ -2853,6 +2887,261 @@ fn parse_usize_param(id: &Value, params: &Value, key: &str) -> Result<Option<usi
         },
         None => Ok(None),
     }
+}
+
+/// Extract a required panel_id from params (checks "panel", "surface", "panel_id" keys).
+fn require_panel_id(id: &Value, params: &Value) -> Result<uuid::Uuid, Response> {
+    let val = params
+        .get("panel")
+        .or_else(|| params.get("surface"))
+        .or_else(|| params.get("panel_id"));
+    match val {
+        Some(v) if !v.is_null() => {
+            let s = v.as_str().ok_or_else(|| {
+                Response::error(id.clone(), "invalid_params", "panel must be a string UUID")
+            })?;
+            uuid::Uuid::parse_str(s).map_err(|_| {
+                Response::error(id.clone(), "invalid_params", "Invalid panel UUID format")
+            })
+        }
+        _ => Err(Response::error(
+            id.clone(),
+            "invalid_params",
+            "Provide 'panel' UUID",
+        )),
+    }
+}
+
+/// Extract an optional UUID parameter.
+fn optional_uuid(
+    id: &Value,
+    params: &Value,
+    key: &str,
+) -> Result<Option<uuid::Uuid>, Response> {
+    match params.get(key) {
+        Some(v) if !v.is_null() => {
+            let s = v.as_str().ok_or_else(|| {
+                Response::error(id.clone(), "invalid_params", &format!("'{key}' must be a string UUID"))
+            })?;
+            uuid::Uuid::parse_str(s)
+                .map(Some)
+                .map_err(|_| Response::error(id.clone(), "invalid_params", &format!("Invalid UUID for '{key}'")))
+        }
+        _ => Ok(None),
+    }
+}
+
+// -----------------------------------------------------------------------
+// Browser automation handlers
+// -----------------------------------------------------------------------
+
+fn handle_browser_navigate(id: Value, params: &Value, state: &Arc<SharedState>) -> Response {
+    let panel_id = match require_panel_id(&id, params) {
+        Ok(v) => v,
+        Err(e) => return e,
+    };
+    let Some(url) = params.get("url").and_then(|v| v.as_str()) else {
+        return Response::error(id, "invalid_params", "Provide 'url'");
+    };
+    state.send_ui_event(UiEvent::BrowserNavigate {
+        panel_id,
+        url: url.to_string(),
+    });
+    Response::success(id, serde_json::json!({"navigated": true}))
+}
+
+fn handle_browser_execute_js(id: Value, params: &Value, state: &Arc<SharedState>) -> Response {
+    let panel_id = match require_panel_id(&id, params) {
+        Ok(v) => v,
+        Err(e) => return e,
+    };
+    let Some(script) = params.get("script").and_then(|v| v.as_str()) else {
+        return Response::error(id, "invalid_params", "Provide 'script'");
+    };
+    let (tx, rx) = tokio::sync::oneshot::channel();
+    state.send_ui_event(UiEvent::BrowserEval {
+        panel_id,
+        script: script.to_string(),
+        reply: tx,
+    });
+    match rx.blocking_recv() {
+        Ok(Some(result)) => Response::success(id, serde_json::json!({"result": result})),
+        Ok(None) => Response::error(
+            id,
+            "execution_failed",
+            "Script execution failed or panel not found",
+        ),
+        Err(_) => Response::error(id, "timeout", "UI event channel closed"),
+    }
+}
+
+fn handle_browser_get_url(id: Value, params: &Value, state: &Arc<SharedState>) -> Response {
+    let panel_id = match require_panel_id(&id, params) {
+        Ok(v) => v,
+        Err(e) => return e,
+    };
+    let (tx, rx) = tokio::sync::oneshot::channel();
+    state.send_ui_event(UiEvent::BrowserGetUrl {
+        panel_id,
+        reply: tx,
+    });
+    match rx.blocking_recv() {
+        Ok(Some(url)) => Response::success(id, serde_json::json!({"url": url})),
+        Ok(None) => Response::error(id, "not_found", "Browser panel not found"),
+        Err(_) => Response::error(id, "timeout", "UI event channel closed"),
+    }
+}
+
+fn handle_browser_get_text(id: Value, params: &Value, state: &Arc<SharedState>) -> Response {
+    let panel_id = match require_panel_id(&id, params) {
+        Ok(v) => v,
+        Err(e) => return e,
+    };
+    let (tx, rx) = tokio::sync::oneshot::channel();
+    state.send_ui_event(UiEvent::BrowserGetText {
+        panel_id,
+        reply: tx,
+    });
+    match rx.blocking_recv() {
+        Ok(Some(text)) => Response::success(id, serde_json::json!({"text": text})),
+        Ok(None) => Response::error(id, "not_found", "Browser panel not found"),
+        Err(_) => Response::error(id, "timeout", "UI event channel closed"),
+    }
+}
+
+fn handle_browser_back(id: Value, params: &Value, state: &Arc<SharedState>) -> Response {
+    let panel_id = match require_panel_id(&id, params) {
+        Ok(v) => v,
+        Err(e) => return e,
+    };
+    state.send_ui_event(UiEvent::BrowserGoBack { panel_id });
+    Response::success(id, serde_json::json!({"ok": true}))
+}
+
+fn handle_browser_forward(id: Value, params: &Value, state: &Arc<SharedState>) -> Response {
+    let panel_id = match require_panel_id(&id, params) {
+        Ok(v) => v,
+        Err(e) => return e,
+    };
+    state.send_ui_event(UiEvent::BrowserGoForward { panel_id });
+    Response::success(id, serde_json::json!({"ok": true}))
+}
+
+fn handle_browser_reload(id: Value, params: &Value, state: &Arc<SharedState>) -> Response {
+    let panel_id = match require_panel_id(&id, params) {
+        Ok(v) => v,
+        Err(e) => return e,
+    };
+    state.send_ui_event(UiEvent::BrowserReload { panel_id });
+    Response::success(id, serde_json::json!({"ok": true}))
+}
+
+fn handle_browser_set_zoom(id: Value, params: &Value, state: &Arc<SharedState>) -> Response {
+    let panel_id = match require_panel_id(&id, params) {
+        Ok(v) => v,
+        Err(e) => return e,
+    };
+    let zoom = params["zoom"].as_f64().unwrap_or(1.0).clamp(0.25, 5.0);
+    state.send_ui_event(UiEvent::BrowserSetZoom { panel_id, zoom });
+    Response::success(id, serde_json::json!({"zoom": zoom}))
+}
+
+fn handle_browser_screenshot(id: Value, params: &Value, state: &Arc<SharedState>) -> Response {
+    let panel_id = match require_panel_id(&id, params) {
+        Ok(v) => v,
+        Err(e) => return e,
+    };
+    let script =
+        "document.documentElement.outerHTML.substring(0, 10000)".to_string();
+    let (tx, rx) = tokio::sync::oneshot::channel();
+    state.send_ui_event(UiEvent::BrowserEval {
+        panel_id,
+        script,
+        reply: tx,
+    });
+    match rx.blocking_recv() {
+        Ok(Some(result)) => Response::success(
+            id,
+            serde_json::json!({
+                "html_preview": result,
+                "note": "Full screenshot requires WebKit get_snapshot API"
+            }),
+        ),
+        Ok(None) => Response::error(id, "not_found", "Browser panel not found"),
+        Err(_) => Response::error(id, "timeout", "UI event channel closed"),
+    }
+}
+
+// -----------------------------------------------------------------------
+// Markdown handlers
+// -----------------------------------------------------------------------
+
+fn handle_markdown_open(id: Value, params: &Value, state: &Arc<SharedState>) -> Response {
+    let Some(file_path) = params.get("file").and_then(|v| v.as_str()) else {
+        return Response::error(id, "invalid_params", "Provide 'file'");
+    };
+    let workspace_id = match optional_uuid(&id, params, "workspace_id") {
+        Ok(v) => v,
+        Err(e) => return e,
+    };
+
+    let panel = crate::model::panel::Panel::new_markdown(file_path);
+    let panel_id = panel.id;
+
+    let mut tm = lock_or_recover(&state.tab_manager);
+    let ws_id = workspace_id.unwrap_or_else(|| {
+        tm.selected().map(|ws| ws.id).unwrap_or_default()
+    });
+
+    if let Some(ws) = tm.workspace_mut(ws_id) {
+        ws.panels.insert(panel_id, panel);
+        if let Some(focused) = ws.focused_panel_id {
+            ws.layout.add_panel_to_pane(focused, panel_id);
+        } else {
+            let first_panel = ws.layout.all_panel_ids().into_iter().next();
+            if let Some(target) = first_panel {
+                ws.layout.add_panel_to_pane(target, panel_id);
+            }
+        }
+        ws.previous_focused_panel_id = ws.focused_panel_id;
+        ws.focused_panel_id = Some(panel_id);
+    } else {
+        return Response::error(id, "not_found", "Workspace not found");
+    }
+    drop(tm);
+    state.notify_ui_refresh();
+
+    Response::success(
+        id,
+        serde_json::json!({
+            "panel_id": panel_id.to_string(),
+            "file": file_path,
+        }),
+    )
+}
+
+// -----------------------------------------------------------------------
+// Window handlers
+// -----------------------------------------------------------------------
+
+fn handle_window_new(id: Value, state: &Arc<SharedState>) -> Response {
+    state.send_ui_event(UiEvent::Refresh);
+    Response::success(
+        id,
+        serde_json::json!({
+            "note": "Multiple windows not yet fully supported on Linux; use workspace.new instead"
+        }),
+    )
+}
+
+fn handle_window_list(id: Value, _state: &Arc<SharedState>) -> Response {
+    // Linux currently supports a single window
+    Response::success(
+        id,
+        serde_json::json!({
+            "windows": [{"id": "main", "focused": true}]
+        }),
+    )
 }
 
 #[cfg(test)]

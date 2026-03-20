@@ -19,6 +19,7 @@ pub fn create_panel_widget(
             create_terminal_widget(panel, is_attention_source, is_focused, state)
         }
         PanelType::Browser => create_browser_widget(panel, is_attention_source),
+        PanelType::Markdown => create_markdown_widget(panel, is_attention_source),
     }
 }
 
@@ -180,6 +181,15 @@ fn create_browser_widget(panel: &Panel, is_attention_source: bool) -> gtk4::Widg
     super::browser_panel::create_browser_widget(
         panel.id,
         panel.directory.as_deref(), // Reuse directory field as initial URL for browser panels
+        is_attention_source,
+    )
+}
+
+/// Create a markdown panel with WebView rendering.
+fn create_markdown_widget(panel: &Panel, is_attention_source: bool) -> gtk4::Widget {
+    super::markdown_panel::create_markdown_widget(
+        panel.id,
+        panel.markdown_file.as_deref(),
         is_attention_source,
     )
 }

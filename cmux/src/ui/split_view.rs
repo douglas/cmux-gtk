@@ -288,6 +288,7 @@ fn build_tab_button(
     let icon_name = match panel_type {
         PanelType::Terminal => "utilities-terminal-symbolic",
         PanelType::Browser => "globe-symbolic",
+        PanelType::Markdown => "document-open-symbolic",
     };
     let icon = gtk4::Image::from_icon_name(icon_name);
     icon.set_pixel_size(14);

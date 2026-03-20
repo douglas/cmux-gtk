@@ -1,5 +1,6 @@
 pub mod browser_panel;
 pub mod command_palette;
+pub mod markdown_panel;
 pub mod notifications_panel;
 pub mod search_overlay;
 pub mod settings;

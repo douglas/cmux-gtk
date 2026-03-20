@@ -174,6 +174,37 @@ pub enum UiEvent {
         panel_id: Uuid,
     },
     ReopenClosedBrowser,
+    OpenMarkdownFile,
+    BrowserNavigate {
+        panel_id: Uuid,
+        url: String,
+    },
+    BrowserEval {
+        panel_id: Uuid,
+        script: String,
+        reply: tokio::sync::oneshot::Sender<Option<String>>,
+    },
+    BrowserGetUrl {
+        panel_id: Uuid,
+        reply: tokio::sync::oneshot::Sender<Option<String>>,
+    },
+    BrowserGetText {
+        panel_id: Uuid,
+        reply: tokio::sync::oneshot::Sender<Option<String>>,
+    },
+    BrowserGoBack {
+        panel_id: Uuid,
+    },
+    BrowserGoForward {
+        panel_id: Uuid,
+    },
+    BrowserReload {
+        panel_id: Uuid,
+    },
+    BrowserSetZoom {
+        panel_id: Uuid,
+        zoom: f64,
+    },
 }
 
 /// Wrapper to send a raw ghostty_surface_t across threads.
@@ -371,6 +402,7 @@ fn restore_session(state: &Rc<AppState>) {
         for panel_snapshot in &ws_snapshot.panels {
             let panel_type = match panel_snapshot.panel_type.as_str() {
                 "browser" => crate::model::PanelType::Browser,
+                "markdown" => crate::model::PanelType::Markdown,
                 _ => crate::model::PanelType::Terminal,
             };
             let panel = crate::model::panel::Panel {
@@ -388,6 +420,10 @@ fn restore_session(state: &Rc<AppState>) {
                     .browser
                     .as_ref()
                     .and_then(|b| b.url_string.clone()),
+                markdown_file: panel_snapshot
+                    .markdown
+                    .as_ref()
+                    .map(|m| m.file_path.clone()),
             };
             panels.insert(panel.id, panel);
         }

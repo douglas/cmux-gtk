@@ -294,6 +294,10 @@ fn build_actions(state: &Rc<AppState>) -> Rc<Vec<PaletteAction>> {
             name: "browser.reopen_closed".into(),
             label: "Reopen Closed Browser Tab".into(),
         },
+        PaletteAction {
+            name: "markdown.open".into(),
+            label: "Open Markdown File...".into(),
+        },
     ];
 
     // Add "Open in..." commands for installed editors
@@ -652,6 +656,12 @@ fn execute_action(name: &str, state: &Rc<AppState>, on_refresh: &Rc<dyn Fn()>) {
             state
                 .shared
                 .send_ui_event(crate::app::UiEvent::ReopenClosedBrowser);
+            return; // UiEvent handled
+        }
+        "markdown.open" => {
+            state
+                .shared
+                .send_ui_event(crate::app::UiEvent::OpenMarkdownFile);
             return; // UiEvent handled
         }
         name if name.starts_with("workspace.select.") => {

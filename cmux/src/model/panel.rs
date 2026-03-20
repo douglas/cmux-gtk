@@ -11,12 +11,14 @@ use uuid::Uuid;
 pub enum PanelType {
     Terminal,
     Browser,
+    Markdown,
 }
 
 /// A panel within a workspace pane.
 ///
 /// Panels are the leaf nodes of the layout tree. Each panel is either a
-/// terminal (backed by a ghostty surface) or a browser (WebKit2GTK).
+/// terminal (backed by a ghostty surface), a browser (WebKit2GTK), or
+/// a markdown viewer (rendered via pulldown-cmark → WebView).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Panel {
     pub id: Uuid,
@@ -31,6 +33,8 @@ pub struct Panel {
     pub tty_name: Option<String>,
     /// Current URL for browser panels (updated via socket or WebView URI changes).
     pub browser_url: Option<String>,
+    /// File path for markdown panels.
+    pub markdown_file: Option<String>,
 }
 
 impl Panel {
@@ -48,6 +52,7 @@ impl Panel {
             listening_ports: Vec::new(),
             tty_name: None,
             browser_url: None,
+            markdown_file: None,
         }
     }
 
@@ -65,10 +70,33 @@ impl Panel {
             listening_ports: Vec::new(),
             tty_name: None,
             browser_url: None,
+            markdown_file: None,
         }
     }
 
-    /// Display title: custom title if set, otherwise process title, otherwise "Terminal"/"Browser".
+    /// Create a new markdown panel for viewing a `.md` file.
+    pub fn new_markdown(file_path: &str) -> Self {
+        let title = std::path::Path::new(file_path)
+            .file_name()
+            .and_then(|n| n.to_str())
+            .map(String::from);
+        Self {
+            id: Uuid::new_v4(),
+            panel_type: PanelType::Markdown,
+            title,
+            custom_title: None,
+            directory: None,
+            is_pinned: false,
+            is_manually_unread: false,
+            git_branch: None,
+            listening_ports: Vec::new(),
+            tty_name: None,
+            browser_url: None,
+            markdown_file: Some(file_path.to_string()),
+        }
+    }
+
+    /// Display title: custom title if set, otherwise process title, otherwise fallback by type.
     pub fn display_title(&self) -> &str {
         if let Some(ref t) = self.custom_title {
             return t;
@@ -79,6 +107,16 @@ impl Panel {
         match self.panel_type {
             PanelType::Terminal => "Terminal",
             PanelType::Browser => "Browser",
+            PanelType::Markdown => {
+                if let Some(ref f) = self.markdown_file {
+                    if let Some(name) = std::path::Path::new(f).file_name() {
+                        if let Some(s) = name.to_str() {
+                            return s;
+                        }
+                    }
+                }
+                "Markdown"
+            }
         }
     }
 }

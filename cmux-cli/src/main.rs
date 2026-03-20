@@ -85,6 +85,14 @@ enum Commands {
 
     /// Show sidebar state (selected workspace)
     SidebarState,
+
+    /// Browser automation
+    #[command(subcommand)]
+    Browser(BrowserCommands),
+
+    /// Markdown panel
+    #[command(subcommand)]
+    Markdown(MarkdownCommands),
 }
 
 #[derive(Subcommand)]
@@ -522,6 +530,82 @@ enum PaneCommands {
     },
 }
 
+#[derive(Subcommand)]
+enum BrowserCommands {
+    /// Navigate a browser panel to a URL
+    Navigate {
+        /// Panel UUID
+        #[arg(long)]
+        panel: String,
+        /// URL to navigate to
+        url: String,
+    },
+    /// Execute JavaScript in a browser panel
+    ExecuteJs {
+        /// Panel UUID
+        #[arg(long)]
+        panel: String,
+        /// JavaScript code to execute
+        script: String,
+    },
+    /// Get the current URL of a browser panel
+    GetUrl {
+        /// Panel UUID
+        #[arg(long)]
+        panel: String,
+    },
+    /// Get the page text content of a browser panel
+    GetText {
+        /// Panel UUID
+        #[arg(long)]
+        panel: String,
+    },
+    /// Go back in browser history
+    Back {
+        /// Panel UUID
+        #[arg(long)]
+        panel: String,
+    },
+    /// Go forward in browser history
+    Forward {
+        /// Panel UUID
+        #[arg(long)]
+        panel: String,
+    },
+    /// Reload the browser page
+    Reload {
+        /// Panel UUID
+        #[arg(long)]
+        panel: String,
+    },
+    /// Set browser zoom level
+    SetZoom {
+        /// Panel UUID
+        #[arg(long)]
+        panel: String,
+        /// Zoom level (0.25-5.0, default 1.0)
+        zoom: f64,
+    },
+    /// Take a screenshot (HTML preview)
+    Screenshot {
+        /// Panel UUID
+        #[arg(long)]
+        panel: String,
+    },
+}
+
+#[derive(Subcommand)]
+enum MarkdownCommands {
+    /// Open a markdown file in a new panel
+    Open {
+        /// Path to the markdown file
+        file: String,
+        /// Target workspace UUID
+        #[arg(long)]
+        workspace: Option<String>,
+    },
+}
+
 fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
 
@@ -532,6 +616,55 @@ fn main() -> anyhow::Result<()> {
         Commands::Tree => ("system.tree", serde_json::json!({})),
         Commands::Settings => ("settings.open", serde_json::json!({})),
         Commands::SidebarState => ("workspace.current", serde_json::json!({})),
+
+        Commands::Browser(cmd) => match cmd {
+            BrowserCommands::Navigate { panel, url } => (
+                "browser.navigate",
+                serde_json::json!({"panel": panel, "url": url}),
+            ),
+            BrowserCommands::ExecuteJs { panel, script } => (
+                "browser.execute_js",
+                serde_json::json!({"panel": panel, "script": script}),
+            ),
+            BrowserCommands::GetUrl { panel } => (
+                "browser.get_url",
+                serde_json::json!({"panel": panel}),
+            ),
+            BrowserCommands::GetText { panel } => (
+                "browser.get_text",
+                serde_json::json!({"panel": panel}),
+            ),
+            BrowserCommands::Back { panel } => (
+                "browser.back",
+                serde_json::json!({"panel": panel}),
+            ),
+            BrowserCommands::Forward { panel } => (
+                "browser.forward",
+                serde_json::json!({"panel": panel}),
+            ),
+            BrowserCommands::Reload { panel } => (
+                "browser.reload",
+                serde_json::json!({"panel": panel}),
+            ),
+            BrowserCommands::SetZoom { panel, zoom } => (
+                "browser.set_zoom",
+                serde_json::json!({"panel": panel, "zoom": zoom}),
+            ),
+            BrowserCommands::Screenshot { panel } => (
+                "browser.screenshot",
+                serde_json::json!({"panel": panel}),
+            ),
+        },
+
+        Commands::Markdown(cmd) => match cmd {
+            MarkdownCommands::Open { file, workspace } => (
+                "markdown.open",
+                serde_json::json!({
+                    "file": file,
+                    "workspace_id": workspace,
+                }),
+            ),
+        },
 
         Commands::Workspace(ws) => match ws {
             WorkspaceCommands::List => ("workspace.list", serde_json::json!({})),
