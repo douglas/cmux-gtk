@@ -59,8 +59,26 @@ impl AppState {
         gl_surface.set_hexpand(true);
         gl_surface.set_vexpand(true);
 
+        // Check if this panel has pending scrollback to restore
+        let scrollback_file = {
+            let mut tm = lock_or_recover(&self.shared.tab_manager);
+            tm.find_workspace_with_panel_mut(panel_id)
+                .and_then(|ws| ws.panels.get_mut(&panel_id))
+                .and_then(|panel| panel.pending_scrollback.take())
+                .and_then(|text| write_scrollback_temp_file(panel_id, &text))
+        };
+
         if let Some(app) = self.ghostty_app.borrow().as_ref() {
-            gl_surface.initialize(app.raw(), working_directory, None);
+            if let Some(ref path) = scrollback_file {
+                gl_surface.initialize_with_env(
+                    app.raw(),
+                    working_directory,
+                    None,
+                    &[("CMUX_RESTORE_SCROLLBACK_FILE", path)],
+                );
+            } else {
+                gl_surface.initialize(app.raw(), working_directory, None);
+            }
         }
 
         self.terminal_cache
@@ -197,6 +215,8 @@ pub struct SharedState {
     pub notifications: Mutex<NotificationStore>,
     /// Stack of recently closed browser panel URLs (for reopen).
     pub closed_browser_urls: Mutex<Vec<String>>,
+    /// Last-known window dimensions (width, height) for session persistence.
+    pub window_size: Mutex<(i32, i32)>,
     ui_event_tx: Mutex<Option<UnboundedSender<UiEvent>>>,
 }
 
@@ -206,6 +226,7 @@ impl SharedState {
             tab_manager: Mutex::new(TabManager::new()),
             notifications: Mutex::new(NotificationStore::new()),
             closed_browser_urls: Mutex::new(Vec::new()),
+            window_size: Mutex::new((1280, 860)),
             ui_event_tx: Mutex::new(None),
         }
     }
@@ -315,10 +336,19 @@ fn activate(app: &adw::Application, state: &Rc<AppState>) {
     let window = ui::window::create_window(app, state, ui_event_rx);
     window.present();
 
-    // Start periodic autosave (every 60 seconds)
+    // Start periodic autosave (every 8 seconds, matching macOS cmux)
     {
         let state = state.clone();
-        glib::timeout_add_local(std::time::Duration::from_secs(60), move || {
+        let window_weak = window.downgrade();
+        glib::timeout_add_local(std::time::Duration::from_secs(8), move || {
+            // Capture current window size before snapshot
+            if let Some(win) = window_weak.upgrade() {
+                let w = win.width();
+                let h = win.height();
+                if w > 0 && h > 0 {
+                    *lock_or_recover(&state.shared.window_size) = (w, h);
+                }
+            }
             let snapshot = session::store::create_snapshot(&state);
             if let Err(e) = session::store::save_session(&snapshot) {
                 tracing::warn!("Autosave failed: {}", e);
@@ -343,6 +373,15 @@ fn restore_session(state: &Rc<AppState>) {
     let Some(window_snapshot) = snapshot.windows.into_iter().next() else {
         return;
     };
+
+    // Restore window geometry if saved
+    if let Some(frame) = &window_snapshot.frame {
+        let w = frame.width as i32;
+        let h = frame.height as i32;
+        if w > 0 && h > 0 {
+            *lock_or_recover(&state.shared.window_size) = (w, h);
+        }
+    }
 
     let tm_snapshot = window_snapshot.tab_manager;
     if tm_snapshot.workspaces.is_empty() {
@@ -395,6 +434,10 @@ fn restore_session(state: &Rc<AppState>) {
                     .markdown
                     .as_ref()
                     .map(|m| m.file_path.clone()),
+                pending_scrollback: panel_snapshot
+                    .terminal
+                    .as_ref()
+                    .and_then(|t| t.scrollback.clone()),
             };
             panels.insert(panel.id, panel);
         }
@@ -415,6 +458,20 @@ fn restore_session(state: &Rc<AppState>) {
         "Restored {} workspaces from session",
         tab_manager.len()
     );
+}
+
+/// Write scrollback text to a temp file for session restore.
+/// Returns the file path on success, or `None` if writing fails.
+fn write_scrollback_temp_file(panel_id: Uuid, text: &str) -> Option<String> {
+    let dir = std::env::temp_dir().join("cmux-scrollback");
+    if std::fs::create_dir_all(&dir).is_err() {
+        return None;
+    }
+    let path = dir.join(format!("{panel_id}.txt"));
+    if std::fs::write(&path, text).is_err() {
+        return None;
+    }
+    path.to_str().map(|s| s.to_string())
 }
 
 /// Atomic flag set by the SIGUSR2 signal handler.

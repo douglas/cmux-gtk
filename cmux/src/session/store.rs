@@ -78,8 +78,33 @@ fn write_atomic(path: &Path, bytes: &[u8]) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// Maximum lines of scrollback to capture per terminal (matching macOS cmux).
+const MAX_SCROLLBACK_LINES: usize = 4000;
+
+/// Truncate text to at most `max_lines` lines from the end.
+fn truncate_scrollback(text: &str) -> String {
+    let lines: Vec<&str> = text.lines().collect();
+    if lines.len() <= MAX_SCROLLBACK_LINES {
+        return text.to_string();
+    }
+    lines[lines.len() - MAX_SCROLLBACK_LINES..].join("\n")
+}
+
 /// Create a snapshot from the current application state.
 pub fn create_snapshot(state: &crate::app::AppState) -> AppSessionSnapshot {
+    // Capture scrollback text for all terminal panels before locking tab_manager
+    let scrollback_map: std::collections::HashMap<uuid::Uuid, String> = state
+        .terminal_cache
+        .borrow()
+        .iter()
+        .filter_map(|(&panel_id, surface)| {
+            surface
+                .read_scrollback_text()
+                .filter(|t| !t.is_empty())
+                .map(|text| (panel_id, truncate_scrollback(&text)))
+        })
+        .collect();
+
     let tm = lock_or_recover(&state.shared.tab_manager);
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -92,7 +117,14 @@ pub fn create_snapshot(state: &crate::app::AppState) -> AppSessionSnapshot {
             let panels: Vec<SessionPanelSnapshot> = ws
                 .panels
                 .values()
-                .map(SessionPanelSnapshot::from_panel)
+                .map(|panel| {
+                    let mut snapshot = SessionPanelSnapshot::from_panel(panel);
+                    // Attach captured scrollback to terminal panels
+                    if let Some(ref mut terminal) = snapshot.terminal {
+                        terminal.scrollback = scrollback_map.get(&panel.id).cloned();
+                    }
+                    snapshot
+                })
                 .collect();
 
             SessionWorkspaceSnapshot {
@@ -112,11 +144,18 @@ pub fn create_snapshot(state: &crate::app::AppState) -> AppSessionSnapshot {
         })
         .collect();
 
+    let (win_w, win_h) = *lock_or_recover(&state.shared.window_size);
+
     AppSessionSnapshot {
         version: 1,
         created_at: now,
         windows: vec![SessionWindowSnapshot {
-            frame: None,
+            frame: Some(SessionRectSnapshot {
+                x: 0.0,
+                y: 0.0,
+                width: win_w as f64,
+                height: win_h as f64,
+            }),
             tab_manager: SessionTabManagerSnapshot {
                 selected_workspace_index: tm.selected_index(),
                 workspaces,

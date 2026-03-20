@@ -23,11 +23,14 @@ pub fn create_window(
 ) -> adw::ApplicationWindow {
     install_css();
 
+    // Use saved window geometry if available, otherwise defaults
+    let (width, height) = *lock_or_recover(&state.shared.window_size);
+
     let window = adw::ApplicationWindow::builder()
         .application(app)
         .title("cmux")
-        .default_width(1280)
-        .default_height(860)
+        .default_width(width)
+        .default_height(height)
         .build();
 
     let split_view = adw::NavigationSplitView::new();
