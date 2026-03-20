@@ -93,6 +93,13 @@ enum Commands {
     /// Markdown panel
     #[command(subcommand)]
     Markdown(MarkdownCommands),
+
+    /// List available Ghostty terminal themes
+    Themes {
+        /// Filter themes by name (case-insensitive substring match)
+        #[arg(long, short)]
+        filter: Option<String>,
+    },
 }
 
 #[derive(Subcommand)]
@@ -1097,7 +1104,13 @@ enum MarkdownCommands {
 fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
 
+    // Local commands that don't need the socket
+    if let Commands::Themes { filter } = &cli.command {
+        return run_themes(filter.as_deref());
+    }
+
     let (method, params) = match &cli.command {
+        Commands::Themes { .. } => unreachable!(),
         Commands::Ping => ("system.ping", serde_json::json!({})),
         Commands::Capabilities => ("system.capabilities", serde_json::json!({})),
         Commands::Identify => ("system.identify", serde_json::json!({})),
@@ -1847,6 +1860,57 @@ fn format_response(method: &str, response: &Value) {
                 println!("{}", serde_json::to_string_pretty(r).unwrap_or_default());
             } else {
                 println!("OK");
+            }
+        }
+    }
+}
+
+/// List available Ghostty themes from system and user directories.
+fn run_themes(filter: Option<&str>) -> anyhow::Result<()> {
+    let mut themes = Vec::new();
+
+    // System themes: /usr/share/ghostty/themes/ or GHOSTTY_RESOURCES_DIR
+    let system_dir = std::env::var("GHOSTTY_RESOURCES_DIR")
+        .map(|d| std::path::PathBuf::from(d).join("themes"))
+        .unwrap_or_else(|_| std::path::PathBuf::from("/usr/share/ghostty/themes"));
+    collect_themes(&system_dir, &mut themes);
+
+    // User themes: ~/.config/ghostty/themes/
+    if let Some(home) = std::env::var_os("HOME") {
+        let user_dir = std::path::PathBuf::from(home).join(".config/ghostty/themes");
+        collect_themes(&user_dir, &mut themes);
+    }
+
+    themes.sort();
+    themes.dedup();
+
+    let filter_lower = filter.map(|f| f.to_lowercase());
+
+    for theme in &themes {
+        if let Some(ref f) = filter_lower {
+            if !theme.to_lowercase().contains(f) {
+                continue;
+            }
+        }
+        println!("{theme}");
+    }
+
+    if themes.is_empty() {
+        eprintln!("No Ghostty themes found.");
+        eprintln!("Install ghostty or set GHOSTTY_RESOURCES_DIR.");
+    }
+
+    Ok(())
+}
+
+fn collect_themes(dir: &std::path::Path, themes: &mut Vec<String>) {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        if let Some(name) = entry.file_name().to_str() {
+            if !name.starts_with('.') {
+                themes.push(name.to_string());
             }
         }
     }
