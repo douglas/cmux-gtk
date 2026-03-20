@@ -261,6 +261,16 @@ impl GhosttyGlSurface {
         working_directory: Option<&str>,
         command: Option<&str>,
     ) {
+        self.initialize_with_env(app, working_directory, command, &[]);
+    }
+
+    pub fn initialize_with_env(
+        &self,
+        app: ghostty_app_t,
+        working_directory: Option<&str>,
+        command: Option<&str>,
+        env_vars: &[(&str, &str)],
+    ) {
         let imp = self.imp();
         imp.app.set(app);
         self.setup_event_controllers();
@@ -268,15 +278,23 @@ impl GhosttyGlSurface {
         let widget = self.clone();
         let wd = working_directory.map(|s| s.to_string());
         let cmd = command.map(|s| s.to_string());
+        let env: Vec<(String, String)> = env_vars
+            .iter()
+            .map(|(k, v)| (k.to_string(), v.to_string()))
+            .collect();
 
         self.connect_realize(move |_w| {
-            widget.create_surface(app, wd.as_deref(), cmd.as_deref());
+            widget.create_surface(app, wd.as_deref(), cmd.as_deref(), &env);
             widget.grab_focus();
         });
 
         // GTK4: if the widget is already realized, connect_realize won't fire.
         if self.is_realized() {
-            self.create_surface(app, working_directory, command);
+            let env: Vec<(String, String)> = env_vars
+                .iter()
+                .map(|(k, v)| (k.to_string(), v.to_string()))
+                .collect();
+            self.create_surface(app, working_directory, command, &env);
             self.grab_focus();
         }
     }
@@ -286,6 +304,7 @@ impl GhosttyGlSurface {
         app: ghostty_app_t,
         _working_directory: Option<&str>,
         _command: Option<&str>,
+        _env_vars: &[(String, String)],
     ) {
         if app.is_null() {
             return;
@@ -320,6 +339,28 @@ impl GhosttyGlSurface {
 
             let cmd_cstr = _command.and_then(|cmd| std::ffi::CString::new(cmd).ok());
             config.command = cmd_cstr.as_ref().map_or(ptr::null(), |c| c.as_ptr());
+
+            // Set environment variables (e.g., scrollback restore file)
+            let env_cstrs: Vec<(std::ffi::CString, std::ffi::CString)> = _env_vars
+                .iter()
+                .filter_map(|(k, v)| {
+                    Some((
+                        std::ffi::CString::new(k.as_str()).ok()?,
+                        std::ffi::CString::new(v.as_str()).ok()?,
+                    ))
+                })
+                .collect();
+            let mut env_vars_c: Vec<ghostty_env_var_s> = env_cstrs
+                .iter()
+                .map(|(k, v)| ghostty_env_var_s {
+                    key: k.as_ptr(),
+                    value: v.as_ptr(),
+                })
+                .collect();
+            if !env_vars_c.is_empty() {
+                config.env_vars = env_vars_c.as_mut_ptr();
+                config.env_var_count = env_vars_c.len();
+            }
 
             let surface = unsafe { ghostty_surface_new(app, &config) };
             if surface.is_null() {
@@ -848,6 +889,62 @@ impl GhosttyGlSurface {
                     coord: ghostty_point_coord_e::GHOSTTY_POINT_COORD_BOTTOM_RIGHT,
                     x: size.columns as u32 - 1,
                     y: size.rows as u32 - 1,
+                },
+                rectangle: false,
+            };
+
+            let mut text_out = std::mem::zeroed::<ghostty_text_s>();
+            if !ghostty_surface_read_text(surface, selection, &mut text_out) {
+                return Some(String::new());
+            }
+
+            let result = if text_out.text.is_null() || text_out.text_len == 0 {
+                String::new()
+            } else {
+                let slice = std::slice::from_raw_parts(
+                    text_out.text as *const u8,
+                    text_out.text_len,
+                );
+                String::from_utf8_lossy(slice).into_owned()
+            };
+
+            ghostty_surface_free_text(surface, &mut text_out);
+            Some(result)
+        }
+
+        #[cfg(not(feature = "link-ghostty"))]
+        {
+            Some(String::new())
+        }
+    }
+
+    /// Read the full screen buffer including scrollback history.
+    ///
+    /// Uses `GHOSTTY_POINT_SCREEN` which covers the entire scrollback
+    /// buffer plus the visible viewport. Returns `None` if the surface
+    /// is not ready.
+    pub fn read_scrollback_text(&self) -> Option<String> {
+        let surface = self.imp().surface.get();
+        if surface.is_null() {
+            return None;
+        }
+
+        #[cfg(feature = "link-ghostty")]
+        unsafe {
+            use ghostty_sys::*;
+
+            let selection = ghostty_selection_s {
+                top_left: ghostty_point_s {
+                    tag: ghostty_point_tag_e::GHOSTTY_POINT_SCREEN,
+                    coord: ghostty_point_coord_e::GHOSTTY_POINT_COORD_TOP_LEFT,
+                    x: 0,
+                    y: 0,
+                },
+                bottom_right: ghostty_point_s {
+                    tag: ghostty_point_tag_e::GHOSTTY_POINT_SCREEN,
+                    coord: ghostty_point_coord_e::GHOSTTY_POINT_COORD_BOTTOM_RIGHT,
+                    x: 0,
+                    y: 0,
                 },
                 rectangle: false,
             };

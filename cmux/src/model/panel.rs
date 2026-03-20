@@ -35,6 +35,8 @@ pub struct Panel {
     pub browser_url: Option<String>,
     /// File path for markdown panels.
     pub markdown_file: Option<String>,
+    /// Scrollback text to replay when the terminal surface is first created (session restore).
+    pub pending_scrollback: Option<String>,
 }
 
 impl Panel {
@@ -53,6 +55,7 @@ impl Panel {
             tty_name: None,
             browser_url: None,
             markdown_file: None,
+            pending_scrollback: None,
         }
     }
 
@@ -71,6 +74,7 @@ impl Panel {
             tty_name: None,
             browser_url: None,
             markdown_file: None,
+            pending_scrollback: None,
         }
     }
 
@@ -93,6 +97,7 @@ impl Panel {
             tty_name: None,
             browser_url: None,
             markdown_file: Some(file_path.to_string()),
+            pending_scrollback: None,
         }
     }
 
