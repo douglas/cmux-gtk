@@ -570,6 +570,25 @@ fn bind_shared_state_updates(
                             surface.binding_action("copy_mode");
                         }
                     }
+                    UiEvent::ReopenClosedBrowser => {
+                        if let Some(url) = state.shared.pop_closed_browser_url() {
+                            let mut tm = lock_or_recover(&state.shared.tab_manager);
+                            if let Some(ws) = tm.selected_mut() {
+                                let mut panel =
+                                    crate::model::panel::Panel::new_browser();
+                                panel.browser_url = Some(url);
+                                let panel_id = panel.id;
+                                ws.panels.insert(panel_id, panel);
+                                ws.layout.add_panel_to_pane(
+                                    ws.focused_panel_id.unwrap_or(panel_id),
+                                    panel_id,
+                                );
+                                ws.focused_panel_id = Some(panel_id);
+                            }
+                            drop(tm);
+                            needs_refresh = true;
+                        }
+                    }
                     // directly via its own callbacks.
                     UiEvent::StartSearch
                     | UiEvent::EndSearch
@@ -867,6 +886,14 @@ fn setup_shortcuts(
                     let mut tm = lock_or_recover(&state.shared.tab_manager);
                     if let Some(ws) = tm.selected_mut() {
                         if let Some(panel_id) = ws.focused_panel_id {
+                            // Capture browser URL before closing
+                            if let Some(panel) = ws.panels.get(&panel_id) {
+                                if panel.panel_type == PanelType::Browser {
+                                    if let Some(ref url) = panel.browser_url {
+                                        state.shared.push_closed_browser_url(url.clone());
+                                    }
+                                }
+                            }
                             let removed = ws.remove_panel(panel_id);
                             if removed && ws.is_empty() {
                                 let ws_id = ws.id;
@@ -924,6 +951,13 @@ fn setup_shortcuts(
                 state
                     .shared
                     .send_ui_event(crate::app::UiEvent::OpenFolderAsWorkspace);
+                glib::Propagation::Stop
+            }
+            // Ctrl+Shift+Y: Reopen last closed browser panel
+            (gdk4::Key::Y, true, true) => {
+                state
+                    .shared
+                    .send_ui_event(crate::app::UiEvent::ReopenClosedBrowser);
                 glib::Propagation::Stop
             }
             // Ctrl+Shift+M: Enter terminal copy mode
@@ -1239,10 +1273,24 @@ fn install_css() {
             background-color: alpha(@theme_fg_color, 0.04);
         }
 
-        /* ── Selected row — solid accent highlight with white text ── */
+        /* ── Selected row — solid accent highlight with white text (default) ── */
         .navigation-sidebar row:selected {
             background-color: @accent_bg_color;
             color: white;
+        }
+
+        /* ── Left-rail variant — accent left border, no background fill ── */
+        .sidebar-left-rail row:selected {
+            background-color: alpha(@accent_bg_color, 0.12);
+            color: @theme_fg_color;
+            border-left: 3px solid @accent_bg_color;
+        }
+        .sidebar-left-rail row:selected .workspace-title {
+            color: @theme_fg_color;
+        }
+        .sidebar-left-rail row:selected .dim-label,
+        .sidebar-left-rail row:selected .caption {
+            color: alpha(@theme_fg_color, 0.6);
         }
         .navigation-sidebar row:selected .workspace-title {
             color: white;

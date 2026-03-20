@@ -290,6 +290,10 @@ fn build_actions(state: &Rc<AppState>) -> Rc<Vec<PaletteAction>> {
             name: "terminal.copy_mode".into(),
             label: "Enter Copy Mode".into(),
         },
+        PaletteAction {
+            name: "browser.reopen_closed".into(),
+            label: "Reopen Closed Browser Tab".into(),
+        },
     ];
 
     // Add "Open in..." commands for installed editors
@@ -642,6 +646,12 @@ fn execute_action(name: &str, state: &Rc<AppState>, on_refresh: &Rc<dyn Fn()>) {
                         .send_ui_event(crate::app::UiEvent::CopyMode { panel_id });
                 }
             }
+            return; // UiEvent handled
+        }
+        "browser.reopen_closed" => {
+            state
+                .shared
+                .send_ui_event(crate::app::UiEvent::ReopenClosedBrowser);
             return; // UiEvent handled
         }
         name if name.starts_with("workspace.select.") => {

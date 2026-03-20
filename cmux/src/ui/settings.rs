@@ -6,7 +6,7 @@ use libadwaita::prelude::*;
 
 use crate::settings::{
     self, AppSettings, BrowserSettings, NewWorkspacePlacement, SearchEngine,
-    SidebarDisplaySettings, SocketAccess, ThemeMode,
+    SidebarDisplaySettings, SidebarFocusStyle, SocketAccess, ThemeMode,
 };
 
 /// Create and show the settings preferences window.
@@ -116,6 +116,15 @@ pub fn show_settings(parent: &adw::ApplicationWindow) {
     pills_row.set_title("Status Pills");
     pills_row.set_active(current_settings.sidebar.show_status_pills);
     sidebar_group.add(&pills_row);
+
+    let focus_style_row = adw::ComboRow::new();
+    focus_style_row.set_title("Selection Style");
+    focus_style_row.set_subtitle("How the selected workspace is highlighted");
+    let focus_labels: Vec<&str> = SidebarFocusStyle::ALL.iter().map(|s| s.label()).collect();
+    let focus_list = gtk4::StringList::new(&focus_labels);
+    focus_style_row.set_model(Some(&focus_list));
+    focus_style_row.set_selected(current_settings.sidebar.focus_style.to_index());
+    sidebar_group.add(&focus_style_row);
 
     appearance_page.add(&sidebar_group);
 
@@ -376,6 +385,7 @@ pub fn show_settings(parent: &adw::ApplicationWindow) {
         let logs_row = logs_row.clone();
         let progress_row = progress_row.clone();
         let pills_row = pills_row.clone();
+        let focus_style_row = focus_style_row.clone();
         let engine_row = engine_row.clone();
         let home_row = home_row.clone();
         let shortcuts_state = shortcuts_state.clone();
@@ -429,6 +439,7 @@ pub fn show_settings(parent: &adw::ApplicationWindow) {
                     show_logs: logs_row.is_active(),
                     show_progress: progress_row.is_active(),
                     show_status_pills: pills_row.is_active(),
+                    focus_style: SidebarFocusStyle::from_index(focus_style_row.selected()),
                 },
                 browser: BrowserSettings {
                     search_engine: SearchEngine::from_index(engine_row.selected()),

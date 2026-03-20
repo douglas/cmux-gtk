@@ -39,6 +39,13 @@ pub fn create_sidebar(state: &Rc<AppState>) -> SidebarWidgets {
     list_box.set_selection_mode(gtk4::SelectionMode::Single);
     list_box.add_css_class("navigation-sidebar");
 
+    // Apply sidebar focus style from settings
+    if crate::settings::load().sidebar.focus_style
+        == crate::settings::SidebarFocusStyle::LeftRail
+    {
+        list_box.add_css_class("sidebar-left-rail");
+    }
+
     // Wire search entry to filter list rows
     {
         let search_entry_weak = search_entry.downgrade();

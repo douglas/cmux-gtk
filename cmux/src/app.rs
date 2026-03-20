@@ -173,6 +173,7 @@ pub enum UiEvent {
     CopyMode {
         panel_id: Uuid,
     },
+    ReopenClosedBrowser,
 }
 
 /// Wrapper to send a raw ghostty_surface_t across threads.
@@ -192,6 +193,8 @@ impl std::fmt::Debug for SendSurfacePtr {
 pub struct SharedState {
     pub tab_manager: Mutex<TabManager>,
     pub notifications: Mutex<NotificationStore>,
+    /// Stack of recently closed browser panel URLs (for reopen).
+    pub closed_browser_urls: Mutex<Vec<String>>,
     ui_event_tx: Mutex<Option<UnboundedSender<UiEvent>>>,
 }
 
@@ -200,6 +203,7 @@ impl SharedState {
         Self {
             tab_manager: Mutex::new(TabManager::new()),
             notifications: Mutex::new(NotificationStore::new()),
+            closed_browser_urls: Mutex::new(Vec::new()),
             ui_event_tx: Mutex::new(None),
         }
     }
@@ -216,6 +220,20 @@ impl SharedState {
 
     pub fn notify_ui_refresh(&self) {
         let _ = self.send_ui_event(UiEvent::Refresh);
+    }
+
+    /// Push a closed browser URL onto the reopen stack (max 20).
+    pub fn push_closed_browser_url(&self, url: String) {
+        let mut stack = lock_or_recover(&self.closed_browser_urls);
+        if stack.len() >= 20 {
+            stack.remove(0);
+        }
+        stack.push(url);
+    }
+
+    /// Pop the most recently closed browser URL.
+    pub fn pop_closed_browser_url(&self) -> Option<String> {
+        lock_or_recover(&self.closed_browser_urls).pop()
     }
 }
 
@@ -366,6 +384,10 @@ fn restore_session(state: &Rc<AppState>) {
                 git_branch: panel_snapshot.git_branch.clone(),
                 listening_ports: panel_snapshot.listening_ports.clone(),
                 tty_name: panel_snapshot.tty_name.clone(),
+                browser_url: panel_snapshot
+                    .browser
+                    .as_ref()
+                    .and_then(|b| b.url_string.clone()),
             };
             panels.insert(panel.id, panel);
         }

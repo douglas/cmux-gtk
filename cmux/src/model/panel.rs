@@ -29,6 +29,8 @@ pub struct Panel {
     pub git_branch: Option<GitBranch>,
     pub listening_ports: Vec<u16>,
     pub tty_name: Option<String>,
+    /// Current URL for browser panels (updated via socket or WebView URI changes).
+    pub browser_url: Option<String>,
 }
 
 impl Panel {
@@ -45,6 +47,7 @@ impl Panel {
             git_branch: None,
             listening_ports: Vec::new(),
             tty_name: None,
+            browser_url: None,
         }
     }
 
@@ -61,6 +64,7 @@ impl Panel {
             git_branch: None,
             listening_ports: Vec::new(),
             tty_name: None,
+            browser_url: None,
         }
     }
 

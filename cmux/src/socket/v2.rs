@@ -2494,10 +2494,14 @@ fn handle_surface_create(id: Value, params: &Value, state: &Arc<SharedState>) ->
         _ => crate::model::PanelType::Terminal,
     };
 
-    let new_panel = match panel_type {
+    let url = params.get("url").and_then(|v| v.as_str()).map(|s| s.to_string());
+    let mut new_panel = match panel_type {
         crate::model::PanelType::Terminal => crate::model::Panel::new_terminal(),
         crate::model::PanelType::Browser => crate::model::Panel::new_browser(),
     };
+    if panel_type == crate::model::PanelType::Browser {
+        new_panel.browser_url = url;
+    }
     let new_panel_id = new_panel.id;
 
     let mut tm = lock_or_recover(&state.tab_manager);

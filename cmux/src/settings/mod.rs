@@ -241,6 +241,42 @@ impl SearchEngine {
     }
 }
 
+/// Sidebar focus style for selected workspace row.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SidebarFocusStyle {
+    /// Solid accent background fill (default).
+    #[default]
+    SolidFill,
+    /// Left accent rail indicator.
+    LeftRail,
+}
+
+impl SidebarFocusStyle {
+    pub const ALL: &[Self] = &[Self::SolidFill, Self::LeftRail];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::SolidFill => "Solid Fill",
+            Self::LeftRail => "Left Rail",
+        }
+    }
+
+    pub fn from_index(i: u32) -> Self {
+        match i {
+            1 => Self::LeftRail,
+            _ => Self::SolidFill,
+        }
+    }
+
+    pub fn to_index(self) -> u32 {
+        match self {
+            Self::SolidFill => 0,
+            Self::LeftRail => 1,
+        }
+    }
+}
+
 /// Sidebar display toggles — which metadata to show in workspace rows.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
@@ -252,6 +288,7 @@ pub struct SidebarDisplaySettings {
     pub show_logs: bool,
     pub show_progress: bool,
     pub show_status_pills: bool,
+    pub focus_style: SidebarFocusStyle,
 }
 
 impl Default for SidebarDisplaySettings {
@@ -264,6 +301,7 @@ impl Default for SidebarDisplaySettings {
             show_logs: true,
             show_progress: true,
             show_status_pills: true,
+            focus_style: SidebarFocusStyle::default(),
         }
     }
 }
