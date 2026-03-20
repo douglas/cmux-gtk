@@ -1,6 +1,13 @@
-# cmux-linux
+# cmux-gtk
 
-Rust + GTK4/libadwaita port of cmux (terminal multiplexer for AI coding agents).
+GTK4/libadwaita terminal multiplexer for AI coding agents. Rust + Ghostty.
+
+## Setup
+
+```bash
+git submodule update --init
+cargo build --features cmux/link-ghostty
+```
 
 ## Build
 
@@ -45,6 +52,5 @@ Line-delimited JSON v2 protocol. Compatible with macOS cmux socket API.
 
 ## Reference
 
-- macOS cmux source: root of this repository (Swift/AppKit)
-- ghostty C API: `ghostty.h` in the repo root
+- ghostty C API: `ghostty.h` in the ghostty submodule
 - Ghostty GTK runtime: `ghostty/src/apprt/gtk/` (reference for GL/input integration)
