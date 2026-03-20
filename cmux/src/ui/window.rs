@@ -1167,7 +1167,7 @@ fn install_css() {
 
         /* ── Pane tab bar ── */
         .pane-tab-bar {
-            background-color: alpha(@theme_bg_color, 0.6);
+            background-color: alpha(@headerbar_bg_color, 0.95);
             border-bottom: 1px solid alpha(@theme_fg_color, 0.1);
             padding: 1px 4px;
         }
@@ -1180,7 +1180,7 @@ fn install_css() {
             background-color: alpha(@theme_fg_color, 0.06);
         }
         .pane-tab-selected {
-            background-color: alpha(@theme_fg_color, 0.14);
+            background-color: alpha(@accent_bg_color, 0.35);
             color: @theme_fg_color;
         }
         .pane-tab-close {
@@ -1196,7 +1196,7 @@ fn install_css() {
             min-width: 18px;
             min-height: 18px;
             padding: 1px;
-            opacity: 0.4;
+            opacity: 0.55;
         }
         .pane-tab-action:hover {
             opacity: 1;

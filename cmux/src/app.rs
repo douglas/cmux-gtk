@@ -473,6 +473,9 @@ pub fn apply_theme_from_settings() {
                      @define-color accent_bg_color {accent};\n\
                      .navigation-sidebar row:selected {{\n\
                          background-color: alpha({accent}, 0.25);\n\
+                     }}\n\
+                     .pane-tab-selected {{\n\
+                         background-color: alpha({accent}, 0.35);\n\
                      }}\n"
                 );
             }
