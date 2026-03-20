@@ -284,14 +284,27 @@ fn build_tab_button(
     tab.set_margin_top(2);
     tab.set_margin_bottom(2);
 
-    // Panel type icon
-    let icon_name = match panel_type {
-        PanelType::Terminal => "utilities-terminal-symbolic",
-        PanelType::Browser => "globe-symbolic",
-        PanelType::Markdown => "document-open-symbolic",
+    // Panel type icon (use favicon for browser panels if available)
+    let icon = if panel_type == PanelType::Browser {
+        if let Some(texture) = super::browser_panel::get_favicon(panel_id) {
+            let img = gtk4::Image::from_paintable(Some(&texture));
+            img.set_pixel_size(14);
+            img
+        } else {
+            let img = gtk4::Image::from_icon_name("globe-symbolic");
+            img.set_pixel_size(14);
+            img
+        }
+    } else {
+        let icon_name = match panel_type {
+            PanelType::Terminal => "utilities-terminal-symbolic",
+            PanelType::Markdown => "document-open-symbolic",
+            _ => "globe-symbolic",
+        };
+        let img = gtk4::Image::from_icon_name(icon_name);
+        img.set_pixel_size(14);
+        img
     };
-    let icon = gtk4::Image::from_icon_name(icon_name);
-    icon.set_pixel_size(14);
     tab.append(&icon);
 
     let label = gtk4::Label::new(Some(title));

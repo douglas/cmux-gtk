@@ -221,7 +221,7 @@ impl SessionPanelSnapshot {
             },
             browser: if panel.panel_type == crate::model::PanelType::Browser {
                 Some(SessionBrowserPanelSnapshot {
-                    url_string: None,
+                    url_string: panel.browser_url.clone(),
                     should_render_web_view: true,
                     page_zoom: 1.0,
                     developer_tools_visible: false,

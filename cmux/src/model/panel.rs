@@ -37,6 +37,8 @@ pub struct Panel {
     pub markdown_file: Option<String>,
     /// Scrollback text to replay when the terminal surface is first created (session restore).
     pub pending_scrollback: Option<String>,
+    /// Browser zoom level to restore (session restore).
+    pub pending_zoom: Option<f64>,
 }
 
 impl Panel {
@@ -56,6 +58,7 @@ impl Panel {
             browser_url: None,
             markdown_file: None,
             pending_scrollback: None,
+            pending_zoom: None,
         }
     }
 
@@ -75,6 +78,7 @@ impl Panel {
             browser_url: None,
             markdown_file: None,
             pending_scrollback: None,
+            pending_zoom: None,
         }
     }
 
@@ -98,6 +102,7 @@ impl Panel {
             browser_url: None,
             markdown_file: Some(file_path.to_string()),
             pending_scrollback: None,
+            pending_zoom: None,
         }
     }
 

@@ -126,6 +126,15 @@ thread_local! {
 
     /// Per-panel dialog handler config.
     static DIALOG_HANDLERS: RefCell<HashMap<uuid::Uuid, DialogHandler>> = RefCell::new(HashMap::new());
+
+    /// Per-panel favicon textures (updated on WebView favicon-notify signal).
+    static FAVICON_CACHE: RefCell<HashMap<uuid::Uuid, gdk4::Texture>> = RefCell::new(HashMap::new());
+
+    /// Per-panel console pane widgets (for toggle via UiEvent).
+    static CONSOLE_PANELS: RefCell<HashMap<uuid::Uuid, gtk4::Box>> = RefCell::new(HashMap::new());
+
+    /// Per-panel console TextViews (for appending messages).
+    static CONSOLE_TEXT_VIEWS: RefCell<HashMap<uuid::Uuid, gtk4::TextView>> = RefCell::new(HashMap::new());
 }
 
 struct ElementRef {
@@ -139,6 +148,32 @@ struct DialogHandler {
     prompt_text: Option<String>,
 }
 
+/// Shared persistent NetworkSession — cookies and storage persist across panels and restarts.
+/// Data stored at `~/.local/share/cmux/webkit/`.
+fn shared_network_session() -> webkit6::NetworkSession {
+    thread_local! {
+        static SESSION: RefCell<Option<webkit6::NetworkSession>> = const { RefCell::new(None) };
+    }
+    SESSION.with(|s| {
+        let mut slot = s.borrow_mut();
+        if let Some(ref session) = *slot {
+            return session.clone();
+        }
+        let data_dir = dirs::data_dir()
+            .unwrap_or_else(|| std::path::PathBuf::from("~/.local/share"))
+            .join("cmux/webkit");
+        let cache_dir = dirs::cache_dir()
+            .unwrap_or_else(|| std::path::PathBuf::from("~/.cache"))
+            .join("cmux/webkit");
+        let session = webkit6::NetworkSession::new(
+            Some(data_dir.to_str().unwrap_or("~/.local/share/cmux/webkit")),
+            Some(cache_dir.to_str().unwrap_or("~/.cache/cmux/webkit")),
+        );
+        *slot = Some(session.clone());
+        session
+    })
+}
+
 /// Look up the WebView for a panel_id (GTK main thread only).
 pub fn get_webview(panel_id: uuid::Uuid) -> Option<webkit6::WebView> {
     WEBVIEW_REGISTRY.with(|r| r.borrow().get(&panel_id).cloned())
@@ -148,6 +183,40 @@ pub fn get_webview(panel_id: uuid::Uuid) -> Option<webkit6::WebView> {
 #[allow(dead_code)]
 pub fn unregister_webview(panel_id: uuid::Uuid) {
     WEBVIEW_REGISTRY.with(|r| r.borrow_mut().remove(&panel_id));
+}
+
+/// Collect current zoom levels for all browser panels (for session snapshots).
+pub fn collect_webview_zoom_levels() -> HashMap<uuid::Uuid, f64> {
+    WEBVIEW_REGISTRY.with(|r| {
+        r.borrow()
+            .iter()
+            .map(|(&id, wv)| (id, wv.zoom_level()))
+            .collect()
+    })
+}
+
+/// Toggle the JS console panel for a browser panel.
+pub fn toggle_console(panel_id: uuid::Uuid) {
+    CONSOLE_PANELS.with(|c| {
+        if let Some(pane) = c.borrow().get(&panel_id) {
+            pane.set_visible(!pane.is_visible());
+        }
+    });
+}
+
+/// Get the cached favicon texture for a browser panel (if available).
+pub fn get_favicon(panel_id: uuid::Uuid) -> Option<gdk4::Texture> {
+    FAVICON_CACHE.with(|c| c.borrow().get(&panel_id).cloned())
+}
+
+/// Collect current URLs for all browser panels (for session snapshots).
+pub fn collect_webview_urls() -> HashMap<uuid::Uuid, String> {
+    WEBVIEW_REGISTRY.with(|r| {
+        r.borrow()
+            .iter()
+            .filter_map(|(&id, wv)| wv.uri().map(|u| (id, u.to_string())))
+            .collect()
+    })
 }
 
 // ---------------------------------------------------------------------------
@@ -557,6 +626,7 @@ pub fn create_browser_widget(
     panel_id: uuid::Uuid,
     initial_url: Option<&str>,
     is_attention_source: bool,
+    initial_zoom: Option<f64>,
 ) -> gtk4::Widget {
     let browser_settings = settings::load().browser;
 
@@ -669,10 +739,19 @@ pub fn create_browser_widget(
 
     container.append(&find_bar);
 
-    // ── WebView ──
-    let web_view = webkit6::WebView::new();
+    // ── WebView (shared persistent session for cookie/storage persistence) ──
+    let web_view = webkit6::WebView::builder()
+        .network_session(&shared_network_session())
+        .build();
     web_view.set_hexpand(true);
     web_view.set_vexpand(true);
+
+    // Restore zoom level from session if available
+    if let Some(zoom) = initial_zoom {
+        if zoom > 0.0 && zoom != 1.0 {
+            web_view.set_zoom_level(zoom);
+        }
+    }
 
     // Register in the thread-local WebView registry for socket command access
     WEBVIEW_REGISTRY.with(|r| r.borrow_mut().insert(panel_id, web_view.clone()));
@@ -719,15 +798,87 @@ pub fn create_browser_widget(
             CONSOLE_BUFFERS.with(|bufs| {
                 let mut map = bufs.borrow_mut();
                 let buf = map.entry(panel_id).or_insert_with(Vec::new);
-                buf.push(message);
+                buf.push(message.clone());
                 if buf.len() > 100 {
                     buf.remove(0);
+                }
+            });
+            // Append to the in-app console text view
+            CONSOLE_TEXT_VIEWS.with(|tvs| {
+                if let Some(tv) = tvs.borrow().get(&panel_id) {
+                    let buf = tv.buffer();
+                    let mut end = buf.end_iter();
+                    buf.insert(&mut end, &message);
+                    buf.insert(&mut end, "\n");
+                    // Auto-scroll to bottom
+                    if let Some(mark) = buf.mark("insert") {
+                        tv.scroll_to_mark(&mark, 0.0, false, 0.0, 0.0);
+                    }
                 }
             });
         });
     }
 
+    // ── JS Console panel (collapsible, below WebView) ──
+    let console_pane = gtk4::Box::new(gtk4::Orientation::Vertical, 0);
+    console_pane.add_css_class("browser-console-pane");
+    console_pane.set_visible(false);
+    console_pane.set_size_request(-1, 150);
+
+    let console_header = gtk4::Box::new(gtk4::Orientation::Horizontal, 4);
+    console_header.set_margin_start(6);
+    console_header.set_margin_end(6);
+    console_header.set_margin_top(2);
+    console_header.set_margin_bottom(2);
+    let console_label = gtk4::Label::new(Some("Console"));
+    console_label.add_css_class("heading");
+    console_header.append(&console_label);
+    let console_clear_btn = gtk4::Button::from_icon_name("edit-clear-symbolic");
+    console_clear_btn.set_tooltip_text(Some("Clear Console"));
+    console_clear_btn.add_css_class("flat");
+    console_header.append(&console_clear_btn);
+    console_pane.append(&console_header);
+
+    let console_scroll = gtk4::ScrolledWindow::new();
+    console_scroll.set_vexpand(true);
+    console_scroll.set_policy(gtk4::PolicyType::Automatic, gtk4::PolicyType::Automatic);
+    let console_text_view = gtk4::TextView::new();
+    console_text_view.set_editable(false);
+    console_text_view.set_monospace(true);
+    console_text_view.set_wrap_mode(gtk4::WrapMode::WordChar);
+    console_text_view.set_margin_start(6);
+    console_text_view.set_margin_end(6);
+    console_scroll.set_child(Some(&console_text_view));
+    console_pane.append(&console_scroll);
+
+    // Clear button clears the text view and buffer
+    {
+        let tv = console_text_view.clone();
+        console_clear_btn.connect_clicked(move |_| {
+            tv.buffer().set_text("");
+            CONSOLE_BUFFERS.with(|bufs| {
+                bufs.borrow_mut().remove(&panel_id);
+            });
+        });
+    }
+
+    // Store console pane and text view references for toggle and message appending
+    CONSOLE_PANELS.with(|c| c.borrow_mut().insert(panel_id, console_pane.clone()));
+    CONSOLE_TEXT_VIEWS.with(|c| c.borrow_mut().insert(panel_id, console_text_view.clone()));
+
     container.append(&web_view);
+    container.append(&console_pane);
+
+    // ── Favicon tracking ──
+    {
+        web_view.connect_favicon_notify(move |wv| {
+            if let Some(texture) = wv.favicon() {
+                FAVICON_CACHE.with(|c| c.borrow_mut().insert(panel_id, texture));
+            } else {
+                FAVICON_CACHE.with(|c| c.borrow_mut().remove(&panel_id));
+            }
+        });
+    }
 
     // ── Wire navigation buttons ──
     {

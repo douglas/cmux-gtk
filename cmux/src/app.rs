@@ -438,6 +438,11 @@ fn restore_session(state: &Rc<AppState>) {
                     .terminal
                     .as_ref()
                     .and_then(|t| t.scrollback.clone()),
+                pending_zoom: panel_snapshot
+                    .browser
+                    .as_ref()
+                    .map(|b| b.page_zoom)
+                    .filter(|&z| z != 1.0),
             };
             panels.insert(panel.id, panel);
         }

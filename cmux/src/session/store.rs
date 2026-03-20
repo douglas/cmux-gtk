@@ -105,6 +105,12 @@ pub fn create_snapshot(state: &crate::app::AppState) -> AppSessionSnapshot {
         })
         .collect();
 
+    // Capture browser state from WebView registry (GTK main thread)
+    let browser_zoom_map: std::collections::HashMap<uuid::Uuid, f64> =
+        crate::ui::browser_panel::collect_webview_zoom_levels();
+    let browser_url_map: std::collections::HashMap<uuid::Uuid, String> =
+        crate::ui::browser_panel::collect_webview_urls();
+
     let tm = lock_or_recover(&state.shared.tab_manager);
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -122,6 +128,15 @@ pub fn create_snapshot(state: &crate::app::AppState) -> AppSessionSnapshot {
                     // Attach captured scrollback to terminal panels
                     if let Some(ref mut terminal) = snapshot.terminal {
                         terminal.scrollback = scrollback_map.get(&panel.id).cloned();
+                    }
+                    // Attach captured zoom level and live URL to browser panels
+                    if let Some(ref mut browser) = snapshot.browser {
+                        if let Some(&zoom) = browser_zoom_map.get(&panel.id) {
+                            browser.page_zoom = zoom;
+                        }
+                        if let Some(url) = browser_url_map.get(&panel.id) {
+                            browser.url_string = Some(url.clone());
+                        }
                     }
                     snapshot
                 })

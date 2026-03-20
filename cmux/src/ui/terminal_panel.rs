@@ -182,6 +182,7 @@ fn create_browser_widget(panel: &Panel, is_attention_source: bool) -> gtk4::Widg
         panel.id,
         panel.directory.as_deref(), // Reuse directory field as initial URL for browser panels
         is_attention_source,
+        panel.pending_zoom,
     )
 }
 
