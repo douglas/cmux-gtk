@@ -999,7 +999,22 @@ impl GhosttyGlSurface {
                 }
             };
 
-            surface.complete_clipboard_request(&text, context.0, false);
+            if !text.is_empty() {
+                surface.complete_clipboard_request(&text, context.0, false);
+                return;
+            }
+
+            // No text — try reading image from clipboard and paste as temp file path
+            let cb = surface.clipboard();
+            let surface2 = surface.clone();
+            cb.read_texture_async(None::<&gtk4::gio::Cancellable>, move |result| {
+                let path = match result {
+                    Ok(Some(texture)) => save_clipboard_image(&texture),
+                    _ => None,
+                };
+                let text = path.unwrap_or_default();
+                surface2.complete_clipboard_request(&text, context.0, false);
+            });
         });
     }
 
@@ -1269,6 +1284,33 @@ impl GhosttyGlSurface {
         }
         #[cfg(not(feature = "link-ghostty"))]
         let _ = (text, context, confirmed);
+    }
+}
+
+/// Save a clipboard image texture to a temp PNG file.
+/// Returns the shell-safe file path on success.
+fn save_clipboard_image(texture: &gdk4::Texture) -> Option<String> {
+    let dir = std::env::temp_dir().join("cmux-clipboard");
+    std::fs::create_dir_all(&dir).ok()?;
+    let filename = format!(
+        "clipboard-{}.png",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis()
+    );
+    let path = dir.join(&filename);
+    let path_str = path.to_str()?;
+    texture.save_to_png(path_str).ok()?;
+    // Return shell-escaped path
+    Some(shell_escape(path_str))
+}
+
+fn shell_escape(s: &str) -> String {
+    if s.contains(|c: char| c.is_whitespace() || "\"'\\$`!#&|;(){}[]<>?*~".contains(c)) {
+        format!("'{}'", s.replace('\'', "'\\''"))
+    } else {
+        s.to_string()
     }
 }
 
