@@ -533,6 +533,43 @@ fn bind_shared_state_updates(
                             needs_refresh = true;
                         }
                     }
+                    UiEvent::OpenFolderAsWorkspace => {
+                        if let Some(window) = window_weak.upgrade() {
+                            let state = state.clone();
+                            let list_box = list_box.clone();
+                            let content_box = content_box.clone();
+                            #[allow(deprecated)]
+                            let dialog = gtk4::FileChooserNative::builder()
+                                .title("Open Folder as Workspace")
+                                .transient_for(&window)
+                                .modal(true)
+                                .action(gtk4::FileChooserAction::SelectFolder)
+                                .build();
+                            #[allow(deprecated)]
+                            dialog.connect_response(move |dlg, response| {
+                                if response == gtk4::ResponseType::Accept {
+                                    #[allow(deprecated)]
+                                    if let Some(file) = dlg.file() {
+                                        if let Some(path) = file.path() {
+                                            let dir = path.to_string_lossy().to_string();
+                                            let ws = Workspace::with_directory(&dir);
+                                            let placement =
+                                                crate::settings::load().new_workspace_placement;
+                                            lock_or_recover(&state.shared.tab_manager)
+                                                .add_workspace_with_placement(ws, placement);
+                                            refresh_ui(&list_box, &content_box, &state);
+                                        }
+                                    }
+                                }
+                            });
+                            dialog.show();
+                        }
+                    }
+                    UiEvent::CopyMode { panel_id } => {
+                        if let Some(surface) = state.terminal_cache.borrow().get(&panel_id) {
+                            surface.binding_action("copy_mode");
+                        }
+                    }
                     // directly via its own callbacks.
                     UiEvent::StartSearch
                     | UiEvent::EndSearch
@@ -879,6 +916,26 @@ fn setup_shortcuts(
                     let _ = std::process::Command::new("xdg-open")
                         .arg(&path)
                         .spawn();
+                }
+                glib::Propagation::Stop
+            }
+            // Ctrl+O: Open folder as new workspace (folder picker)
+            (gdk4::Key::o, true, false) => {
+                state
+                    .shared
+                    .send_ui_event(crate::app::UiEvent::OpenFolderAsWorkspace);
+                glib::Propagation::Stop
+            }
+            // Ctrl+Shift+M: Enter terminal copy mode
+            (gdk4::Key::M, true, true) => {
+                let panel_id = {
+                    let tm = lock_or_recover(&state.shared.tab_manager);
+                    tm.selected().and_then(|ws| ws.focused_panel_id)
+                };
+                if let Some(panel_id) = panel_id {
+                    state
+                        .shared
+                        .send_ui_event(crate::app::UiEvent::CopyMode { panel_id });
                 }
                 glib::Propagation::Stop
             }

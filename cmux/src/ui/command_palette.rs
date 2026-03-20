@@ -282,12 +282,22 @@ fn build_actions(state: &Rc<AppState>) -> Rc<Vec<PaletteAction>> {
             name: "notifications.toggle".into(),
             label: "Show Notifications".into(),
         },
+        PaletteAction {
+            name: "workspace.open_folder".into(),
+            label: "Open Folder as Workspace...".into(),
+        },
+        PaletteAction {
+            name: "terminal.copy_mode".into(),
+            label: "Enter Copy Mode".into(),
+        },
     ];
 
     // Add "Open in..." commands for installed editors
     for (binary, label) in [
         ("code", "Open in VS Code"),
+        ("cursor", "Open in Cursor"),
         ("zed", "Open in Zed"),
+        ("ghostty", "Open in Ghostty"),
         ("nvim", "Open in Neovim (terminal)"),
         ("vim", "Open in Vim (terminal)"),
         ("emacs", "Open in Emacs"),
@@ -616,6 +626,22 @@ fn execute_action(name: &str, state: &Rc<AppState>, on_refresh: &Rc<dyn Fn()>) {
             state
                 .shared
                 .send_ui_event(crate::app::UiEvent::ToggleNotifications);
+            return; // UiEvent handled
+        }
+        "workspace.open_folder" => {
+            state
+                .shared
+                .send_ui_event(crate::app::UiEvent::OpenFolderAsWorkspace);
+            return; // UiEvent handled
+        }
+        "terminal.copy_mode" => {
+            if let Some(ws) = lock_or_recover(&state.shared.tab_manager).selected() {
+                if let Some(panel_id) = ws.focused_panel_id {
+                    state
+                        .shared
+                        .send_ui_event(crate::app::UiEvent::CopyMode { panel_id });
+                }
+            }
             return; // UiEvent handled
         }
         name if name.starts_with("workspace.select.") => {

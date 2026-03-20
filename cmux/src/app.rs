@@ -169,6 +169,10 @@ pub enum UiEvent {
         surface: SendSurfacePtr,
         directory: String,
     },
+    OpenFolderAsWorkspace,
+    CopyMode {
+        panel_id: Uuid,
+    },
 }
 
 /// Wrapper to send a raw ghostty_surface_t across threads.
