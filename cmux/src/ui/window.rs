@@ -1067,10 +1067,25 @@ pub fn show_rename_tab_dialog(
 }
 
 fn install_css() {
-    // Ensure Adwaita legacy icons (terminal, browser, etc.) resolve on all systems.
+    // Ensure Adwaita legacy icons (terminal, etc.) resolve on all systems,
+    // and add bundled cmux icons (globe, etc.).
     if let Some(display) = gdk4::Display::default() {
         let icon_theme = gtk4::IconTheme::for_display(&display);
         icon_theme.add_search_path("/usr/share/icons/Adwaita");
+
+        // Bundled icons ship next to the binary at ../icons (dev) or alongside the crate source.
+        let exe_dir = std::env::current_exe()
+            .ok()
+            .and_then(|p| p.parent().map(|d| d.to_path_buf()));
+        if let Some(dir) = exe_dir {
+            let bundled = dir.join("../../cmux/icons");
+            if bundled.exists() {
+                icon_theme.add_search_path(bundled.to_string_lossy().as_ref());
+            }
+        }
+        // Also check the compile-time manifest dir (works in `cargo run`).
+        let manifest_icons = concat!(env!("CARGO_MANIFEST_DIR"), "/icons");
+        icon_theme.add_search_path(manifest_icons);
     }
 
     let provider = gtk4::CssProvider::new();
@@ -1172,16 +1187,18 @@ fn install_css() {
             padding: 1px 4px;
         }
         .pane-tab {
-            border-radius: 6px;
+            border-radius: 0;
             padding: 2px 6px;
             color: alpha(@theme_fg_color, 0.55);
+            border-bottom: 2px solid transparent;
         }
         .pane-tab:hover {
             background-color: alpha(@theme_fg_color, 0.06);
         }
         .pane-tab-selected {
-            background-color: alpha(@accent_bg_color, 0.35);
+            background-color: transparent;
             color: @theme_fg_color;
+            border-bottom: 2px solid @accent_bg_color;
         }
         .pane-tab-close {
             min-width: 14px;
@@ -1197,9 +1214,36 @@ fn install_css() {
             min-height: 18px;
             padding: 1px;
             opacity: 0.55;
+            border-radius: 0;
         }
         .pane-tab-action:hover {
             opacity: 1;
+        }
+
+        /* ── Browser toolbar ── */
+        .browser-nav-bar button {
+            background: none;
+            border: none;
+            box-shadow: none;
+            min-width: 24px;
+            min-height: 24px;
+            padding: 4px;
+            opacity: 0.7;
+        }
+        .browser-nav-bar button:hover {
+            opacity: 1;
+            background-color: alpha(@theme_fg_color, 0.08);
+            border-radius: 6px;
+        }
+        .browser-nav-bar button:disabled {
+            opacity: 0.3;
+        }
+        .browser-url-entry {
+            background-color: alpha(@theme_fg_color, 0.06);
+            border: none;
+            border-radius: 6px;
+            padding: 4px 8px;
+            min-height: 24px;
         }
 
         .sidebar-notification {
@@ -1297,7 +1341,7 @@ fn install_css() {
         /* ── Panel shell ── */
         .panel-shell {
             border: 1px solid alpha(@theme_fg_color, 0.12);
-            border-radius: 8px;
+            border-radius: 0;
             padding: 2px;
         }
 

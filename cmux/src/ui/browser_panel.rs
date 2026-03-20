@@ -34,33 +34,34 @@ pub fn create_browser_widget(
     }
 
     // ── Navigation bar ──
-    let nav_bar = gtk4::Box::new(gtk4::Orientation::Horizontal, 4);
+    let nav_bar = gtk4::Box::new(gtk4::Orientation::Horizontal, 2);
+    nav_bar.add_css_class("browser-nav-bar");
     nav_bar.set_margin_start(4);
     nav_bar.set_margin_end(4);
-    nav_bar.set_margin_top(4);
+    nav_bar.set_margin_top(2);
     nav_bar.set_margin_bottom(2);
 
     let back_btn = gtk4::Button::from_icon_name("go-previous-symbolic");
     back_btn.set_tooltip_text(Some("Back"));
     back_btn.set_sensitive(false);
+    back_btn.add_css_class("flat");
     nav_bar.append(&back_btn);
 
     let fwd_btn = gtk4::Button::from_icon_name("go-next-symbolic");
     fwd_btn.set_tooltip_text(Some("Forward"));
     fwd_btn.set_sensitive(false);
+    fwd_btn.add_css_class("flat");
     nav_bar.append(&fwd_btn);
 
     let reload_btn = gtk4::Button::from_icon_name("view-refresh-symbolic");
     reload_btn.set_tooltip_text(Some("Reload"));
+    reload_btn.add_css_class("flat");
     nav_bar.append(&reload_btn);
-
-    let home_btn = gtk4::Button::from_icon_name("go-home-symbolic");
-    home_btn.set_tooltip_text(Some("Home"));
-    nav_bar.append(&home_btn);
 
     let url_entry = gtk4::Entry::new();
     url_entry.set_hexpand(true);
     url_entry.set_placeholder_text(Some("Enter URL or search..."));
+    url_entry.add_css_class("browser-url-entry");
     if let Some(url) = initial_url {
         url_entry.set_text(url);
     }
@@ -69,11 +70,13 @@ pub fn create_browser_widget(
     let find_toggle_btn = gtk4::ToggleButton::new();
     find_toggle_btn.set_icon_name("edit-find-symbolic");
     find_toggle_btn.set_tooltip_text(Some("Find in Page (Ctrl+F)"));
+    find_toggle_btn.add_css_class("flat");
     nav_bar.append(&find_toggle_btn);
 
     let devtools_btn = gtk4::ToggleButton::new();
     devtools_btn.set_icon_name("utilities-terminal-symbolic");
     devtools_btn.set_tooltip_text(Some("Developer Tools"));
+    devtools_btn.add_css_class("flat");
     nav_bar.append(&devtools_btn);
 
     container.append(&nav_bar);
@@ -153,15 +156,6 @@ pub fn create_browser_widget(
             } else {
                 wv.reload();
             }
-        });
-    }
-
-    // Home button
-    {
-        let wv = web_view.clone();
-        let home_url = browser_settings.home_url.clone();
-        home_btn.connect_clicked(move |_| {
-            wv.load_uri(&home_url);
         });
     }
 

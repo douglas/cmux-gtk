@@ -164,7 +164,6 @@ fn build_pane(
     // New Terminal button
     let new_term_btn = gtk4::Button::from_icon_name("utilities-terminal-symbolic");
     new_term_btn.add_css_class("flat");
-    new_term_btn.add_css_class("circular");
     new_term_btn.add_css_class("pane-tab-action");
     new_term_btn.set_tooltip_text(Some("New Terminal"));
     {
@@ -188,9 +187,8 @@ fn build_pane(
     tab_bar.append(&new_term_btn);
 
     // New Browser button
-    let new_browser_btn = gtk4::Button::from_icon_name("web-browser-symbolic");
+    let new_browser_btn = gtk4::Button::from_icon_name("globe-symbolic");
     new_browser_btn.add_css_class("flat");
-    new_browser_btn.add_css_class("circular");
     new_browser_btn.add_css_class("pane-tab-action");
     new_browser_btn.set_tooltip_text(Some("New Browser"));
     {
@@ -216,7 +214,6 @@ fn build_pane(
     // Split Right button
     let split_h_btn = gtk4::Button::from_icon_name("view-dual-symbolic");
     split_h_btn.add_css_class("flat");
-    split_h_btn.add_css_class("circular");
     split_h_btn.add_css_class("pane-tab-action");
     split_h_btn.set_tooltip_text(Some("Split Right"));
     {
@@ -235,7 +232,6 @@ fn build_pane(
     // Split Down button
     let split_v_btn = gtk4::Button::from_icon_name("view-paged-symbolic");
     split_v_btn.add_css_class("flat");
-    split_v_btn.add_css_class("circular");
     split_v_btn.add_css_class("pane-tab-action");
     split_v_btn.set_tooltip_text(Some("Split Down"));
     {
@@ -281,7 +277,7 @@ fn build_tab_button(
     // Panel type icon
     let icon_name = match panel_type {
         PanelType::Terminal => "utilities-terminal-symbolic",
-        PanelType::Browser => "web-browser-symbolic",
+        PanelType::Browser => "globe-symbolic",
     };
     let icon = gtk4::Image::from_icon_name(icon_name);
     icon.set_pixel_size(14);
@@ -383,13 +379,14 @@ fn build_tab_button(
         let state = Rc::clone(state);
         let close_btn_ref = close_btn.clone();
         click.connect_pressed(move |gesture, _n, x, _y| {
-            // Don't steal clicks from the close button
+            // Don't steal clicks from the close button — compare x against
+            // the tab's total width minus the close button's width.
             let Some(tab_widget) = gesture.widget() else {
                 return;
             };
-            let close_start = close_btn_ref.allocation().x() as f64
-                - tab_widget.allocation().x() as f64;
-            if x >= close_start {
+            let tab_width = tab_widget.width() as f64;
+            let close_width = close_btn_ref.width() as f64;
+            if close_width > 0.0 && x >= tab_width - close_width {
                 return;
             }
             gesture.set_state(gtk4::EventSequenceState::Claimed);
