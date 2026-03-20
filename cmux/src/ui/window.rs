@@ -1187,18 +1187,20 @@ fn install_css() {
             padding: 1px 4px;
         }
         .pane-tab {
-            border-radius: 0;
-            padding: 2px 6px;
+            border-radius: 8px;
+            padding: 3px 10px;
             color: alpha(@theme_fg_color, 0.55);
-            border-bottom: 2px solid transparent;
+            border: 1px solid transparent;
+            margin: 3px 1px;
         }
         .pane-tab:hover {
-            background-color: alpha(@theme_fg_color, 0.06);
+            background-color: alpha(@theme_fg_color, 0.08);
+            border-color: alpha(@theme_fg_color, 0.08);
         }
         .pane-tab-selected {
-            background-color: transparent;
+            background-color: alpha(@theme_fg_color, 0.10);
             color: @theme_fg_color;
-            border-bottom: 2px solid @accent_bg_color;
+            border-color: alpha(@theme_fg_color, 0.15);
         }
         .pane-tab-close {
             min-width: 14px;

@@ -475,7 +475,8 @@ pub fn apply_theme_from_settings() {
                          background-color: alpha({accent}, 0.25);\n\
                      }}\n\
                      .pane-tab-selected {{\n\
-                         border-bottom: 2px solid {accent};\n\
+                         background-color: alpha({accent}, 0.15);\n\
+                         border-color: alpha({accent}, 0.25);\n\
                      }}\n"
                 );
             }
