@@ -624,6 +624,24 @@ fn bind_shared_state_updates(
                             needs_refresh = true;
                         }
                     }
+                    UiEvent::OpenUrlInBrowser { url } => {
+                        // Route terminal hyperlinks to a cmux browser panel
+                        let mut tm = lock_or_recover(&state.shared.tab_manager);
+                        let mut panel = crate::model::panel::Panel::new_browser();
+                        panel.browser_url = Some(url.clone());
+                        panel.directory = Some(url);
+                        let panel_id = panel.id;
+                        if let Some(ws) = tm.selected_mut() {
+                            ws.panels.insert(panel_id, panel);
+                            ws.layout.add_panel_to_pane(
+                                ws.focused_panel_id.unwrap_or(panel_id),
+                                panel_id,
+                            );
+                            ws.focused_panel_id = Some(panel_id);
+                        }
+                        drop(tm);
+                        needs_refresh = true;
+                    }
                     UiEvent::OpenMarkdownFile => {
                         let Some(window) = window_weak.upgrade() else {
                             continue;

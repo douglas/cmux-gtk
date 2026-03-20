@@ -194,6 +194,8 @@ pub enum UiEvent {
         panel_id: Uuid,
         action: crate::ui::browser_panel::BrowserActionKind,
     },
+    /// Open a URL in a new browser panel (routed from terminal hyperlinks).
+    OpenUrlInBrowser { url: String },
     /// Create a new application window.
     CreateWindow,
 }
@@ -789,6 +791,23 @@ impl ghostty_gtk::callbacks::GhosttyCallbackHandler for CmuxCallbackHandler {
                 let selected = unsafe { action.action.search_selected.selected };
                 self.shared
                     .send_ui_event(UiEvent::SearchSelected { selected });
+                true
+            }
+            ghostty_action_tag_e::GHOSTTY_ACTION_OPEN_URL => {
+                let url = unsafe {
+                    let open_url = &action.action.open_url;
+                    if open_url.url.is_null() || open_url.len == 0 {
+                        None
+                    } else {
+                        let slice =
+                            std::slice::from_raw_parts(open_url.url as *const u8, open_url.len);
+                        std::str::from_utf8(slice).ok().map(String::from)
+                    }
+                };
+                if let Some(url) = url {
+                    self.shared
+                        .send_ui_event(UiEvent::OpenUrlInBrowser { url });
+                }
                 true
             }
             _ => {
