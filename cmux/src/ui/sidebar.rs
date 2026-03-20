@@ -463,7 +463,7 @@ fn setup_row_context_menu(
     );
     menu.append(Some("Rename"), Some(&format!("sidebar.rename.{index}")));
 
-    // Color submenu — 16-color palette matching macOS
+    // Color submenu — 16-color palette matching macOS + custom color picker
     let color_menu = gtk4::gio::Menu::new();
     for (label, color) in &[
         ("Red", "red"),
@@ -484,8 +484,15 @@ fn setup_row_context_menu(
         ("Rose", "rose"),
         ("None", ""),
     ] {
-        color_menu.append(Some(label), Some(&format!("sidebar.color.{index}.{color}")));
+        color_menu.append(
+            Some(label),
+            Some(&format!("sidebar.color.{index}.{color}")),
+        );
     }
+    color_menu.append(
+        Some("Custom Color…"),
+        Some(&format!("sidebar.custom-color.{index}")),
+    );
     menu.append_submenu(Some("Set Color"), &color_menu);
 
     menu.append(
@@ -496,7 +503,65 @@ fn setup_row_context_menu(
         Some("Mark as Unread"),
         Some(&format!("sidebar.mark-unread.{index}")),
     );
-    menu.append(Some("Close"), Some(&format!("sidebar.close.{index}")));
+
+    // Reorder submenu
+    let reorder_menu = gtk4::gio::Menu::new();
+    reorder_menu.append(
+        Some("Move to Top"),
+        Some(&format!("sidebar.move-top.{index}")),
+    );
+    reorder_menu.append(
+        Some("Move Up"),
+        Some(&format!("sidebar.move-up.{index}")),
+    );
+    reorder_menu.append(
+        Some("Move Down"),
+        Some(&format!("sidebar.move-down.{index}")),
+    );
+    menu.append_section(None, &reorder_menu);
+
+    // Move to Window submenu (only when multiple windows exist)
+    let window_ids: Vec<uuid::Uuid> = lock_or_recover(&state.shared.window_sizes)
+        .keys()
+        .copied()
+        .collect();
+    if window_ids.len() > 1 {
+        let window_menu = gtk4::gio::Menu::new();
+        let current_window_id = {
+            let tm = lock_or_recover(&state.shared.tab_manager);
+            tm.get(index).and_then(|ws| ws.window_id)
+        };
+        for (i, wid) in window_ids.iter().enumerate() {
+            let is_current = current_window_id == Some(*wid);
+            let label = if is_current {
+                format!("Window {} (current)", i + 1)
+            } else {
+                format!("Window {}", i + 1)
+            };
+            window_menu.append(
+                Some(&label),
+                Some(&format!("sidebar.move-to-window.{index}.{wid}")),
+            );
+        }
+        menu.append_submenu(Some("Move to Window"), &window_menu);
+    }
+
+    // Close section
+    let close_menu = gtk4::gio::Menu::new();
+    close_menu.append(Some("Close"), Some(&format!("sidebar.close.{index}")));
+    close_menu.append(
+        Some("Close Others"),
+        Some(&format!("sidebar.close-others.{index}")),
+    );
+    close_menu.append(
+        Some("Close Above"),
+        Some(&format!("sidebar.close-above.{index}")),
+    );
+    close_menu.append(
+        Some("Close Below"),
+        Some(&format!("sidebar.close-below.{index}")),
+    );
+    menu.append_section(None, &close_menu);
 
     let popover = gtk4::PopoverMenu::from_model(Some(&menu));
     popover.set_parent(row);
@@ -583,6 +648,26 @@ fn setup_row_context_menu(
         action_group.add_action(&color_action);
     }
 
+    // Custom color picker
+    let custom_color_action =
+        gtk4::gio::SimpleAction::new(&format!("custom-color.{index}"), None);
+    {
+        let state = state.clone();
+        let row_weak = row.downgrade();
+        custom_color_action.connect_activate(move |_, _| {
+            if let Some(row) = row_weak.upgrade() {
+                if let Some(root) = row.root() {
+                    if let Some(window) =
+                        root.downcast_ref::<libadwaita::ApplicationWindow>()
+                    {
+                        show_custom_color_picker(window, &state, index);
+                    }
+                }
+            }
+        });
+    }
+    action_group.add_action(&custom_color_action);
+
     // Mark read
     let mark_read_action = gtk4::gio::SimpleAction::new(&format!("mark-read.{index}"), None);
     {
@@ -613,6 +698,69 @@ fn setup_row_context_menu(
     }
     action_group.add_action(&mark_unread_action);
 
+    // Move to top
+    let move_top_action = gtk4::gio::SimpleAction::new(&format!("move-top.{index}"), None);
+    {
+        let state = state.clone();
+        move_top_action.connect_activate(move |_, _| {
+            let mut tm = lock_or_recover(&state.shared.tab_manager);
+            tm.move_workspace(index, 0);
+            drop(tm);
+            state.shared.notify_ui_refresh();
+        });
+    }
+    action_group.add_action(&move_top_action);
+
+    // Move up
+    let move_up_action = gtk4::gio::SimpleAction::new(&format!("move-up.{index}"), None);
+    {
+        let state = state.clone();
+        move_up_action.connect_activate(move |_, _| {
+            if index > 0 {
+                let mut tm = lock_or_recover(&state.shared.tab_manager);
+                tm.move_workspace(index, index - 1);
+                drop(tm);
+                state.shared.notify_ui_refresh();
+            }
+        });
+    }
+    action_group.add_action(&move_up_action);
+
+    // Move down
+    let move_down_action = gtk4::gio::SimpleAction::new(&format!("move-down.{index}"), None);
+    {
+        let state = state.clone();
+        move_down_action.connect_activate(move |_, _| {
+            let mut tm = lock_or_recover(&state.shared.tab_manager);
+            let len = tm.len();
+            if index + 1 < len {
+                tm.move_workspace(index, index + 1);
+            }
+            drop(tm);
+            state.shared.notify_ui_refresh();
+        });
+    }
+    action_group.add_action(&move_down_action);
+
+    // Move to window actions
+    for wid in &window_ids {
+        let action_name = format!("move-to-window.{index}.{wid}");
+        let move_window_action = gtk4::gio::SimpleAction::new(&action_name, None);
+        let target_wid = *wid;
+        {
+            let state = state.clone();
+            move_window_action.connect_activate(move |_, _| {
+                let mut tm = lock_or_recover(&state.shared.tab_manager);
+                if let Some(ws) = tm.get_mut(index) {
+                    ws.window_id = Some(target_wid);
+                }
+                drop(tm);
+                state.shared.notify_ui_refresh();
+            });
+        }
+        action_group.add_action(&move_window_action);
+    }
+
     // Close
     let close_action = gtk4::gio::SimpleAction::new(&format!("close.{index}"), None);
     {
@@ -624,7 +772,114 @@ fn setup_row_context_menu(
     }
     action_group.add_action(&close_action);
 
+    // Close others
+    let close_others_action =
+        gtk4::gio::SimpleAction::new(&format!("close-others.{index}"), None);
+    {
+        let state = state.clone();
+        close_others_action.connect_activate(move |_, _| {
+            let ws_id = {
+                let tm = lock_or_recover(&state.shared.tab_manager);
+                tm.get(index).map(|ws| ws.id)
+            };
+            if let Some(id) = ws_id {
+                let mut tm = lock_or_recover(&state.shared.tab_manager);
+                tm.close_others(id);
+                drop(tm);
+                state.shared.notify_ui_refresh();
+            }
+        });
+    }
+    action_group.add_action(&close_others_action);
+
+    // Close above
+    let close_above_action =
+        gtk4::gio::SimpleAction::new(&format!("close-above.{index}"), None);
+    {
+        let state = state.clone();
+        close_above_action.connect_activate(move |_, _| {
+            let ws_id = {
+                let tm = lock_or_recover(&state.shared.tab_manager);
+                tm.get(index).map(|ws| ws.id)
+            };
+            if let Some(id) = ws_id {
+                let mut tm = lock_or_recover(&state.shared.tab_manager);
+                tm.close_above(id);
+                drop(tm);
+                state.shared.notify_ui_refresh();
+            }
+        });
+    }
+    action_group.add_action(&close_above_action);
+
+    // Close below
+    let close_below_action =
+        gtk4::gio::SimpleAction::new(&format!("close-below.{index}"), None);
+    {
+        let state = state.clone();
+        close_below_action.connect_activate(move |_, _| {
+            let ws_id = {
+                let tm = lock_or_recover(&state.shared.tab_manager);
+                tm.get(index).map(|ws| ws.id)
+            };
+            if let Some(id) = ws_id {
+                let mut tm = lock_or_recover(&state.shared.tab_manager);
+                tm.close_below(id);
+                drop(tm);
+                state.shared.notify_ui_refresh();
+            }
+        });
+    }
+    action_group.add_action(&close_below_action);
+
     row.insert_action_group("sidebar", Some(&action_group));
+}
+
+/// Show a color chooser dialog for custom workspace color.
+fn show_custom_color_picker(
+    window: &libadwaita::ApplicationWindow,
+    state: &Rc<AppState>,
+    index: usize,
+) {
+    use gtk4::prelude::*;
+
+    let dialog = gtk4::ColorChooserDialog::new(
+        Some("Choose Workspace Color"),
+        Some(window),
+    );
+    dialog.set_use_alpha(false);
+
+    // Pre-select the current custom color if set
+    let current_color = {
+        let tm = lock_or_recover(&state.shared.tab_manager);
+        tm.get(index).and_then(|ws| ws.custom_color.clone())
+    };
+    if let Some(ref css_color) = current_color {
+        let rgba = gdk4::RGBA::parse(css_color).unwrap_or(gdk4::RGBA::BLACK);
+        dialog.set_rgba(&rgba);
+    }
+
+    let state = state.clone();
+    dialog.connect_response(move |dlg, response| {
+        if response == gtk4::ResponseType::Ok {
+            let rgba = dlg.rgba();
+            let css = format!(
+                "#{:02x}{:02x}{:02x}",
+                (rgba.red() * 255.0) as u8,
+                (rgba.green() * 255.0) as u8,
+                (rgba.blue() * 255.0) as u8,
+            );
+            let mut tm = lock_or_recover(&state.shared.tab_manager);
+            if let Some(ws) = tm.get_mut(index) {
+                ws.custom_color = Some(css);
+            }
+            drop(tm);
+            state.shared.notify_ui_refresh();
+        }
+        dlg.close();
+    });
+
+    dialog.present();
 }
 
 fn show_rename_for_index(
