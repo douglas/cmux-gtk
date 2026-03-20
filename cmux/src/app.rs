@@ -470,7 +470,10 @@ pub fn apply_theme_from_settings() {
             if let Some(ref accent) = colors.accent {
                 css += &format!(
                     "@define-color accent_color {accent};\n\
-                     @define-color accent_bg_color {accent};\n"
+                     @define-color accent_bg_color {accent};\n\
+                     .navigation-sidebar row:selected {{\n\
+                         background-color: alpha({accent}, 0.25);\n\
+                     }}\n"
                 );
             }
             if !css.is_empty() {
