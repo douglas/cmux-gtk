@@ -175,35 +175,9 @@ pub enum UiEvent {
     },
     ReopenClosedBrowser,
     OpenMarkdownFile,
-    BrowserNavigate {
+    BrowserAction {
         panel_id: Uuid,
-        url: String,
-    },
-    BrowserEval {
-        panel_id: Uuid,
-        script: String,
-        reply: tokio::sync::oneshot::Sender<Option<String>>,
-    },
-    BrowserGetUrl {
-        panel_id: Uuid,
-        reply: tokio::sync::oneshot::Sender<Option<String>>,
-    },
-    BrowserGetText {
-        panel_id: Uuid,
-        reply: tokio::sync::oneshot::Sender<Option<String>>,
-    },
-    BrowserGoBack {
-        panel_id: Uuid,
-    },
-    BrowserGoForward {
-        panel_id: Uuid,
-    },
-    BrowserReload {
-        panel_id: Uuid,
-    },
-    BrowserSetZoom {
-        panel_id: Uuid,
-        zoom: f64,
+        action: crate::ui::browser_panel::BrowserActionKind,
     },
 }
 

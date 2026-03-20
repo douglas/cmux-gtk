@@ -592,6 +592,494 @@ enum BrowserCommands {
         #[arg(long)]
         panel: String,
     },
+
+    // Phase 2: DOM interaction
+    /// Click an element
+    Click {
+        /// Panel UUID
+        #[arg(long)]
+        panel: String,
+        /// CSS selector or @eN ref
+        #[arg(long)]
+        selector: String,
+        /// Mouse button (left, right, middle)
+        #[arg(long)]
+        button: Option<String>,
+    },
+    /// Double-click an element
+    Dblclick {
+        /// Panel UUID
+        #[arg(long)]
+        panel: String,
+        /// CSS selector or @eN ref
+        #[arg(long)]
+        selector: String,
+    },
+    /// Hover over an element
+    Hover {
+        /// Panel UUID
+        #[arg(long)]
+        panel: String,
+        /// CSS selector or @eN ref
+        #[arg(long)]
+        selector: String,
+    },
+    /// Type text into an element (key by key)
+    Type {
+        /// Panel UUID
+        #[arg(long)]
+        panel: String,
+        /// CSS selector or @eN ref
+        #[arg(long)]
+        selector: String,
+        /// Text to type
+        #[arg(long)]
+        text: String,
+    },
+    /// Fill an input element (set value directly)
+    Fill {
+        /// Panel UUID
+        #[arg(long)]
+        panel: String,
+        /// CSS selector or @eN ref
+        #[arg(long)]
+        selector: String,
+        /// Value to fill
+        #[arg(long)]
+        value: String,
+    },
+    /// Clear an input element
+    Clear {
+        /// Panel UUID
+        #[arg(long)]
+        panel: String,
+        /// CSS selector or @eN ref
+        #[arg(long)]
+        selector: String,
+    },
+    /// Press a key on an element
+    Press {
+        /// Panel UUID
+        #[arg(long)]
+        panel: String,
+        /// CSS selector or @eN ref
+        #[arg(long)]
+        selector: String,
+        /// Key name (e.g. Enter, Tab, Escape)
+        #[arg(long)]
+        key: String,
+    },
+    /// Select an option in a <select> element
+    SelectOption {
+        /// Panel UUID
+        #[arg(long)]
+        panel: String,
+        /// CSS selector or @eN ref
+        #[arg(long)]
+        selector: String,
+        /// Option value
+        #[arg(long)]
+        value: Option<String>,
+        /// Option label text
+        #[arg(long)]
+        label: Option<String>,
+        /// Option index
+        #[arg(long)]
+        index: Option<u64>,
+    },
+    /// Check or uncheck a checkbox
+    Check {
+        /// Panel UUID
+        #[arg(long)]
+        panel: String,
+        /// CSS selector or @eN ref
+        #[arg(long)]
+        selector: String,
+        /// Set checked state (default: true)
+        #[arg(long)]
+        checked: Option<bool>,
+    },
+    /// Focus an element
+    Focus {
+        /// Panel UUID
+        #[arg(long)]
+        panel: String,
+        /// CSS selector or @eN ref
+        #[arg(long)]
+        selector: String,
+    },
+    /// Blur (unfocus) an element
+    Blur {
+        /// Panel UUID
+        #[arg(long)]
+        panel: String,
+        /// CSS selector or @eN ref
+        #[arg(long)]
+        selector: String,
+    },
+    /// Scroll to a position or element
+    ScrollTo {
+        /// Panel UUID
+        #[arg(long)]
+        panel: String,
+        /// CSS selector or @eN ref (optional, scrolls window if omitted)
+        #[arg(long)]
+        selector: Option<String>,
+        /// X coordinate
+        #[arg(long)]
+        x: Option<f64>,
+        /// Y coordinate
+        #[arg(long)]
+        y: Option<f64>,
+    },
+
+    // Phase 3: Element queries
+    /// Get HTML content of an element
+    GetHtml {
+        /// Panel UUID
+        #[arg(long)]
+        panel: String,
+        /// CSS selector or @eN ref
+        #[arg(long)]
+        selector: String,
+        /// Get outerHTML instead of innerHTML
+        #[arg(long)]
+        outer: bool,
+    },
+    /// Get value of an input element
+    GetValue {
+        /// Panel UUID
+        #[arg(long)]
+        panel: String,
+        /// CSS selector or @eN ref
+        #[arg(long)]
+        selector: String,
+    },
+    /// Get an attribute of an element
+    GetAttribute {
+        /// Panel UUID
+        #[arg(long)]
+        panel: String,
+        /// CSS selector or @eN ref
+        #[arg(long)]
+        selector: String,
+        /// Attribute name
+        #[arg(long)]
+        name: String,
+    },
+    /// Get a JavaScript property of an element
+    GetProperty {
+        /// Panel UUID
+        #[arg(long)]
+        panel: String,
+        /// CSS selector or @eN ref
+        #[arg(long)]
+        selector: String,
+        /// Property name
+        #[arg(long)]
+        name: String,
+    },
+    /// Get bounding box of an element
+    GetBoundingBox {
+        /// Panel UUID
+        #[arg(long)]
+        panel: String,
+        /// CSS selector or @eN ref
+        #[arg(long)]
+        selector: String,
+    },
+    /// Get computed style of an element
+    GetComputedStyle {
+        /// Panel UUID
+        #[arg(long)]
+        panel: String,
+        /// CSS selector or @eN ref
+        #[arg(long)]
+        selector: String,
+        /// CSS property name
+        #[arg(long)]
+        property: String,
+    },
+    /// Check if an element is visible
+    IsVisible {
+        /// Panel UUID
+        #[arg(long)]
+        panel: String,
+        /// CSS selector or @eN ref
+        #[arg(long)]
+        selector: String,
+    },
+    /// Check if an element is enabled
+    IsEnabled {
+        /// Panel UUID
+        #[arg(long)]
+        panel: String,
+        /// CSS selector or @eN ref
+        #[arg(long)]
+        selector: String,
+    },
+    /// Check if a checkbox is checked
+    IsChecked {
+        /// Panel UUID
+        #[arg(long)]
+        panel: String,
+        /// CSS selector or @eN ref
+        #[arg(long)]
+        selector: String,
+    },
+    /// Check if an element is editable
+    IsEditable {
+        /// Panel UUID
+        #[arg(long)]
+        panel: String,
+        /// CSS selector or @eN ref
+        #[arg(long)]
+        selector: String,
+    },
+    /// Count elements matching a selector
+    Count {
+        /// Panel UUID
+        #[arg(long)]
+        panel: String,
+        /// CSS selector
+        #[arg(long)]
+        selector: String,
+    },
+
+    // Phase 4: Finders
+    /// Find an element and return a ref
+    Find {
+        /// Panel UUID
+        #[arg(long)]
+        panel: String,
+        /// CSS selector
+        #[arg(long)]
+        selector: String,
+    },
+    /// Find all elements matching a selector
+    FindAll {
+        /// Panel UUID
+        #[arg(long)]
+        panel: String,
+        /// CSS selector
+        #[arg(long)]
+        selector: String,
+    },
+    /// Find an element by text content
+    FindByText {
+        /// Panel UUID
+        #[arg(long)]
+        panel: String,
+        /// Text to search for
+        #[arg(long)]
+        text: String,
+    },
+    /// Find an element by ARIA role
+    FindByRole {
+        /// Panel UUID
+        #[arg(long)]
+        panel: String,
+        /// ARIA role
+        #[arg(long)]
+        role: String,
+    },
+    /// Find an element by aria-label
+    FindByLabel {
+        /// Panel UUID
+        #[arg(long)]
+        panel: String,
+        /// Label text
+        #[arg(long)]
+        label: String,
+    },
+    /// Find an element by placeholder text
+    FindByPlaceholder {
+        /// Panel UUID
+        #[arg(long)]
+        panel: String,
+        /// Placeholder text
+        #[arg(long)]
+        placeholder: String,
+    },
+    /// Find an element by data-testid
+    FindByTestId {
+        /// Panel UUID
+        #[arg(long)]
+        panel: String,
+        /// Test ID
+        #[arg(long)]
+        test_id: String,
+    },
+    /// Release an element ref
+    ReleaseRef {
+        /// Panel UUID
+        #[arg(long)]
+        panel: String,
+        /// Ref ID (e.g. @e1)
+        #[arg(long)]
+        ref_id: String,
+    },
+
+    // Phase 5: Advanced
+    /// Wait for an element to appear
+    WaitForSelector {
+        /// Panel UUID
+        #[arg(long)]
+        panel: String,
+        /// CSS selector or @eN ref
+        #[arg(long)]
+        selector: String,
+        /// Timeout in milliseconds
+        #[arg(long)]
+        timeout: Option<u64>,
+    },
+    /// Wait for a navigation to complete
+    WaitForNavigation {
+        /// Panel UUID
+        #[arg(long)]
+        panel: String,
+        /// Timeout in milliseconds
+        #[arg(long)]
+        timeout: Option<u64>,
+    },
+    /// Wait for page load to complete
+    WaitForLoadState {
+        /// Panel UUID
+        #[arg(long)]
+        panel: String,
+        /// Timeout in milliseconds
+        #[arg(long)]
+        timeout: Option<u64>,
+    },
+    /// Wait for a JS expression to return truthy
+    WaitForFunction {
+        /// Panel UUID
+        #[arg(long)]
+        panel: String,
+        /// JavaScript expression
+        #[arg(long)]
+        expression: String,
+        /// Timeout in milliseconds
+        #[arg(long)]
+        timeout: Option<u64>,
+    },
+    /// Get full page HTML snapshot
+    Snapshot {
+        /// Panel UUID
+        #[arg(long)]
+        panel: String,
+    },
+    /// Get page title
+    Title {
+        /// Panel UUID
+        #[arg(long)]
+        panel: String,
+    },
+    /// Get cookies
+    GetCookies {
+        /// Panel UUID
+        #[arg(long)]
+        panel: String,
+    },
+    /// Set a cookie
+    SetCookie {
+        /// Panel UUID
+        #[arg(long)]
+        panel: String,
+        /// Cookie string (e.g. "name=value; path=/")
+        #[arg(long)]
+        cookie: String,
+    },
+    /// Clear all cookies
+    ClearCookies {
+        /// Panel UUID
+        #[arg(long)]
+        panel: String,
+    },
+    /// Get a localStorage value
+    LocalStorageGet {
+        /// Panel UUID
+        #[arg(long)]
+        panel: String,
+        /// Storage key
+        #[arg(long)]
+        key: String,
+    },
+    /// Set a localStorage value
+    LocalStorageSet {
+        /// Panel UUID
+        #[arg(long)]
+        panel: String,
+        /// Storage key
+        #[arg(long)]
+        key: String,
+        /// Storage value
+        #[arg(long)]
+        value: String,
+    },
+    /// Get a sessionStorage value
+    SessionStorageGet {
+        /// Panel UUID
+        #[arg(long)]
+        panel: String,
+        /// Storage key
+        #[arg(long)]
+        key: String,
+    },
+    /// Set a sessionStorage value
+    SessionStorageSet {
+        /// Panel UUID
+        #[arg(long)]
+        panel: String,
+        /// Storage key
+        #[arg(long)]
+        key: String,
+        /// Storage value
+        #[arg(long)]
+        value: String,
+    },
+    /// Get captured console messages
+    GetConsoleMessages {
+        /// Panel UUID
+        #[arg(long)]
+        panel: String,
+    },
+    /// Set dialog handler (auto-accept/dismiss alerts)
+    SetDialogHandler {
+        /// Panel UUID
+        #[arg(long)]
+        panel: String,
+        /// Action: "accept" or "dismiss"
+        #[arg(long, default_value = "accept")]
+        action: String,
+        /// Text to fill in prompt dialogs
+        #[arg(long)]
+        text: Option<String>,
+    },
+    /// Inject a JavaScript script into the page
+    InjectScript {
+        /// Panel UUID
+        #[arg(long)]
+        panel: String,
+        /// JavaScript code
+        #[arg(long)]
+        script: String,
+    },
+    /// Inject a CSS stylesheet into the page
+    InjectStyle {
+        /// Panel UUID
+        #[arg(long)]
+        panel: String,
+        /// CSS code
+        #[arg(long)]
+        css: String,
+    },
+    /// Remove all injected scripts and styles
+    RemoveInjected {
+        /// Panel UUID
+        #[arg(long)]
+        panel: String,
+    },
 }
 
 #[derive(Subcommand)]
@@ -652,6 +1140,206 @@ fn main() -> anyhow::Result<()> {
             ),
             BrowserCommands::Screenshot { panel } => (
                 "browser.screenshot",
+                serde_json::json!({"panel": panel}),
+            ),
+            // Phase 2: DOM interaction
+            BrowserCommands::Click { panel, selector, button } => (
+                "browser.click",
+                serde_json::json!({"panel": panel, "selector": selector, "button": button}),
+            ),
+            BrowserCommands::Dblclick { panel, selector } => (
+                "browser.dblclick",
+                serde_json::json!({"panel": panel, "selector": selector}),
+            ),
+            BrowserCommands::Hover { panel, selector } => (
+                "browser.hover",
+                serde_json::json!({"panel": panel, "selector": selector}),
+            ),
+            BrowserCommands::Type { panel, selector, text } => (
+                "browser.type",
+                serde_json::json!({"panel": panel, "selector": selector, "text": text}),
+            ),
+            BrowserCommands::Fill { panel, selector, value } => (
+                "browser.fill",
+                serde_json::json!({"panel": panel, "selector": selector, "value": value}),
+            ),
+            BrowserCommands::Clear { panel, selector } => (
+                "browser.clear",
+                serde_json::json!({"panel": panel, "selector": selector}),
+            ),
+            BrowserCommands::Press { panel, selector, key } => (
+                "browser.press",
+                serde_json::json!({"panel": panel, "selector": selector, "key": key}),
+            ),
+            BrowserCommands::SelectOption { panel, selector, value, label, index } => (
+                "browser.select_option",
+                serde_json::json!({"panel": panel, "selector": selector, "value": value, "label": label, "index": index}),
+            ),
+            BrowserCommands::Check { panel, selector, checked } => (
+                "browser.check",
+                serde_json::json!({"panel": panel, "selector": selector, "checked": checked}),
+            ),
+            BrowserCommands::Focus { panel, selector } => (
+                "browser.focus",
+                serde_json::json!({"panel": panel, "selector": selector}),
+            ),
+            BrowserCommands::Blur { panel, selector } => (
+                "browser.blur",
+                serde_json::json!({"panel": panel, "selector": selector}),
+            ),
+            BrowserCommands::ScrollTo { panel, selector, x, y } => (
+                "browser.scroll_to",
+                serde_json::json!({"panel": panel, "selector": selector, "x": x, "y": y}),
+            ),
+            // Phase 3: Element queries
+            BrowserCommands::GetHtml { panel, selector, outer } => (
+                "browser.get_html",
+                serde_json::json!({"panel": panel, "selector": selector, "outer": outer}),
+            ),
+            BrowserCommands::GetValue { panel, selector } => (
+                "browser.get_value",
+                serde_json::json!({"panel": panel, "selector": selector}),
+            ),
+            BrowserCommands::GetAttribute { panel, selector, name } => (
+                "browser.get_attribute",
+                serde_json::json!({"panel": panel, "selector": selector, "name": name}),
+            ),
+            BrowserCommands::GetProperty { panel, selector, name } => (
+                "browser.get_property",
+                serde_json::json!({"panel": panel, "selector": selector, "name": name}),
+            ),
+            BrowserCommands::GetBoundingBox { panel, selector } => (
+                "browser.get_bounding_box",
+                serde_json::json!({"panel": panel, "selector": selector}),
+            ),
+            BrowserCommands::GetComputedStyle { panel, selector, property } => (
+                "browser.get_computed_style",
+                serde_json::json!({"panel": panel, "selector": selector, "property": property}),
+            ),
+            BrowserCommands::IsVisible { panel, selector } => (
+                "browser.is_visible",
+                serde_json::json!({"panel": panel, "selector": selector}),
+            ),
+            BrowserCommands::IsEnabled { panel, selector } => (
+                "browser.is_enabled",
+                serde_json::json!({"panel": panel, "selector": selector}),
+            ),
+            BrowserCommands::IsChecked { panel, selector } => (
+                "browser.is_checked",
+                serde_json::json!({"panel": panel, "selector": selector}),
+            ),
+            BrowserCommands::IsEditable { panel, selector } => (
+                "browser.is_editable",
+                serde_json::json!({"panel": panel, "selector": selector}),
+            ),
+            BrowserCommands::Count { panel, selector } => (
+                "browser.count",
+                serde_json::json!({"panel": panel, "selector": selector}),
+            ),
+            // Phase 4: Finders
+            BrowserCommands::Find { panel, selector } => (
+                "browser.find",
+                serde_json::json!({"panel": panel, "selector": selector}),
+            ),
+            BrowserCommands::FindAll { panel, selector } => (
+                "browser.find_all",
+                serde_json::json!({"panel": panel, "selector": selector}),
+            ),
+            BrowserCommands::FindByText { panel, text } => (
+                "browser.find_by_text",
+                serde_json::json!({"panel": panel, "text": text}),
+            ),
+            BrowserCommands::FindByRole { panel, role } => (
+                "browser.find_by_role",
+                serde_json::json!({"panel": panel, "role": role}),
+            ),
+            BrowserCommands::FindByLabel { panel, label } => (
+                "browser.find_by_label",
+                serde_json::json!({"panel": panel, "label": label}),
+            ),
+            BrowserCommands::FindByPlaceholder { panel, placeholder } => (
+                "browser.find_by_placeholder",
+                serde_json::json!({"panel": panel, "placeholder": placeholder}),
+            ),
+            BrowserCommands::FindByTestId { panel, test_id } => (
+                "browser.find_by_test_id",
+                serde_json::json!({"panel": panel, "test_id": test_id}),
+            ),
+            BrowserCommands::ReleaseRef { panel, ref_id } => (
+                "browser.release_ref",
+                serde_json::json!({"panel": panel, "ref": ref_id}),
+            ),
+            // Phase 5: Advanced
+            BrowserCommands::WaitForSelector { panel, selector, timeout } => (
+                "browser.wait_for_selector",
+                serde_json::json!({"panel": panel, "selector": selector, "timeout": timeout}),
+            ),
+            BrowserCommands::WaitForNavigation { panel, timeout } => (
+                "browser.wait_for_navigation",
+                serde_json::json!({"panel": panel, "timeout": timeout}),
+            ),
+            BrowserCommands::WaitForLoadState { panel, timeout } => (
+                "browser.wait_for_load_state",
+                serde_json::json!({"panel": panel, "timeout": timeout}),
+            ),
+            BrowserCommands::WaitForFunction { panel, expression, timeout } => (
+                "browser.wait_for_function",
+                serde_json::json!({"panel": panel, "expression": expression, "timeout": timeout}),
+            ),
+            BrowserCommands::Snapshot { panel } => (
+                "browser.snapshot",
+                serde_json::json!({"panel": panel}),
+            ),
+            BrowserCommands::Title { panel } => (
+                "browser.title",
+                serde_json::json!({"panel": panel}),
+            ),
+            BrowserCommands::GetCookies { panel } => (
+                "browser.get_cookies",
+                serde_json::json!({"panel": panel}),
+            ),
+            BrowserCommands::SetCookie { panel, cookie } => (
+                "browser.set_cookie",
+                serde_json::json!({"panel": panel, "cookie": cookie}),
+            ),
+            BrowserCommands::ClearCookies { panel } => (
+                "browser.clear_cookies",
+                serde_json::json!({"panel": panel}),
+            ),
+            BrowserCommands::LocalStorageGet { panel, key } => (
+                "browser.local_storage_get",
+                serde_json::json!({"panel": panel, "key": key}),
+            ),
+            BrowserCommands::LocalStorageSet { panel, key, value } => (
+                "browser.local_storage_set",
+                serde_json::json!({"panel": panel, "key": key, "value": value}),
+            ),
+            BrowserCommands::SessionStorageGet { panel, key } => (
+                "browser.session_storage_get",
+                serde_json::json!({"panel": panel, "key": key}),
+            ),
+            BrowserCommands::SessionStorageSet { panel, key, value } => (
+                "browser.session_storage_set",
+                serde_json::json!({"panel": panel, "key": key, "value": value}),
+            ),
+            BrowserCommands::GetConsoleMessages { panel } => (
+                "browser.get_console_messages",
+                serde_json::json!({"panel": panel}),
+            ),
+            BrowserCommands::SetDialogHandler { panel, action, text } => (
+                "browser.set_dialog_handler",
+                serde_json::json!({"panel": panel, "action": action, "text": text}),
+            ),
+            BrowserCommands::InjectScript { panel, script } => (
+                "browser.inject_script",
+                serde_json::json!({"panel": panel, "script": script}),
+            ),
+            BrowserCommands::InjectStyle { panel, css } => (
+                "browser.inject_style",
+                serde_json::json!({"panel": panel, "css": css}),
+            ),
+            BrowserCommands::RemoveInjected { panel } => (
+                "browser.remove_injected",
                 serde_json::json!({"panel": panel}),
             ),
         },

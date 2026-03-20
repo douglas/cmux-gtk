@@ -9,8 +9,6 @@ use tokio::sync::mpsc::UnboundedReceiver;
 
 use std::cell::Cell;
 
-use gtk4::gio;
-use webkit6::prelude::WebViewExt;
 
 use crate::app::{lock_or_recover, AppState, UiEvent};
 use crate::model::panel::{GitBranch, SplitOrientation};
@@ -641,64 +639,8 @@ fn bind_shared_state_updates(
                         });
                         dialog.show();
                     }
-                    UiEvent::BrowserNavigate { panel_id, url } => {
-                        if let Some(wv) = crate::ui::browser_panel::get_webview(panel_id) {
-                            wv.load_uri(&url);
-                        }
-                    }
-                    UiEvent::BrowserEval { panel_id, script, reply } => {
-                        if let Some(wv) = crate::ui::browser_panel::get_webview(panel_id) {
-                            wv.evaluate_javascript(
-                                &script, None, None, None::<&gio::Cancellable>,
-                                move |result| {
-                                    let text = result.ok()
-                                        .map(|val| val.to_str().to_string());
-                                    let _ = reply.send(text);
-                                },
-                            );
-                        } else {
-                            let _ = reply.send(None);
-                        }
-                    }
-                    UiEvent::BrowserGetUrl { panel_id, reply } => {
-                        let url = crate::ui::browser_panel::get_webview(panel_id)
-                            .and_then(|wv| wv.uri().map(|u| u.to_string()));
-                        let _ = reply.send(url);
-                    }
-                    UiEvent::BrowserGetText { panel_id, reply } => {
-                        if let Some(wv) = crate::ui::browser_panel::get_webview(panel_id) {
-                            wv.evaluate_javascript(
-                                "document.body.innerText",
-                                None, None, None::<&gio::Cancellable>,
-                                move |result| {
-                                    let text = result.ok()
-                                        .map(|val| val.to_str().to_string());
-                                    let _ = reply.send(text);
-                                },
-                            );
-                        } else {
-                            let _ = reply.send(None);
-                        }
-                    }
-                    UiEvent::BrowserGoBack { panel_id } => {
-                        if let Some(wv) = crate::ui::browser_panel::get_webview(panel_id) {
-                            wv.go_back();
-                        }
-                    }
-                    UiEvent::BrowserGoForward { panel_id } => {
-                        if let Some(wv) = crate::ui::browser_panel::get_webview(panel_id) {
-                            wv.go_forward();
-                        }
-                    }
-                    UiEvent::BrowserReload { panel_id } => {
-                        if let Some(wv) = crate::ui::browser_panel::get_webview(panel_id) {
-                            wv.reload();
-                        }
-                    }
-                    UiEvent::BrowserSetZoom { panel_id, zoom } => {
-                        if let Some(wv) = crate::ui::browser_panel::get_webview(panel_id) {
-                            wv.set_zoom_level(zoom);
-                        }
+                    UiEvent::BrowserAction { panel_id, action } => {
+                        crate::ui::browser_panel::execute_action(panel_id, action);
                     }
                     // directly via its own callbacks.
                     UiEvent::StartSearch
