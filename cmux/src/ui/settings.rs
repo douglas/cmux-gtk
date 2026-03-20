@@ -258,16 +258,16 @@ pub fn show_settings(parent: &adw::ApplicationWindow) {
         let label_clone = shortcut_label.clone();
         let state = shortcuts_state.clone();
         row.connect_activated(move |row| {
-            label_clone.set_text("Press a key...");
+            label_clone.set_text("Press shortcut...");
             label_clone.remove_css_class("dim-label");
             label_clone.add_css_class("accent");
 
-            let controller = gtk4::EventControllerKey::new();
+            let key_controller = gtk4::EventControllerKey::new();
             let label_inner = label_clone.clone();
             let action_inner = action_name.clone();
             let state_inner = state.clone();
             let row_weak = row.downgrade();
-            controller.connect_key_pressed(move |ctl, keyval, _keycode, modifiers| {
+            key_controller.connect_key_pressed(move |ctl, keyval, _keycode, modifiers| {
                 // Escape cancels
                 if keyval == gdk4::Key::Escape {
                     let current = state_inner.borrow();
@@ -323,7 +323,26 @@ pub fn show_settings(parent: &adw::ApplicationWindow) {
                 }
                 glib::Propagation::Stop
             });
-            row.add_controller(controller);
+            row.add_controller(key_controller);
+
+            // Cancel recording on focus loss
+            let focus_controller = gtk4::EventControllerFocus::new();
+            let label_focus = label_clone.clone();
+            let action_focus = action_name.clone();
+            let state_focus = state.clone();
+            let row_focus_weak = row.downgrade();
+            focus_controller.connect_leave(move |ctl| {
+                let current = state_focus.borrow();
+                if let Some(b) = current.bindings.get(&action_focus) {
+                    label_focus.set_text(&b.display());
+                }
+                label_focus.remove_css_class("accent");
+                label_focus.add_css_class("dim-label");
+                if let Some(row) = row_focus_weak.upgrade() {
+                    row.remove_controller(ctl);
+                }
+            });
+            row.add_controller(focus_controller);
         });
 
         shortcuts_group.add(&row);
@@ -459,6 +478,7 @@ pub fn show_settings(parent: &adw::ApplicationWindow) {
                 },
                 pane_attention_ring: attention_ring_row.is_active(),
                 pane_flash_enabled: flash_row.is_active(),
+                link_routing: settings::load().link_routing,
                 shortcuts: shortcuts_state.borrow().clone(),
             };
 

@@ -29,6 +29,8 @@ pub struct AppSettings {
     pub pane_attention_ring: bool,
     /// Enable flash effect on focused pane (Ctrl+Shift+H).
     pub pane_flash_enabled: bool,
+    /// Link routing — which links open in cmux browser vs system browser.
+    pub link_routing: LinkRoutingSettings,
     /// Keyboard shortcuts.
     #[serde(skip)]
     pub shortcuts: shortcuts::ShortcutConfig,
@@ -316,6 +318,59 @@ impl Default for SidebarDisplaySettings {
     }
 }
 
+/// Link routing — determines which URLs open in cmux browser vs system browser.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct LinkRoutingSettings {
+    /// Default target for terminal hyperlinks.
+    pub default_target: LinkTarget,
+    /// Regex patterns for URLs that should open in the system browser.
+    /// Matched against the full URL string.
+    pub external_patterns: Vec<String>,
+}
+
+/// Where to open links from terminal.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum LinkTarget {
+    CmuxBrowser,
+    SystemBrowser,
+}
+
+impl Default for LinkRoutingSettings {
+    fn default() -> Self {
+        Self {
+            default_target: LinkTarget::CmuxBrowser,
+            external_patterns: Vec::new(),
+        }
+    }
+}
+
+impl LinkRoutingSettings {
+    /// Check if a URL should be opened externally based on patterns.
+    /// Patterns are simple substring or glob-style matches:
+    /// - Plain string: substring match (e.g. "zoom.us" matches any zoom URL)
+    /// - Starts with `^`: prefix match after scheme (e.g. "^mail.google.com")
+    pub fn should_open_externally(&self, url: &str) -> bool {
+        if self.default_target == LinkTarget::SystemBrowser {
+            return true;
+        }
+        let url_lower = url.to_lowercase();
+        self.external_patterns.iter().any(|pattern| {
+            let pat = pattern.to_lowercase();
+            if let Some(prefix) = pat.strip_prefix('^') {
+                // Match against host+path portion (after "://")
+                url_lower
+                    .find("://")
+                    .map(|idx| url_lower[idx + 3..].starts_with(prefix.trim()))
+                    .unwrap_or(false)
+            } else {
+                url_lower.contains(&pat)
+            }
+        })
+    }
+}
+
 impl Default for AppSettings {
     fn default() -> Self {
         Self {
@@ -329,11 +384,11 @@ impl Default for AppSettings {
             browser: BrowserSettings::default(),
             pane_attention_ring: true,
             pane_flash_enabled: true,
+            link_routing: LinkRoutingSettings::default(),
             shortcuts: shortcuts::ShortcutConfig::default(),
         }
     }
 }
-
 
 /// Get the settings directory path (~/.config/cmux/).
 pub fn config_dir() -> PathBuf {
