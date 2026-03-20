@@ -793,6 +793,15 @@ impl ghostty_gtk::callbacks::GhosttyCallbackHandler for CmuxCallbackHandler {
                     .send_ui_event(UiEvent::SearchSelected { selected });
                 true
             }
+            ghostty_action_tag_e::GHOSTTY_ACTION_RING_BELL => {
+                // Play the system bell sound via GDK (must be on GTK main thread)
+                glib::idle_add_local_once(|| {
+                    if let Some(display) = gdk4::Display::default() {
+                        display.beep();
+                    }
+                });
+                true
+            }
             ghostty_action_tag_e::GHOSTTY_ACTION_OPEN_URL => {
                 let url = unsafe {
                     let open_url = &action.action.open_url;
