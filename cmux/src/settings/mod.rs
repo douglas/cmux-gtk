@@ -25,6 +25,10 @@ pub struct AppSettings {
     pub sidebar: SidebarDisplaySettings,
     /// Browser settings.
     pub browser: BrowserSettings,
+    /// Show attention ring on panes that receive output while unfocused.
+    pub pane_attention_ring: bool,
+    /// Enable flash effect on focused pane (Ctrl+Shift+H).
+    pub pane_flash_enabled: bool,
     /// Keyboard shortcuts.
     #[serde(skip)]
     pub shortcuts: shortcuts::ShortcutConfig,
@@ -317,6 +321,8 @@ impl Default for AppSettings {
             socket_access: SocketAccess::CmuxOnly,
             sidebar: SidebarDisplaySettings::default(),
             browser: BrowserSettings::default(),
+            pane_attention_ring: true,
+            pane_flash_enabled: true,
             shortcuts: shortcuts::ShortcutConfig::default(),
         }
     }

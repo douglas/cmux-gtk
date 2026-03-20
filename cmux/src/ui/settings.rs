@@ -75,6 +75,18 @@ pub fn show_settings(parent: &adw::ApplicationWindow) {
     placement_row.set_selected(current_settings.new_workspace_placement.to_index());
     behavior_group.add(&placement_row);
 
+    let attention_ring_row = adw::SwitchRow::new();
+    attention_ring_row.set_title("Pane Attention Ring");
+    attention_ring_row.set_subtitle("Highlight panes that receive output while unfocused");
+    attention_ring_row.set_active(current_settings.pane_attention_ring);
+    behavior_group.add(&attention_ring_row);
+
+    let flash_row = adw::SwitchRow::new();
+    flash_row.set_title("Pane Flash Effect");
+    flash_row.set_subtitle("Flash animation when manually triggering pane highlight");
+    flash_row.set_active(current_settings.pane_flash_enabled);
+    behavior_group.add(&flash_row);
+
     appearance_page.add(&behavior_group);
 
     // ── Sidebar display group ──
@@ -445,6 +457,8 @@ pub fn show_settings(parent: &adw::ApplicationWindow) {
                     search_engine: SearchEngine::from_index(engine_row.selected()),
                     home_url,
                 },
+                pane_attention_ring: attention_ring_row.is_active(),
+                pane_flash_enabled: flash_row.is_active(),
                 shortcuts: shortcuts_state.borrow().clone(),
             };
 
