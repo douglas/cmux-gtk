@@ -3,6 +3,7 @@
 use std::cell::Cell;
 use std::rc::Rc;
 
+use gdk4;
 use gtk4::prelude::*;
 use webkit6::prelude::*;
 
@@ -72,6 +73,22 @@ pub fn create_browser_widget(
     find_toggle_btn.set_tooltip_text(Some("Find in Page (Ctrl+F)"));
     find_toggle_btn.add_css_class("flat");
     nav_bar.append(&find_toggle_btn);
+
+    let zoom_out_btn = gtk4::Button::from_icon_name("zoom-out-symbolic");
+    zoom_out_btn.set_tooltip_text(Some("Zoom Out (Ctrl+-)"));
+    zoom_out_btn.add_css_class("flat");
+    nav_bar.append(&zoom_out_btn);
+
+    let zoom_label = gtk4::Label::new(Some("100%"));
+    zoom_label.set_tooltip_text(Some("Reset Zoom (Ctrl+0)"));
+    zoom_label.add_css_class("dim-label");
+    zoom_label.set_width_chars(5);
+    nav_bar.append(&zoom_label);
+
+    let zoom_in_btn = gtk4::Button::from_icon_name("zoom-in-symbolic");
+    zoom_in_btn.set_tooltip_text(Some("Zoom In (Ctrl+=)"));
+    zoom_in_btn.add_css_class("flat");
+    nav_bar.append(&zoom_in_btn);
 
     let devtools_btn = gtk4::ToggleButton::new();
     devtools_btn.set_icon_name("utilities-terminal-symbolic");
@@ -300,6 +317,75 @@ pub fn create_browser_widget(
                 }
             });
         }
+    }
+
+    // ── Zoom controls ──
+    fn update_zoom_label(wv: &webkit6::WebView, label: &gtk4::Label) {
+        let pct = (wv.zoom_level() * 100.0).round() as i32;
+        label.set_text(&format!("{pct}%"));
+    }
+    {
+        let wv = web_view.clone();
+        let label = zoom_label.clone();
+        zoom_in_btn.connect_clicked(move |_| {
+            let new_zoom = (wv.zoom_level() + 0.1).min(5.0);
+            wv.set_zoom_level(new_zoom);
+            update_zoom_label(&wv, &label);
+        });
+    }
+    {
+        let wv = web_view.clone();
+        let label = zoom_label.clone();
+        zoom_out_btn.connect_clicked(move |_| {
+            let new_zoom = (wv.zoom_level() - 0.1).max(0.25);
+            wv.set_zoom_level(new_zoom);
+            update_zoom_label(&wv, &label);
+        });
+    }
+    {
+        let wv = web_view.clone();
+        let label = zoom_label.clone();
+        let gesture = gtk4::GestureClick::new();
+        gesture.set_button(1);
+        zoom_label.add_controller(gesture.clone());
+        gesture.connect_released(move |_, _, _, _| {
+            wv.set_zoom_level(1.0);
+            update_zoom_label(&wv, &label);
+        });
+    }
+
+    // Keyboard shortcuts: Ctrl+=/Ctrl+-/Ctrl+0 for zoom
+    {
+        let wv = web_view.clone();
+        let label = zoom_label.clone();
+        let zoom_controller = gtk4::EventControllerKey::new();
+        zoom_controller.connect_key_pressed(move |_, keyval, _, modifier| {
+            let ctrl = modifier.contains(gdk4::ModifierType::CONTROL_MASK);
+            if !ctrl {
+                return glib::Propagation::Proceed;
+            }
+            match keyval {
+                gdk4::Key::equal | gdk4::Key::plus => {
+                    let new_zoom = (wv.zoom_level() + 0.1).min(5.0);
+                    wv.set_zoom_level(new_zoom);
+                    update_zoom_label(&wv, &label);
+                    glib::Propagation::Stop
+                }
+                gdk4::Key::minus => {
+                    let new_zoom = (wv.zoom_level() - 0.1).max(0.25);
+                    wv.set_zoom_level(new_zoom);
+                    update_zoom_label(&wv, &label);
+                    glib::Propagation::Stop
+                }
+                gdk4::Key::_0 => {
+                    wv.set_zoom_level(1.0);
+                    update_zoom_label(&wv, &label);
+                    glib::Propagation::Stop
+                }
+                _ => glib::Propagation::Proceed,
+            }
+        });
+        container.add_controller(zoom_controller);
     }
 
     // ── Dev tools toggle ──
