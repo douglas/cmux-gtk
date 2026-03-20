@@ -13,6 +13,12 @@ use crate::model::{PanelType, Workspace};
 struct PaletteAction {
     name: String,
     label: String,
+    /// Keyboard shortcut hint (e.g., "Ctrl+Shift+T").
+    shortcut: Option<String>,
+    /// Whether this is a workspace switcher entry (shown in default mode).
+    is_workspace: bool,
+    /// Whether this is a surface text search result (only shown when query is non-empty).
+    is_search_result: bool,
 }
 
 /// Show the command palette as a modal dialog.
@@ -33,7 +39,7 @@ pub fn show_command_palette(
     let vbox = gtk4::Box::new(gtk4::Orientation::Vertical, 0);
 
     let entry = gtk4::SearchEntry::new();
-    entry.set_placeholder_text(Some("Type a command..."));
+    entry.set_placeholder_text(Some("Switch workspace, or type > for commands..."));
     entry.set_hexpand(true);
     vbox.append(&entry);
 
@@ -152,176 +158,94 @@ pub fn show_command_palette(
     entry.grab_focus();
 }
 
+/// Shortcut config key mapping for palette action names.
+/// Maps palette action names to ShortcutConfig keys where they differ.
+fn shortcut_for_action(
+    shortcuts: &crate::settings::shortcuts::ShortcutConfig,
+    action_name: &str,
+) -> Option<String> {
+    // Map palette action names to shortcut config keys
+    let key = match action_name {
+        "workspace.new" => "workspace.new",
+        "workspace.close" => "workspace.close",
+        "workspace.rename" => "workspace.rename",
+        "workspace.latest_unread" => "workspace.latest_unread",
+        "pane.close" => "pane.close",
+        "pane.split_horizontal" => "pane.split_horizontal",
+        "pane.split_vertical" => "pane.split_vertical",
+        "pane.focus_next" => "pane.focus_next",
+        "pane.focus_prev" => "pane.focus_prev",
+        "settings.open" => "settings",
+        "notifications.toggle" => "notifications.toggle",
+        "font.increase" => "font.increase",
+        "font.decrease" => "font.decrease",
+        "font.reset" => "font.reset",
+        "surface.clear_screen" | "surface.clear_history" => "surface.clear",
+        "tab.close_others" => "tab.close_others",
+        "pane.split_browser_h" => "browser.split_horizontal",
+        "pane.split_browser_v" => "browser.split_vertical",
+        _ => return None,
+    };
+    shortcuts.get(key).map(|kb| kb.display())
+}
+
 fn build_actions(state: &Rc<AppState>) -> Rc<Vec<PaletteAction>> {
+    let shortcuts = crate::settings::shortcuts::load();
+
+    let cmd = |name: &str, label: &str| -> PaletteAction {
+        let shortcut = shortcut_for_action(&shortcuts, name);
+        PaletteAction {
+            name: name.into(),
+            label: label.into(),
+            shortcut,
+            is_workspace: false,
+            is_search_result: false,
+        }
+    };
+
     let mut actions = vec![
-        PaletteAction {
-            name: "workspace.new".into(),
-            label: "New Workspace".into(),
-        },
-        PaletteAction {
-            name: "pane.split_horizontal".into(),
-            label: "Split Horizontal".into(),
-        },
-        PaletteAction {
-            name: "pane.split_vertical".into(),
-            label: "Split Vertical".into(),
-        },
-        PaletteAction {
-            name: "pane.close".into(),
-            label: "Close Pane".into(),
-        },
-        PaletteAction {
-            name: "workspace.close".into(),
-            label: "Close Workspace".into(),
-        },
-        PaletteAction {
-            name: "pane.zoom_toggle".into(),
-            label: "Toggle Pane Zoom".into(),
-        },
-        PaletteAction {
-            name: "settings.open".into(),
-            label: "Open Settings".into(),
-        },
-        PaletteAction {
-            name: "pane.focus_next".into(),
-            label: "Focus Next Pane".into(),
-        },
-        PaletteAction {
-            name: "pane.focus_prev".into(),
-            label: "Focus Previous Pane".into(),
-        },
-        PaletteAction {
-            name: "pane.last".into(),
-            label: "Focus Last Pane".into(),
-        },
-        PaletteAction {
-            name: "pane.break".into(),
-            label: "Break Pane to New Workspace".into(),
-        },
-        PaletteAction {
-            name: "pane.join".into(),
-            label: "Join Pane from Other Workspace".into(),
-        },
-        PaletteAction {
-            name: "workspace.next".into(),
-            label: "Next Workspace".into(),
-        },
-        PaletteAction {
-            name: "workspace.previous".into(),
-            label: "Previous Workspace".into(),
-        },
-        PaletteAction {
-            name: "workspace.last".into(),
-            label: "Last Workspace".into(),
-        },
-        PaletteAction {
-            name: "workspace.latest_unread".into(),
-            label: "Jump to Latest Unread".into(),
-        },
-        PaletteAction {
-            name: "workspace.rename".into(),
-            label: "Rename Workspace".into(),
-        },
-        PaletteAction {
-            name: "workspace.pin".into(),
-            label: "Pin/Unpin Workspace".into(),
-        },
-        PaletteAction {
-            name: "sidebar.toggle".into(),
-            label: "Toggle Sidebar".into(),
-        },
-        PaletteAction {
-            name: "workspace.mark_read".into(),
-            label: "Mark Workspace as Read".into(),
-        },
-        PaletteAction {
-            name: "workspace.mark_unread".into(),
-            label: "Mark Workspace as Unread".into(),
-        },
-        PaletteAction {
-            name: "open_folder".into(),
-            label: "Open Folder in File Manager".into(),
-        },
-        PaletteAction {
-            name: "pane.new_browser".into(),
-            label: "New Browser Panel".into(),
-        },
-        PaletteAction {
-            name: "surface.flash".into(),
-            label: "Flash Panel".into(),
-        },
-        PaletteAction {
-            name: "surface.clear_screen".into(),
-            label: "Clear Terminal".into(),
-        },
-        PaletteAction {
-            name: "surface.clear_history".into(),
-            label: "Clear Scrollback History".into(),
-        },
-        PaletteAction {
-            name: "pane.equalize".into(),
-            label: "Equalize Splits".into(),
-        },
-        PaletteAction {
-            name: "tab.close".into(),
-            label: "Close Tab".into(),
-        },
-        PaletteAction {
-            name: "tab.rename".into(),
-            label: "Rename Tab".into(),
-        },
-        PaletteAction {
-            name: "tab.next_in_pane".into(),
-            label: "Next Tab in Pane".into(),
-        },
-        PaletteAction {
-            name: "tab.prev_in_pane".into(),
-            label: "Previous Tab in Pane".into(),
-        },
-        PaletteAction {
-            name: "notifications.toggle".into(),
-            label: "Show Notifications".into(),
-        },
-        PaletteAction {
-            name: "workspace.open_folder".into(),
-            label: "Open Folder as Workspace...".into(),
-        },
-        PaletteAction {
-            name: "terminal.copy_mode".into(),
-            label: "Enter Copy Mode".into(),
-        },
-        PaletteAction {
-            name: "browser.reopen_closed".into(),
-            label: "Reopen Closed Browser Tab".into(),
-        },
-        PaletteAction {
-            name: "markdown.open".into(),
-            label: "Open Markdown File...".into(),
-        },
-        PaletteAction {
-            name: "tab.close_others".into(),
-            label: "Close Other Tabs in Pane".into(),
-        },
-        PaletteAction {
-            name: "pane.split_browser_h".into(),
-            label: "Split Browser (Horizontal)".into(),
-        },
-        PaletteAction {
-            name: "pane.split_browser_v".into(),
-            label: "Split Browser (Vertical)".into(),
-        },
-        PaletteAction {
-            name: "font.increase".into(),
-            label: "Increase Font Size".into(),
-        },
-        PaletteAction {
-            name: "font.decrease".into(),
-            label: "Decrease Font Size".into(),
-        },
-        PaletteAction {
-            name: "font.reset".into(),
-            label: "Reset Font Size".into(),
-        },
+        cmd("workspace.new", "New Workspace"),
+        cmd("pane.split_horizontal", "Split Horizontal"),
+        cmd("pane.split_vertical", "Split Vertical"),
+        cmd("pane.close", "Close Pane"),
+        cmd("workspace.close", "Close Workspace"),
+        cmd("pane.zoom_toggle", "Toggle Pane Zoom"),
+        cmd("settings.open", "Open Settings"),
+        cmd("pane.focus_next", "Focus Next Pane"),
+        cmd("pane.focus_prev", "Focus Previous Pane"),
+        cmd("pane.last", "Focus Last Pane"),
+        cmd("pane.break", "Break Pane to New Workspace"),
+        cmd("pane.join", "Join Pane from Other Workspace"),
+        cmd("workspace.next", "Next Workspace"),
+        cmd("workspace.previous", "Previous Workspace"),
+        cmd("workspace.last", "Last Workspace"),
+        cmd("workspace.latest_unread", "Jump to Latest Unread"),
+        cmd("workspace.rename", "Rename Workspace"),
+        cmd("workspace.pin", "Pin/Unpin Workspace"),
+        cmd("sidebar.toggle", "Toggle Sidebar"),
+        cmd("workspace.mark_read", "Mark Workspace as Read"),
+        cmd("workspace.mark_unread", "Mark Workspace as Unread"),
+        cmd("open_folder", "Open Folder in File Manager"),
+        cmd("pane.new_browser", "New Browser Panel"),
+        cmd("surface.flash", "Flash Panel"),
+        cmd("surface.clear_screen", "Clear Terminal"),
+        cmd("surface.clear_history", "Clear Scrollback History"),
+        cmd("pane.equalize", "Equalize Splits"),
+        cmd("tab.close", "Close Tab"),
+        cmd("tab.rename", "Rename Tab"),
+        cmd("tab.next_in_pane", "Next Tab in Pane"),
+        cmd("tab.prev_in_pane", "Previous Tab in Pane"),
+        cmd("notifications.toggle", "Show Notifications"),
+        cmd("workspace.open_folder", "Open Folder as Workspace..."),
+        cmd("terminal.copy_mode", "Enter Copy Mode"),
+        cmd("browser.reopen_closed", "Reopen Closed Browser Tab"),
+        cmd("markdown.open", "Open Markdown File..."),
+        cmd("tab.close_others", "Close Other Tabs in Pane"),
+        cmd("pane.split_browser_h", "Split Browser (Horizontal)"),
+        cmd("pane.split_browser_v", "Split Browser (Vertical)"),
+        cmd("font.increase", "Increase Font Size"),
+        cmd("font.decrease", "Decrease Font Size"),
+        cmd("font.reset", "Reset Font Size"),
     ];
 
     // Add "Open in..." commands for installed editors
@@ -340,18 +264,66 @@ fn build_actions(state: &Rc<AppState>) -> Rc<Vec<PaletteAction>> {
             actions.push(PaletteAction {
                 name: format!("open_in.{binary}"),
                 label: label.into(),
+                shortcut: None,
+                is_workspace: false,
+                is_search_result: false,
             });
         }
     }
 
-    // Add dynamic workspace entries
+    // Add dynamic workspace switcher entries (shown in default mode)
     {
         let tm = lock_or_recover(&state.shared.tab_manager);
         for (i, ws) in tm.iter().enumerate() {
+            let shortcut = if i < 9 {
+                Some(format!("Ctrl+{}", i + 1))
+            } else {
+                None
+            };
             actions.push(PaletteAction {
                 name: format!("workspace.select.{i}"),
-                label: format!("Go to: {} ({})", ws.display_title(), i + 1),
+                label: format!("{} — {}", ws.display_title(), ws.current_directory),
+                shortcut,
+                is_workspace: true,
+                is_search_result: false,
             });
+        }
+    }
+
+    // Add surface text search entries (shown only when user types a search query)
+    {
+        let tm = lock_or_recover(&state.shared.tab_manager);
+        for (ws_idx, ws) in tm.iter().enumerate() {
+            for (panel_id, panel) in &ws.panels {
+                if panel.panel_type != PanelType::Terminal {
+                    continue;
+                }
+                if let Some(surface) = state.terminal_cache.borrow().get(panel_id) {
+                    if let Some(text) = surface.read_screen_text() {
+                        if !text.trim().is_empty() {
+                            let preview = text
+                                .lines()
+                                .rev()
+                                .find(|l| !l.trim().is_empty())
+                                .unwrap_or("")
+                                .chars()
+                                .take(80)
+                                .collect::<String>();
+                            actions.push(PaletteAction {
+                                name: format!("surface.search.{ws_idx}.{panel_id}"),
+                                label: format!(
+                                    "{} — {}",
+                                    ws.display_title(),
+                                    preview,
+                                ),
+                                shortcut: None,
+                                is_workspace: false,
+                                is_search_result: true,
+                            });
+                        }
+                    }
+                }
+            }
         }
     }
 
@@ -363,24 +335,63 @@ fn populate_list(list_box: &gtk4::ListBox, actions: &[PaletteAction], query: &st
         list_box.remove(&child);
     }
 
-    let query_lower = query.to_lowercase();
+    // ">" prefix = command mode (show commands), otherwise = workspace switcher mode
+    let (command_mode, filter_query) = if let Some(stripped) = query.strip_prefix('>') {
+        (true, stripped.trim_start().to_lowercase())
+    } else {
+        (false, query.to_lowercase())
+    };
+
     let mut first = true;
 
     for action in actions {
-        if !query.is_empty() && !fuzzy_match(&action.label, &query_lower) {
+        if command_mode {
+            // Command mode: show only commands (not workspace/search entries)
+            if action.is_workspace || action.is_search_result {
+                continue;
+            }
+        } else if query.is_empty() {
+            // Default mode, no query: show only workspace switcher entries
+            if !action.is_workspace {
+                continue;
+            }
+        } else {
+            // Default mode with query: show workspaces + search results, skip commands
+            if !action.is_workspace && !action.is_search_result {
+                continue;
+            }
+        }
+
+        if !filter_query.is_empty() && !fuzzy_match(&action.label, &filter_query) {
             continue;
         }
 
         let row = gtk4::ListBoxRow::new();
         row.set_widget_name(&action.name);
 
+        let hbox = gtk4::Box::new(gtk4::Orientation::Horizontal, 0);
+
         let label = gtk4::Label::new(Some(&action.label));
         label.set_halign(gtk4::Align::Start);
+        label.set_hexpand(true);
         label.set_margin_start(12);
-        label.set_margin_end(12);
+        label.set_margin_end(6);
         label.set_margin_top(6);
         label.set_margin_bottom(6);
-        row.set_child(Some(&label));
+        hbox.append(&label);
+
+        if let Some(ref shortcut) = action.shortcut {
+            let hint = gtk4::Label::new(Some(shortcut));
+            hint.add_css_class("dim-label");
+            hint.add_css_class("caption");
+            hint.set_halign(gtk4::Align::End);
+            hint.set_margin_end(12);
+            hint.set_margin_top(6);
+            hint.set_margin_bottom(6);
+            hbox.append(&hint);
+        }
+
+        row.set_child(Some(&hbox));
 
         list_box.append(&row);
         if first {
@@ -774,6 +785,21 @@ fn execute_action(name: &str, state: &Rc<AppState>, on_refresh: &Rc<dyn Fn()>) {
         name if name.starts_with("workspace.select.") => {
             if let Ok(index) = name[17..].parse::<usize>() {
                 lock_or_recover(&state.shared.tab_manager).select(index);
+            }
+        }
+        name if name.starts_with("surface.search.") => {
+            // Format: surface.search.<ws_idx>.<panel_id>
+            let parts: Vec<&str> = name.splitn(4, '.').collect();
+            if parts.len() == 4 {
+                if let Ok(ws_idx) = parts[2].parse::<usize>() {
+                    let mut tm = lock_or_recover(&state.shared.tab_manager);
+                    tm.select(ws_idx);
+                    if let Ok(panel_id) = uuid::Uuid::parse_str(parts[3]) {
+                        if let Some(ws) = tm.selected_mut() {
+                            ws.focus_panel(panel_id);
+                        }
+                    }
+                }
             }
         }
         _ => {}
