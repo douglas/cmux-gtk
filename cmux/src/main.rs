@@ -1,4 +1,6 @@
 mod app;
+mod browser_history;
+mod browser_profiles;
 mod model;
 mod notifications;
 mod port_scanner;

@@ -11,6 +11,8 @@ use gtk4::prelude::*;
 use serde_json::Value;
 use webkit6::prelude::*;
 
+use crate::browser_history;
+use crate::browser_profiles;
 use crate::settings;
 
 // ---------------------------------------------------------------------------
@@ -335,6 +337,12 @@ fn update_download_bar(panel_id: uuid::Uuid, text: &str, fraction: f64, show_ope
 }
 
 /// Wire download-started on the shared NetworkSession (called once on creation).
+/// Wire download-started handling for a NetworkSession.
+/// Public so browser_profiles can reuse it for per-profile sessions.
+pub fn wire_download_handling_for_session(session: &webkit6::NetworkSession) {
+    wire_download_handling(session);
+}
+
 fn wire_download_handling(session: &webkit6::NetworkSession) {
     session.connect_download_started(|_session, download| {
         let panel_id = download
@@ -809,6 +817,24 @@ pub fn create_browser_widget(
     is_attention_source: bool,
     initial_zoom: Option<f64>,
 ) -> gtk4::Widget {
+    let profile_name = browser_profiles::default_profile_name();
+    create_browser_widget_with_profile(
+        panel_id,
+        initial_url,
+        is_attention_source,
+        initial_zoom,
+        &profile_name,
+    )
+}
+
+/// Create a browser widget using a specific profile for session isolation.
+pub fn create_browser_widget_with_profile(
+    panel_id: uuid::Uuid,
+    initial_url: Option<&str>,
+    is_attention_source: bool,
+    initial_zoom: Option<f64>,
+    profile_name: &str,
+) -> gtk4::Widget {
     let browser_settings = settings::load().browser;
 
     let container = gtk4::Box::new(gtk4::Orientation::Vertical, 0);
@@ -844,14 +870,29 @@ pub fn create_browser_widget(
     reload_btn.add_css_class("flat");
     nav_bar.append(&reload_btn);
 
-    let url_entry = gtk4::Entry::new();
-    url_entry.set_hexpand(true);
-    url_entry.set_placeholder_text(Some("Enter URL or search..."));
-    url_entry.add_css_class("browser-url-entry");
-    if let Some(url) = initial_url {
-        url_entry.set_text(url);
-    }
-    nav_bar.append(&url_entry);
+    // ── Profile selector ──
+    let profiles = browser_profiles::list();
+    let _profile_dropdown = if profiles.len() > 1 {
+        let names: Vec<&str> = profiles.iter().map(|p| p.name.as_str()).collect();
+        let model = gtk4::StringList::new(&names);
+        let dropdown = gtk4::DropDown::new(Some(model), gtk4::Expression::NONE);
+        dropdown.set_tooltip_text(Some("Browser Profile"));
+        dropdown.add_css_class("flat");
+        // Select current profile
+        if let Some(idx) = profiles.iter().position(|p| p.name == profile_name) {
+            dropdown.set_selected(idx as u32);
+        }
+        nav_bar.append(&dropdown);
+        Some(dropdown)
+    } else {
+        None
+    };
+
+    let (omnibar_box, url_entry) = super::omnibar::build_omnibar(
+        initial_url,
+        browser_settings.search_engine,
+    );
+    nav_bar.append(&omnibar_box);
 
     let find_toggle_btn = gtk4::ToggleButton::new();
     find_toggle_btn.set_icon_name("edit-find-symbolic");
@@ -920,9 +961,9 @@ pub fn create_browser_widget(
 
     container.append(&find_bar);
 
-    // ── WebView (shared persistent session for cookie/storage persistence) ──
+    // ── WebView (profile-based session for cookie/storage isolation) ──
     let web_view = webkit6::WebView::builder()
-        .network_session(&shared_network_session())
+        .network_session(&browser_profiles::network_session_for(profile_name))
         .build();
     web_view.set_hexpand(true);
     web_view.set_vexpand(true);
@@ -1283,6 +1324,10 @@ pub fn create_browser_widget(
                 webkit6::LoadEvent::Finished => {
                     reload.set_icon_name("view-refresh-symbolic");
                     reload.set_tooltip_text(Some("Reload"));
+                    // Record visit in browser history
+                    let url = wv.uri().map(|u| u.to_string()).unwrap_or_default();
+                    let title = wv.title().map(|t| t.to_string()).unwrap_or_default();
+                    browser_history::record_visit(&url, &title);
                 }
                 _ => {}
             }

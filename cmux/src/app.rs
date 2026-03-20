@@ -68,17 +68,33 @@ impl AppState {
                 .and_then(|text| write_scrollback_temp_file(panel_id, &text))
         };
 
+        // Build environment variables for the terminal process
+        let socket_path = crate::socket::server::socket_path();
+        let panel_id_str = panel_id.to_string();
+        let workspace_id_str = {
+            let tm = lock_or_recover(&self.shared.tab_manager);
+            tm.find_workspace_with_panel(panel_id)
+                .map(|ws| ws.id.to_string())
+                .unwrap_or_default()
+        };
+        let mut env_vars: Vec<(&str, &str)> = vec![
+            ("CMUX_SOCKET", &socket_path),
+            ("CMUX_PANEL_ID", &panel_id_str),
+        ];
+        if !workspace_id_str.is_empty() {
+            env_vars.push(("CMUX_WORKSPACE_ID", &workspace_id_str));
+        }
+        if let Some(ref path) = scrollback_file {
+            env_vars.push(("CMUX_RESTORE_SCROLLBACK_FILE", path));
+        }
+
         if let Some(app) = self.ghostty_app.borrow().as_ref() {
-            if let Some(ref path) = scrollback_file {
-                gl_surface.initialize_with_env(
-                    app.raw(),
-                    working_directory,
-                    None,
-                    &[("CMUX_RESTORE_SCROLLBACK_FILE", path)],
-                );
-            } else {
-                gl_surface.initialize(app.raw(), working_directory, None);
-            }
+            gl_surface.initialize_with_env(
+                app.raw(),
+                working_directory,
+                None,
+                &env_vars,
+            );
         }
 
         self.terminal_cache
@@ -244,6 +260,11 @@ impl SharedState {
         lock_or_recover(&self.ui_event_txs).remove(window_id);
     }
 
+    /// List all registered window IDs.
+    pub fn window_ids(&self) -> Vec<Uuid> {
+        lock_or_recover(&self.ui_event_txs).keys().copied().collect()
+    }
+
     /// Send a UI event to the first registered window (primary).
     /// Most events (socket commands, notifications) target the active window.
     pub fn send_ui_event(&self, event: UiEvent) -> bool {
@@ -339,6 +360,10 @@ fn activate(app: &adw::Application, state: &Rc<AppState>) {
     // Apply saved theme preference
     apply_theme_from_settings();
 
+    // Initialize browser history and profiles (loads from disk)
+    crate::browser_history::init();
+    crate::browser_profiles::init();
+
     // Register SIGUSR2 handler for Omarchy live theme switching.
     // Signal handler sets an AtomicBool; a glib timer polls it.
     install_sigusr2_theme_reload();
@@ -382,6 +407,8 @@ fn activate(app: &adw::Application, state: &Rc<AppState>) {
             if let Err(e) = session::store::save_session(&snapshot) {
                 tracing::warn!("Autosave failed: {}", e);
             }
+            // Flush browser history to disk
+            crate::browser_history::flush();
             glib::ControlFlow::Continue
         });
     }
