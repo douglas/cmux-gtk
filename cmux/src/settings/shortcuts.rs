@@ -185,6 +185,17 @@ impl Default for ShortcutConfig {
             },
         );
 
+        // Browser console toggle
+        bindings.insert(
+            "browser.console_toggle".into(),
+            Keybinding {
+                key: "c".to_string(),
+                ctrl: true,
+                shift: false,
+                alt: true,
+            },
+        );
+
         Self { bindings }
     }
 }

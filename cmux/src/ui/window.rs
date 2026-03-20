@@ -858,6 +858,23 @@ fn setup_shortcuts(
                     refresh_ui(&list_box, &content_box, &state);
                     return glib::Propagation::Stop;
                 }
+                // Ctrl+Alt+C: Toggle browser JS console
+                gdk4::Key::c => {
+                    let panel_id = {
+                        let tm = lock_or_recover(&state.shared.tab_manager);
+                        tm.selected().and_then(|ws| {
+                            ws.focused_panel_id.and_then(|pid| {
+                                ws.panels.get(&pid).and_then(|p| {
+                                    (p.panel_type == PanelType::Browser).then_some(pid)
+                                })
+                            })
+                        })
+                    };
+                    if let Some(panel_id) = panel_id {
+                        crate::ui::browser_panel::toggle_console(panel_id);
+                    }
+                    return glib::Propagation::Stop;
+                }
                 _ => {}
             }
         }
