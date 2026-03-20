@@ -96,19 +96,28 @@ pub fn create_markdown_widget(
         });
     }
 
-    // File watcher — poll-based via glib timeout (simpler than notify for a single file)
+    // File watcher — native inotify via gio::FileMonitor
     if let Some(path) = file_path {
-        let path = path.to_string();
-        let wv = web_view.clone();
-        let last_modified = std::cell::Cell::new(file_mtime(&path));
-        glib::timeout_add_seconds_local(2, move || {
-            let current = file_mtime(&path);
-            if current != last_modified.get() {
-                last_modified.set(current);
-                load_markdown_file(&wv, &path);
-            }
-            glib::ControlFlow::Continue
-        });
+        let file = gio::File::for_path(path);
+        if let Ok(monitor) =
+            file.monitor_file(gio::FileMonitorFlags::NONE, gio::Cancellable::NONE)
+        {
+            let path = path.to_string();
+            let wv = web_view.clone();
+            monitor.connect_changed(move |_monitor, _file, _other, event| {
+                if matches!(
+                    event,
+                    gio::FileMonitorEvent::Changed
+                        | gio::FileMonitorEvent::Created
+                        | gio::FileMonitorEvent::ChangesDoneHint
+                ) {
+                    load_markdown_file(&wv, &path);
+                }
+            });
+            // Keep the monitor alive by attaching it to the container widget.
+            // SAFETY: The monitor is a GObject that outlives the closure references.
+            unsafe { container.set_data("file-monitor", monitor) };
+        }
     }
 
     container.append(&web_view);
@@ -210,14 +219,4 @@ input[type="checkbox"] {{ margin-right: 0.5em; }}
 <body>{html_output}</body>
 </html>"#
     )
-}
-
-/// Get file modification time as seconds since epoch (0 if unavailable).
-fn file_mtime(path: &str) -> u64 {
-    std::fs::metadata(path)
-        .and_then(|m| m.modified())
-        .ok()
-        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
-        .map(|d| d.as_secs())
-        .unwrap_or(0)
 }
