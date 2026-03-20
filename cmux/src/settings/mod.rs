@@ -13,6 +13,10 @@ pub struct AppSettings {
     pub theme: ThemeMode,
     /// Focus pane on mouse hover (focus-follows-mouse).
     pub focus_follows_mouse: bool,
+    /// Show confirmation dialog when quitting with active terminals.
+    pub confirm_before_close: bool,
+    /// Where to place newly created workspaces.
+    pub new_workspace_placement: NewWorkspacePlacement,
     /// Notification settings.
     pub notifications: NotificationSettings,
     /// Socket access mode.
@@ -101,6 +105,44 @@ pub fn omarchy_colors() -> OmarchyColors {
     colors
 }
 
+/// Where new workspaces are placed in the sidebar.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum NewWorkspacePlacement {
+    #[default]
+    End,
+    AfterCurrent,
+    Top,
+}
+
+impl NewWorkspacePlacement {
+    pub const ALL: &[Self] = &[Self::End, Self::AfterCurrent, Self::Top];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::End => "End",
+            Self::AfterCurrent => "After Current",
+            Self::Top => "Top",
+        }
+    }
+
+    pub fn from_index(i: u32) -> Self {
+        match i {
+            1 => Self::AfterCurrent,
+            2 => Self::Top,
+            _ => Self::End,
+        }
+    }
+
+    pub fn to_index(self) -> u32 {
+        match self {
+            Self::End => 0,
+            Self::AfterCurrent => 1,
+            Self::Top => 2,
+        }
+    }
+}
+
 /// Notification preferences.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(default)]
@@ -109,6 +151,8 @@ pub struct NotificationSettings {
     pub sound_enabled: bool,
     /// Custom command to run on notification (optional).
     pub custom_command: Option<String>,
+    /// Auto-reorder workspaces with new notifications toward the top.
+    pub reorder_on_notification: bool,
 }
 
 /// Socket access level.
@@ -229,6 +273,8 @@ impl Default for AppSettings {
         Self {
             theme: ThemeMode::System,
             focus_follows_mouse: false,
+            confirm_before_close: true,
+            new_workspace_placement: NewWorkspacePlacement::default(),
             notifications: NotificationSettings::default(),
             socket_access: SocketAccess::CmuxOnly,
             sidebar: SidebarDisplaySettings::default(),

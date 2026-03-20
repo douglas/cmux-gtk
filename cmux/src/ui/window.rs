@@ -95,7 +95,9 @@ pub fn create_window(
         let content_box = content_box.clone();
         new_ws_btn.connect_clicked(move |_| {
             let workspace = Workspace::new();
-            lock_or_recover(&state.shared.tab_manager).add_workspace(workspace);
+            let placement = crate::settings::load().new_workspace_placement;
+            lock_or_recover(&state.shared.tab_manager)
+                .add_workspace_with_placement(workspace, placement);
             refresh_ui(&list_box, &content_box, &state);
         });
     }
@@ -171,6 +173,57 @@ pub fn create_window(
             if let Some(app) = state.ghostty_app.borrow().as_ref() {
                 app.set_focus(active);
             }
+        });
+    }
+
+    // Quit confirmation dialog
+    {
+        let state = state.clone();
+        window.connect_close_request(move |window| {
+            let settings = crate::settings::load();
+            if !settings.confirm_before_close {
+                return glib::Propagation::Proceed;
+            }
+
+            let terminal_count = {
+                let tm = lock_or_recover(&state.shared.tab_manager);
+                tm.iter()
+                    .flat_map(|ws| ws.panels.values())
+                    .filter(|p| p.panel_type == PanelType::Terminal)
+                    .count()
+            };
+
+            if terminal_count == 0 {
+                return glib::Propagation::Proceed;
+            }
+
+            let dialog = adw::MessageDialog::new(
+                Some(window),
+                Some("Quit cmux?"),
+                None,
+            );
+            dialog.set_body(&format!(
+                "There {} still active. Are you sure you want to quit?",
+                if terminal_count == 1 {
+                    "is 1 terminal".to_string()
+                } else {
+                    format!("are {terminal_count} terminals")
+                }
+            ));
+            dialog.add_response("cancel", "Cancel");
+            dialog.add_response("quit", "Quit");
+            dialog.set_default_response(Some("cancel"));
+            dialog.set_response_appearance("quit", adw::ResponseAppearance::Destructive);
+
+            let window = window.clone();
+            dialog.connect_response(None, move |_, response| {
+                if response == "quit" {
+                    window.destroy();
+                }
+            });
+
+            dialog.present();
+            glib::Propagation::Stop
         });
     }
 
@@ -755,7 +808,9 @@ fn setup_shortcuts(
             // Ctrl+Shift+T: New workspace
             (gdk4::Key::T, true, true) => {
                 let workspace = Workspace::new();
-                lock_or_recover(&state.shared.tab_manager).add_workspace(workspace);
+                let placement = crate::settings::load().new_workspace_placement;
+                lock_or_recover(&state.shared.tab_manager)
+                    .add_workspace_with_placement(workspace, placement);
                 refresh_ui(&list_box, &content_box, &state);
                 glib::Propagation::Stop
             }

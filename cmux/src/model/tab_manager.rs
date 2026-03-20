@@ -133,6 +133,15 @@ impl TabManager {
         id
     }
 
+    /// Add a new workspace at the top of the list.
+    pub fn add_workspace_at_top(&mut self, workspace: Workspace) -> Uuid {
+        let id = workspace.id;
+        self.workspaces.insert(0, workspace);
+        // Shift selection to follow the inserted workspace
+        self.selected_index = Some(0);
+        id
+    }
+
     /// Add a new workspace after the current one.
     pub fn add_workspace_after_current(&mut self, workspace: Workspace) -> Uuid {
         let id = workspace.id;
@@ -140,6 +149,21 @@ impl TabManager {
         self.workspaces.insert(insert_at, workspace);
         self.selected_index = Some(insert_at);
         id
+    }
+
+    /// Add a workspace using a placement strategy.
+    pub fn add_workspace_with_placement(
+        &mut self,
+        workspace: Workspace,
+        placement: crate::settings::NewWorkspacePlacement,
+    ) -> Uuid {
+        match placement {
+            crate::settings::NewWorkspacePlacement::End => self.add_workspace(workspace),
+            crate::settings::NewWorkspacePlacement::AfterCurrent => {
+                self.add_workspace_after_current(workspace)
+            }
+            crate::settings::NewWorkspacePlacement::Top => self.add_workspace_at_top(workspace),
+        }
     }
 
     /// Remove a workspace by index. Returns the removed workspace.

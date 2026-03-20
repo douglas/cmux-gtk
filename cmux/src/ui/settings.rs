@@ -5,8 +5,8 @@ use libadwaita as adw;
 use libadwaita::prelude::*;
 
 use crate::settings::{
-    self, AppSettings, BrowserSettings, SearchEngine, SidebarDisplaySettings, SocketAccess,
-    ThemeMode,
+    self, AppSettings, BrowserSettings, NewWorkspacePlacement, SearchEngine,
+    SidebarDisplaySettings, SocketAccess, ThemeMode,
 };
 
 /// Create and show the settings preferences window.
@@ -56,6 +56,24 @@ pub fn show_settings(parent: &adw::ApplicationWindow) {
     focus_hover_row.set_subtitle("Automatically focus terminal panes on mouse hover");
     focus_hover_row.set_active(current_settings.focus_follows_mouse);
     behavior_group.add(&focus_hover_row);
+
+    let confirm_close_row = adw::SwitchRow::new();
+    confirm_close_row.set_title("Confirm Before Close");
+    confirm_close_row.set_subtitle("Show confirmation when quitting with active terminals");
+    confirm_close_row.set_active(current_settings.confirm_before_close);
+    behavior_group.add(&confirm_close_row);
+
+    let placement_row = adw::ComboRow::new();
+    placement_row.set_title("New Workspace Placement");
+    placement_row.set_subtitle("Where to insert newly created workspaces");
+    let placement_labels: Vec<&str> = NewWorkspacePlacement::ALL
+        .iter()
+        .map(|p| p.label())
+        .collect();
+    let placement_list = gtk4::StringList::new(&placement_labels);
+    placement_row.set_model(Some(&placement_list));
+    placement_row.set_selected(current_settings.new_workspace_placement.to_index());
+    behavior_group.add(&placement_row);
 
     appearance_page.add(&behavior_group);
 
@@ -116,6 +134,12 @@ pub fn show_settings(parent: &adw::ApplicationWindow) {
     sound_row.set_subtitle("Play a sound when a notification arrives");
     sound_row.set_active(current_settings.notifications.sound_enabled);
     notif_group.add(&sound_row);
+
+    let reorder_notif_row = adw::SwitchRow::new();
+    reorder_notif_row.set_title("Auto-Reorder on Notification");
+    reorder_notif_row.set_subtitle("Move workspaces with new notifications toward the top");
+    reorder_notif_row.set_active(current_settings.notifications.reorder_on_notification);
+    notif_group.add(&reorder_notif_row);
 
     let command_row = adw::EntryRow::new();
     command_row.set_title("Custom Command");
@@ -339,7 +363,10 @@ pub fn show_settings(parent: &adw::ApplicationWindow) {
     {
         let theme_row = theme_row.clone();
         let focus_hover_row = focus_hover_row.clone();
+        let confirm_close_row = confirm_close_row.clone();
+        let placement_row = placement_row.clone();
         let sound_row = sound_row.clone();
+        let reorder_notif_row = reorder_notif_row.clone();
         let command_row = command_row.clone();
         let socket_row = socket_row.clone();
         let git_row = git_row.clone();
@@ -384,9 +411,14 @@ pub fn show_settings(parent: &adw::ApplicationWindow) {
             let new_settings = AppSettings {
                 theme,
                 focus_follows_mouse: focus_hover_row.is_active(),
+                confirm_before_close: confirm_close_row.is_active(),
+                new_workspace_placement: NewWorkspacePlacement::from_index(
+                    placement_row.selected(),
+                ),
                 notifications: settings::NotificationSettings {
                     sound_enabled: sound_row.is_active(),
                     custom_command,
+                    reorder_on_notification: reorder_notif_row.is_active(),
                 },
                 socket_access,
                 sidebar: SidebarDisplaySettings {

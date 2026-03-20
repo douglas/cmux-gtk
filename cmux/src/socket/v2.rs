@@ -332,7 +332,8 @@ fn create_workspace(
     } else {
         None
     };
-    tab_manager.add_workspace(ws);
+    let placement = crate::settings::load().new_workspace_placement;
+    tab_manager.add_workspace_with_placement(ws, placement);
     if let Some(selected_id) = previously_selected {
         let _ = tab_manager.select_by_id(selected_id);
     }
@@ -953,6 +954,28 @@ fn handle_notification_create(id: Value, params: &Value, state: &Arc<SharedState
         resolved_panel_id,
         send_desktop,
     );
+
+    // Auto-reorder: move notified workspace toward the top (after pinned items)
+    let notif_settings = crate::settings::load().notifications;
+    if notif_settings.reorder_on_notification {
+        let mut tm = lock_or_recover(&state.tab_manager);
+        if let Some(ws_idx) = tm.workspace_index(target_workspace_id) {
+            // Find the first non-pinned index (skip pinned workspaces at top)
+            let first_unpinned = tm
+                .iter()
+                .position(|ws| !ws.is_pinned)
+                .unwrap_or(0);
+            if ws_idx > first_unpinned {
+                tm.move_workspace(ws_idx, first_unpinned);
+            }
+        }
+    }
+
+    // Play notification sound if enabled
+    if notif_settings.sound_enabled {
+        play_notification_sound(&notif_settings);
+    }
+
     state.notify_ui_refresh();
 
     Response::success(
@@ -964,6 +987,29 @@ fn handle_notification_create(id: Value, params: &Value, state: &Arc<SharedState
             "surface": resolved_panel_id.map(|panel_id| panel_id.to_string()),
         }),
     )
+}
+
+fn play_notification_sound(settings: &crate::settings::NotificationSettings) {
+    // Use custom command if set, otherwise fall back to paplay with a freedesktop sound
+    if let Some(ref cmd) = settings.custom_command {
+        let cmd = cmd.clone();
+        std::thread::spawn(move || {
+            let _ = std::process::Command::new("sh")
+                .args(["-c", &cmd])
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .status();
+        });
+    } else {
+        std::thread::spawn(|| {
+            // Try paplay (PulseAudio) with a freedesktop notification sound
+            let _ = std::process::Command::new("paplay")
+                .arg("/usr/share/sounds/freedesktop/stereo/message-new-instant.oga")
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .status();
+        });
+    }
 }
 
 fn handle_notification_list(id: Value, state: &Arc<SharedState>) -> Response {
