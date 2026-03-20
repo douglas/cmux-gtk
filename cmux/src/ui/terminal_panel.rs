@@ -110,6 +110,35 @@ fn create_terminal_widget(
     }
     overlay.add_controller(file_drop);
 
+    // Hover-to-focus: when focus_follows_mouse is enabled, focus on mouse enter.
+    let motion = gtk4::EventControllerMotion::new();
+    {
+        let state = Rc::clone(state);
+        let panel_id = panel.id;
+        motion.connect_enter(move |_controller, _x, _y| {
+            if !crate::settings::load().focus_follows_mouse {
+                return;
+            }
+            let needs_refresh = {
+                let mut tm = lock_or_recover(&state.shared.tab_manager);
+                if let Some(ws) = tm.find_workspace_with_panel_mut(panel_id) {
+                    if ws.focused_panel_id != Some(panel_id) {
+                        ws.focus_panel(panel_id);
+                        true
+                    } else {
+                        false
+                    }
+                } else {
+                    false
+                }
+            };
+            if needs_refresh {
+                state.shared.notify_ui_refresh();
+            }
+        });
+    }
+    overlay.add_controller(motion);
+
     // Click-to-focus: when user clicks this pane, focus it in the model
     // and trigger a UI refresh so the active indicator moves.
     let click = gtk4::GestureClick::new();
