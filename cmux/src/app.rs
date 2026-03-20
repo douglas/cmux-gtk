@@ -477,6 +477,15 @@ pub fn apply_theme_from_settings() {
                      .pane-tab-selected {{\n\
                          background-color: alpha({accent}, 0.15);\n\
                          border-color: alpha({accent}, 0.25);\n\
+                     }}\n\
+                     .pane-tab-attention {{\n\
+                         background-color: alpha({accent}, 0.18);\n\
+                         color: {accent};\n\
+                         border-color: alpha({accent}, 0.35);\n\
+                     }}\n\
+                     .attention-panel {{\n\
+                         border-color: {accent};\n\
+                         background-color: alpha({accent}, 0.08);\n\
                      }}\n"
                 );
             }

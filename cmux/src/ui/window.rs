@@ -1202,6 +1202,11 @@ fn install_css() {
             color: @theme_fg_color;
             border-color: alpha(@theme_fg_color, 0.15);
         }
+        .pane-tab-attention {
+            background-color: alpha(@accent_bg_color, 0.15);
+            color: @accent_color;
+            border-color: alpha(@accent_bg_color, 0.30);
+        }
         .pane-tab-close {
             min-width: 14px;
             min-height: 14px;
@@ -1348,8 +1353,8 @@ fn install_css() {
         }
 
         .attention-panel {
-            border: 2px solid #3584e4;
-            background-color: rgba(53, 132, 228, 0.08);
+            border: 2px solid @accent_bg_color;
+            background-color: alpha(@accent_bg_color, 0.08);
         }
 
         /* ── Search overlay ── */

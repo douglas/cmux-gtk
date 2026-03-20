@@ -128,6 +128,11 @@ fn build_pane(
             .map(|p| p.display_title().to_string())
             .unwrap_or_else(|| "?".to_string());
         let is_selected = selected_id == Some(panel_id);
+        let is_attention = attention_panel_id == Some(panel_id)
+            || panels
+                .get(&panel_id)
+                .map(|p| p.is_manually_unread)
+                .unwrap_or(false);
 
         let panel_type = panels
             .get(&panel_id)
@@ -138,6 +143,7 @@ fn build_pane(
             tab_index,
             &title,
             is_selected,
+            is_attention,
             panel_type,
             &stack,
             state,
@@ -260,6 +266,7 @@ fn build_tab_button(
     tab_index: usize,
     title: &str,
     is_selected: bool,
+    is_attention: bool,
     panel_type: PanelType,
     stack: &gtk4::Stack,
     state: &Rc<AppState>,
@@ -268,6 +275,9 @@ fn build_tab_button(
     tab.add_css_class("pane-tab");
     if is_selected {
         tab.add_css_class("pane-tab-selected");
+    }
+    if is_attention {
+        tab.add_css_class("pane-tab-attention");
     }
     tab.set_margin_start(2);
     tab.set_margin_end(2);
