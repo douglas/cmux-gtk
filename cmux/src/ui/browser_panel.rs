@@ -1203,6 +1203,20 @@ pub fn create_browser_widget(
         });
     }
 
+    // ── Popup handling: window.open() / target="_blank" → load in same WebView ──
+    {
+        let wv = web_view.clone();
+        web_view.connect_create(move |_wv, nav_action| {
+            // Instead of creating a new window, load the URL in the current WebView.
+            if let Some(request) = nav_action.request() {
+                if let Some(uri) = request.uri() {
+                    wv.load_uri(&uri);
+                }
+            }
+            None::<gtk4::Widget>
+        });
+    }
+
     // ── Favicon tracking ──
     {
         web_view.connect_favicon_notify(move |wv| {
