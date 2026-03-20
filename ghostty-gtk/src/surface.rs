@@ -391,6 +391,20 @@ impl GhosttyGlSurface {
                 );
             });
         }
+        // If the gesture is cancelled (e.g. widget reparented during a click),
+        // send a synthetic mouse release so Ghostty doesn't get stuck in
+        // selection mode.
+        {
+            let surface_widget = self.clone();
+            click.connect_cancel(move |_gesture, _sequence| {
+                surface_widget.on_mouse_button(
+                    1,
+                    0.0,
+                    0.0,
+                    ghostty_input_mouse_state_e::GHOSTTY_MOUSE_RELEASE,
+                );
+            });
+        }
         self.add_controller(click);
 
         // Mouse motion events
