@@ -131,6 +131,18 @@ pub fn create_window(
     }
     header.pack_start(&split_v_btn);
 
+    // Settings button (right side of header bar)
+    let settings_btn = gtk4::Button::from_icon_name("preferences-system-symbolic");
+    settings_btn.set_tooltip_text(Some("Settings"));
+    settings_btn.add_css_class("flat");
+    {
+        let window_ref = window.clone();
+        settings_btn.connect_clicked(move |_| {
+            super::settings::show_settings(&window_ref);
+        });
+    }
+    header.pack_end(&settings_btn);
+
     let outer_box = gtk4::Box::new(gtk4::Orientation::Vertical, 0);
     outer_box.append(&header);
     outer_box.append(&split_view);
@@ -193,6 +205,12 @@ pub fn rebuild_content(content_box: &gtk4::Box, state: &Rc<AppState>) {
     let content_box = content_box.clone();
     let state = state.clone();
     glib::idle_add_local_once(move || {
+        // Guard: clear any children that may have been added by a racing
+        // rebuild callback (multiple refreshes can queue before idle fires).
+        while let Some(child) = content_box.first_child() {
+            content_box.remove(&child);
+        }
+
         // Clone workspace data out of the lock so we don't hold it during
         // GTK widget construction (build_layout callbacks may re-acquire it).
         let workspace_data = {
@@ -639,8 +657,8 @@ fn setup_shortcuts(
         }
 
         match (keyval, ctrl, shift) {
-            // Ctrl+Comma: Settings
-            (gdk4::Key::comma, true, false) => {
+            // Ctrl+Comma or Ctrl+Shift+Comma: Settings
+            (gdk4::Key::comma, true, false) | (gdk4::Key::comma, true, true) => {
                 if let Some(window) = window_weak.upgrade() {
                     super::settings::show_settings(&window);
                 }

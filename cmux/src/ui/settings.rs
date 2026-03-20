@@ -31,15 +31,33 @@ pub fn show_settings(parent: &adw::ApplicationWindow) {
     let theme_row = adw::ComboRow::new();
     theme_row.set_title("Color Scheme");
     theme_row.set_subtitle("Choose the application color scheme");
-    let theme_list = gtk4::StringList::new(&["System", "Light", "Dark"]);
+    let on_omarchy = settings::is_omarchy();
+    let theme_list = if on_omarchy {
+        gtk4::StringList::new(&["System", "Light", "Dark", "Omarchy"])
+    } else {
+        gtk4::StringList::new(&["System", "Light", "Dark"])
+    };
     theme_row.set_model(Some(&theme_list));
     theme_row.set_selected(match current_settings.theme {
         ThemeMode::System => 0,
         ThemeMode::Light => 1,
         ThemeMode::Dark => 2,
+        ThemeMode::Omarchy => if on_omarchy { 3 } else { 0 },
     });
     theme_group.add(&theme_row);
     appearance_page.add(&theme_group);
+
+    // ── Behavior group ──
+    let behavior_group = adw::PreferencesGroup::new();
+    behavior_group.set_title("Behavior");
+
+    let focus_hover_row = adw::SwitchRow::new();
+    focus_hover_row.set_title("Focus Follows Mouse");
+    focus_hover_row.set_subtitle("Automatically focus terminal panes on mouse hover");
+    focus_hover_row.set_active(current_settings.focus_follows_mouse);
+    behavior_group.add(&focus_hover_row);
+
+    appearance_page.add(&behavior_group);
 
     // ── Sidebar display group ──
     let sidebar_group = adw::PreferencesGroup::new();
@@ -320,6 +338,7 @@ pub fn show_settings(parent: &adw::ApplicationWindow) {
     // ── Save on close ──
     {
         let theme_row = theme_row.clone();
+        let focus_hover_row = focus_hover_row.clone();
         let sound_row = sound_row.clone();
         let command_row = command_row.clone();
         let socket_row = socket_row.clone();
@@ -337,6 +356,7 @@ pub fn show_settings(parent: &adw::ApplicationWindow) {
             let theme = match theme_row.selected() {
                 1 => ThemeMode::Light,
                 2 => ThemeMode::Dark,
+                3 => ThemeMode::Omarchy,
                 _ => ThemeMode::System,
             };
             let socket_access = match socket_row.selected() {
@@ -363,6 +383,7 @@ pub fn show_settings(parent: &adw::ApplicationWindow) {
 
             let new_settings = AppSettings {
                 theme,
+                focus_follows_mouse: focus_hover_row.is_active(),
                 notifications: settings::NotificationSettings {
                     sound_enabled: sound_row.is_active(),
                     custom_command,
@@ -389,14 +410,7 @@ pub fn show_settings(parent: &adw::ApplicationWindow) {
             }
 
             // Apply theme immediately
-            if let Some(display) = gdk4::Display::default() {
-                let style_manager = adw::StyleManager::for_display(&display);
-                style_manager.set_color_scheme(match theme {
-                    ThemeMode::System => adw::ColorScheme::Default,
-                    ThemeMode::Light => adw::ColorScheme::ForceLight,
-                    ThemeMode::Dark => adw::ColorScheme::ForceDark,
-                });
-            }
+            crate::app::apply_theme_from_settings();
 
             glib::Propagation::Proceed
         });
