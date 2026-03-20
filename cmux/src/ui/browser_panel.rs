@@ -2,9 +2,11 @@
 
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
+use std::path::Path;
 use std::rc::Rc;
 
 use gdk4;
+use glib::object::Cast;
 use gtk4::prelude::*;
 use serde_json::Value;
 use webkit6::prelude::*;
@@ -135,6 +137,19 @@ thread_local! {
 
     /// Per-panel console TextViews (for appending messages).
     static CONSOLE_TEXT_VIEWS: RefCell<HashMap<uuid::Uuid, gtk4::TextView>> = RefCell::new(HashMap::new());
+
+    /// Per-panel download bar widgets.
+    static DOWNLOAD_BARS: RefCell<HashMap<uuid::Uuid, DownloadBarWidgets>> = RefCell::new(HashMap::new());
+
+    /// Per-panel last downloaded file path (for "Open" button).
+    static DOWNLOAD_PATHS: RefCell<HashMap<uuid::Uuid, String>> = RefCell::new(HashMap::new());
+}
+
+struct DownloadBarWidgets {
+    container: gtk4::Box,
+    label: gtk4::Label,
+    progress: gtk4::ProgressBar,
+    open_btn: gtk4::Button,
 }
 
 struct ElementRef {
@@ -169,6 +184,7 @@ fn shared_network_session() -> webkit6::NetworkSession {
             Some(data_dir.to_str().unwrap_or("~/.local/share/cmux/webkit")),
             Some(cache_dir.to_str().unwrap_or("~/.cache/cmux/webkit")),
         );
+        wire_download_handling(&session);
         *slot = Some(session.clone());
         session
     })
@@ -265,6 +281,171 @@ pub fn resolve_selector(selector: &str) -> Option<String> {
 pub fn clear_refs_for_panel(panel_id: uuid::Uuid) {
     ELEMENT_REFS.with(|refs| {
         refs.borrow_mut().retain(|_, v| v.panel_id != panel_id);
+    });
+}
+
+// ---------------------------------------------------------------------------
+// Download handling
+// ---------------------------------------------------------------------------
+
+/// Reverse-lookup the panel_id for a WebView in the registry.
+fn panel_id_for_webview(wv: &webkit6::WebView) -> Option<uuid::Uuid> {
+    WEBVIEW_REGISTRY.with(|r| {
+        r.borrow()
+            .iter()
+            .find(|(_, v)| *v == wv)
+            .map(|(&id, _)| id)
+    })
+}
+
+/// Pick a unique download path in `dir`, appending " (1)", " (2)", etc. if needed.
+fn unique_download_path(dir: &Path, filename: &str) -> std::path::PathBuf {
+    let path = dir.join(filename);
+    if !path.exists() {
+        return path;
+    }
+    let stem = Path::new(filename)
+        .file_stem()
+        .unwrap_or_default()
+        .to_string_lossy()
+        .to_string();
+    let ext = Path::new(filename)
+        .extension()
+        .map(|e| format!(".{}", e.to_string_lossy()))
+        .unwrap_or_default();
+    for i in 1..1000 {
+        let candidate = dir.join(format!("{stem} ({i}){ext}"));
+        if !candidate.exists() {
+            return candidate;
+        }
+    }
+    dir.join(format!("{stem} (dup){ext}"))
+}
+
+/// Update download bar UI for a panel.
+fn update_download_bar(panel_id: uuid::Uuid, text: &str, fraction: f64, show_open: bool) {
+    DOWNLOAD_BARS.with(|bars| {
+        if let Some(bar) = bars.borrow().get(&panel_id) {
+            bar.container.set_visible(true);
+            bar.label.set_text(text);
+            bar.progress.set_fraction(fraction);
+            bar.open_btn.set_visible(show_open);
+        }
+    });
+}
+
+/// Wire download-started on the shared NetworkSession (called once on creation).
+fn wire_download_handling(session: &webkit6::NetworkSession) {
+    session.connect_download_started(|_session, download| {
+        let panel_id = download
+            .web_view()
+            .and_then(|wv| panel_id_for_webview(&wv));
+
+        if let Some(pid) = panel_id {
+            update_download_bar(pid, "Starting download…", 0.0, false);
+        }
+
+        // decide-destination: auto-save to ~/Downloads with dedup
+        let pid_dest = panel_id;
+        download.connect_decide_destination(move |dl, suggested_filename| {
+            let downloads_dir = dirs::download_dir().unwrap_or_else(|| {
+                dirs::home_dir()
+                    .unwrap_or_else(|| std::path::PathBuf::from("/tmp"))
+                    .join("Downloads")
+            });
+            std::fs::create_dir_all(&downloads_dir).ok();
+
+            let path = unique_download_path(&downloads_dir, suggested_filename);
+            let dest = format!("file://{}", path.to_string_lossy());
+            dl.set_allow_overwrite(false);
+            dl.set_destination(&dest);
+
+            if let Some(pid) = pid_dest {
+                let filename = path
+                    .file_name()
+                    .unwrap_or_default()
+                    .to_string_lossy()
+                    .to_string();
+                update_download_bar(pid, &format!("Downloading: {filename}"), 0.0, false);
+            }
+            true
+        });
+
+        // Progress tracking
+        if let Some(pid) = panel_id {
+            download.connect_estimated_progress_notify(move |dl| {
+                let progress = dl.estimated_progress();
+                let filename = dl
+                    .destination()
+                    .map(|d| {
+                        let s = d.to_string();
+                        let p = s.strip_prefix("file://").unwrap_or(&s);
+                        Path::new(p)
+                            .file_name()
+                            .map(|n| n.to_string_lossy().to_string())
+                            .unwrap_or_default()
+                    })
+                    .unwrap_or_default();
+                let pct = (progress * 100.0).round() as u32;
+                update_download_bar(
+                    pid,
+                    &format!("Downloading: {filename} — {pct}%"),
+                    progress,
+                    false,
+                );
+            });
+        }
+
+        // Finished
+        if let Some(pid) = panel_id {
+            download.connect_finished(move |dl| {
+                let dest_path = dl.destination().map(|d| {
+                    let s = d.to_string();
+                    s.strip_prefix("file://")
+                        .unwrap_or(&s)
+                        .to_string()
+                });
+                let filename = dest_path
+                    .as_deref()
+                    .and_then(|p| Path::new(p).file_name())
+                    .map(|n| n.to_string_lossy().to_string())
+                    .unwrap_or_else(|| "file".to_string());
+
+                update_download_bar(pid, &format!("Downloaded: {filename}"), 1.0, true);
+
+                // Store the path for the Open/Show buttons
+                if let Some(path) = dest_path {
+                    DOWNLOAD_PATHS.with(|paths| {
+                        paths.borrow_mut().insert(pid, path);
+                    });
+                }
+
+                // Auto-hide after 8 seconds
+                glib::timeout_add_local_once(
+                    std::time::Duration::from_secs(8),
+                    move || {
+                        DOWNLOAD_BARS.with(|bars| {
+                            if let Some(bar) = bars.borrow().get(&pid) {
+                                bar.container.set_visible(false);
+                            }
+                        });
+                    },
+                );
+            });
+        }
+
+        // Failed
+        if let Some(pid) = panel_id {
+            download.connect_failed(move |_dl, error| {
+                let msg = error.message();
+                update_download_bar(
+                    pid,
+                    &format!("Download failed: {msg}"),
+                    0.0,
+                    false,
+                );
+            });
+        }
     });
 }
 
@@ -866,8 +1047,161 @@ pub fn create_browser_widget(
     CONSOLE_PANELS.with(|c| c.borrow_mut().insert(panel_id, console_pane.clone()));
     CONSOLE_TEXT_VIEWS.with(|c| c.borrow_mut().insert(panel_id, console_text_view.clone()));
 
+    // ── Download bar (hidden by default, shown when a download starts) ──
+    let download_bar = gtk4::Box::new(gtk4::Orientation::Horizontal, 6);
+    download_bar.add_css_class("browser-download-bar");
+    download_bar.set_margin_start(6);
+    download_bar.set_margin_end(6);
+    download_bar.set_margin_top(2);
+    download_bar.set_margin_bottom(2);
+    download_bar.set_visible(false);
+
+    let dl_icon = gtk4::Image::from_icon_name("folder-download-symbolic");
+    download_bar.append(&dl_icon);
+
+    let dl_label = gtk4::Label::new(None);
+    dl_label.set_hexpand(true);
+    dl_label.set_xalign(0.0);
+    dl_label.set_ellipsize(gtk4::pango::EllipsizeMode::Middle);
+    download_bar.append(&dl_label);
+
+    let dl_progress = gtk4::ProgressBar::new();
+    dl_progress.set_width_request(120);
+    dl_progress.set_valign(gtk4::Align::Center);
+    download_bar.append(&dl_progress);
+
+    let dl_open_btn = gtk4::Button::with_label("Open");
+    dl_open_btn.add_css_class("flat");
+    dl_open_btn.set_visible(false);
+    dl_open_btn.set_tooltip_text(Some("Open downloaded file"));
+    {
+        dl_open_btn.connect_clicked(move |_| {
+            let path = DOWNLOAD_PATHS.with(|paths| {
+                paths.borrow().get(&panel_id).cloned()
+            });
+            if let Some(path) = path {
+                let _ = gio::AppInfo::launch_default_for_uri(
+                    &format!("file://{path}"),
+                    gio::AppLaunchContext::NONE,
+                );
+            }
+        });
+    }
+    download_bar.append(&dl_open_btn);
+
+    let dl_show_folder_btn = gtk4::Button::from_icon_name("folder-open-symbolic");
+    dl_show_folder_btn.add_css_class("flat");
+    dl_show_folder_btn.set_tooltip_text(Some("Show in file manager"));
+    {
+        dl_show_folder_btn.connect_clicked(move |_| {
+            let path = DOWNLOAD_PATHS.with(|paths| {
+                paths.borrow().get(&panel_id).cloned()
+            });
+            if let Some(path) = path {
+                if let Some(parent) = Path::new(&path).parent() {
+                    let _ = gio::AppInfo::launch_default_for_uri(
+                        &format!("file://{}", parent.to_string_lossy()),
+                        gio::AppLaunchContext::NONE,
+                    );
+                }
+            }
+        });
+    }
+    download_bar.append(&dl_show_folder_btn);
+
+    let dl_dismiss_btn = gtk4::Button::from_icon_name("window-close-symbolic");
+    dl_dismiss_btn.add_css_class("flat");
+    {
+        let bar = download_bar.clone();
+        dl_dismiss_btn.connect_clicked(move |_| {
+            bar.set_visible(false);
+        });
+    }
+    download_bar.append(&dl_dismiss_btn);
+
+    DOWNLOAD_BARS.with(|bars| {
+        bars.borrow_mut().insert(
+            panel_id,
+            DownloadBarWidgets {
+                container: download_bar.clone(),
+                label: dl_label,
+                progress: dl_progress,
+                open_btn: dl_open_btn,
+            },
+        );
+    });
+
     container.append(&web_view);
+    container.append(&download_bar);
     container.append(&console_pane);
+
+    // ── Download policy: convert non-displayable responses to downloads ──
+    {
+        web_view.connect_decide_policy(|_wv, decision, decision_type| {
+            if decision_type == webkit6::PolicyDecisionType::Response {
+                if let Some(response_decision) =
+                    decision.downcast_ref::<webkit6::ResponsePolicyDecision>()
+                {
+                    if !response_decision.is_mime_type_supported() {
+                        decision.download();
+                        return true;
+                    }
+                }
+            }
+            false
+        });
+    }
+
+    // ── Context menu: augment default WebKit menu ──
+    {
+        let wv = web_view.clone();
+        web_view.connect_context_menu(move |_wv, menu, hit_test| {
+            // Remove "Open * in New Window" items — we're an embedded browser,
+            // not a standalone window-based browser.
+            let items_to_remove: Vec<_> = menu
+                .items()
+                .into_iter()
+                .filter(|item| {
+                    matches!(
+                        item.stock_action(),
+                        webkit6::ContextMenuAction::OpenLinkInNewWindow
+                            | webkit6::ContextMenuAction::OpenImageInNewWindow
+                            | webkit6::ContextMenuAction::OpenFrameInNewWindow
+                            | webkit6::ContextMenuAction::OpenVideoInNewWindow
+                            | webkit6::ContextMenuAction::OpenAudioInNewWindow
+                    )
+                })
+                .collect();
+            for item in &items_to_remove {
+                menu.remove(item);
+            }
+
+            // Add "Copy Page URL" at the end if not on a link
+            if !hit_test.context_is_link() {
+                let page_url = wv.uri().map(|u| u.to_string()).unwrap_or_default();
+                if !page_url.is_empty() && page_url != "about:blank" {
+                    let action_group = gio::SimpleActionGroup::new();
+                    let copy_url_action = gio::SimpleAction::new("copy-page-url", None);
+                    let url = page_url.clone();
+                    copy_url_action.connect_activate(move |_, _| {
+                        if let Some(display) = gdk4::Display::default() {
+                            display.clipboard().set_text(&url);
+                        }
+                    });
+                    action_group.add_action(&copy_url_action);
+                    wv.insert_action_group("browser", Some(&action_group));
+
+                    menu.append(&webkit6::ContextMenuItem::from_gaction(
+                        &copy_url_action,
+                        "Copy Page URL",
+                        None,
+                    ));
+                }
+            }
+
+            false // show the (modified) context menu
+        });
+    }
 
     // ── Favicon tracking ──
     {
