@@ -117,69 +117,84 @@ pub fn create_snapshot(state: &crate::app::AppState) -> AppSessionSnapshot {
         .unwrap_or_default()
         .as_secs_f64();
 
-    let workspaces: Vec<SessionWorkspaceSnapshot> = tm
-        .iter()
-        .map(|ws| {
-            let panels: Vec<SessionPanelSnapshot> = ws
-                .panels
-                .values()
-                .map(|panel| {
-                    let mut snapshot = SessionPanelSnapshot::from_panel(panel);
-                    // Attach captured scrollback to terminal panels
-                    if let Some(ref mut terminal) = snapshot.terminal {
-                        terminal.scrollback = scrollback_map.get(&panel.id).cloned();
+    // Helper: create a workspace snapshot with scrollback/browser data attached
+    let make_ws_snapshot = |ws: &crate::model::workspace::Workspace| -> SessionWorkspaceSnapshot {
+        let panels: Vec<SessionPanelSnapshot> = ws
+            .panels
+            .values()
+            .map(|panel| {
+                let mut snapshot = SessionPanelSnapshot::from_panel(panel);
+                if let Some(ref mut terminal) = snapshot.terminal {
+                    terminal.scrollback = scrollback_map.get(&panel.id).cloned();
+                }
+                if let Some(ref mut browser) = snapshot.browser {
+                    if let Some(&zoom) = browser_zoom_map.get(&panel.id) {
+                        browser.page_zoom = zoom;
                     }
-                    // Attach captured zoom level and live URL to browser panels
-                    if let Some(ref mut browser) = snapshot.browser {
-                        if let Some(&zoom) = browser_zoom_map.get(&panel.id) {
-                            browser.page_zoom = zoom;
-                        }
-                        if let Some(url) = browser_url_map.get(&panel.id) {
-                            browser.url_string = Some(url.clone());
-                        }
+                    if let Some(url) = browser_url_map.get(&panel.id) {
+                        browser.url_string = Some(url.clone());
                     }
-                    snapshot
-                })
-                .collect();
+                }
+                snapshot
+            })
+            .collect();
 
-            SessionWorkspaceSnapshot {
-                process_title: ws.process_title.clone(),
-                custom_title: ws.custom_title.clone(),
-                custom_color: ws.custom_color.clone(),
-                is_pinned: ws.is_pinned,
-                current_directory: ws.current_directory.clone(),
-                focused_panel_id: ws.focused_panel_id,
-                layout: SessionWorkspaceLayoutSnapshot::from_layout(&ws.layout),
-                panels,
-                status_entries: ws.status_entries.clone(),
-                log_entries: ws.log_entries.clone(),
-                progress: ws.progress.clone(),
-                git_branch: ws.git_branch.clone(),
+        SessionWorkspaceSnapshot {
+            process_title: ws.process_title.clone(),
+            custom_title: ws.custom_title.clone(),
+            custom_color: ws.custom_color.clone(),
+            is_pinned: ws.is_pinned,
+            current_directory: ws.current_directory.clone(),
+            focused_panel_id: ws.focused_panel_id,
+            layout: SessionWorkspaceLayoutSnapshot::from_layout(&ws.layout),
+            panels,
+            status_entries: ws.status_entries.clone(),
+            log_entries: ws.log_entries.clone(),
+            progress: ws.progress.clone(),
+            git_branch: ws.git_branch.clone(),
+        }
+    };
+
+    // Group workspaces by window_id
+    let window_sizes = lock_or_recover(&state.shared.window_sizes);
+    let mut window_map: std::collections::BTreeMap<Option<uuid::Uuid>, Vec<SessionWorkspaceSnapshot>> =
+        std::collections::BTreeMap::new();
+    for ws in tm.iter() {
+        window_map
+            .entry(ws.window_id)
+            .or_default()
+            .push(make_ws_snapshot(ws));
+    }
+
+    let windows: Vec<SessionWindowSnapshot> = window_map
+        .into_iter()
+        .map(|(window_id, workspaces)| {
+            let (w, h) = window_id
+                .and_then(|wid| window_sizes.get(&wid).copied())
+                .unwrap_or((1280, 860));
+            SessionWindowSnapshot {
+                frame: Some(SessionRectSnapshot {
+                    x: 0.0,
+                    y: 0.0,
+                    width: w as f64,
+                    height: h as f64,
+                }),
+                tab_manager: SessionTabManagerSnapshot {
+                    selected_workspace_index: Some(0),
+                    workspaces,
+                },
+                sidebar: SessionSidebarSnapshot {
+                    is_visible: true,
+                    selection: "tabs".to_string(),
+                    width: None,
+                },
             }
         })
         .collect();
 
-    let (win_w, win_h) = *lock_or_recover(&state.shared.window_size);
-
     AppSessionSnapshot {
         version: 1,
         created_at: now,
-        windows: vec![SessionWindowSnapshot {
-            frame: Some(SessionRectSnapshot {
-                x: 0.0,
-                y: 0.0,
-                width: win_w as f64,
-                height: win_h as f64,
-            }),
-            tab_manager: SessionTabManagerSnapshot {
-                selected_workspace_index: tm.selected_index(),
-                workspaces,
-            },
-            sidebar: SessionSidebarSnapshot {
-                is_visible: true,
-                selection: "tabs".to_string(),
-                width: None,
-            },
-        }],
+        windows,
     }
 }

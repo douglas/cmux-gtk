@@ -194,6 +194,8 @@ pub enum UiEvent {
         panel_id: Uuid,
         action: crate::ui::browser_panel::BrowserActionKind,
     },
+    /// Create a new application window.
+    CreateWindow,
 }
 
 /// Wrapper to send a raw ghostty_surface_t across threads.
@@ -215,9 +217,10 @@ pub struct SharedState {
     pub notifications: Mutex<NotificationStore>,
     /// Stack of recently closed browser panel URLs (for reopen).
     pub closed_browser_urls: Mutex<Vec<String>>,
-    /// Last-known window dimensions (width, height) for session persistence.
-    pub window_size: Mutex<(i32, i32)>,
-    ui_event_tx: Mutex<Option<UnboundedSender<UiEvent>>>,
+    /// Per-window dimensions (width, height) for session persistence.
+    pub window_sizes: Mutex<HashMap<Uuid, (i32, i32)>>,
+    /// Per-window UI event senders.
+    ui_event_txs: Mutex<HashMap<Uuid, UnboundedSender<UiEvent>>>,
 }
 
 impl SharedState {
@@ -226,19 +229,33 @@ impl SharedState {
             tab_manager: Mutex::new(TabManager::new()),
             notifications: Mutex::new(NotificationStore::new()),
             closed_browser_urls: Mutex::new(Vec::new()),
-            window_size: Mutex::new((1280, 860)),
-            ui_event_tx: Mutex::new(None),
+            window_sizes: Mutex::new(HashMap::new()),
+            ui_event_txs: Mutex::new(HashMap::new()),
         }
     }
 
-    pub fn install_ui_event_sender(&self, sender: UnboundedSender<UiEvent>) {
-        *lock_or_recover(&self.ui_event_tx) = Some(sender);
+    pub fn install_ui_event_sender(&self, window_id: Uuid, sender: UnboundedSender<UiEvent>) {
+        lock_or_recover(&self.ui_event_txs).insert(window_id, sender);
     }
 
+    pub fn remove_ui_event_sender(&self, window_id: &Uuid) {
+        lock_or_recover(&self.ui_event_txs).remove(window_id);
+    }
+
+    /// Send a UI event to the first registered window (primary).
+    /// Most events (socket commands, notifications) target the active window.
     pub fn send_ui_event(&self, event: UiEvent) -> bool {
-        lock_or_recover(&self.ui_event_tx)
-            .as_ref()
-            .is_some_and(|sender| sender.send(event).is_ok())
+        let txs = lock_or_recover(&self.ui_event_txs);
+        txs.values()
+            .next()
+            .is_some_and(|tx| tx.send(event).is_ok())
+    }
+
+    /// Send a UI event to a specific window.
+    pub fn send_ui_event_to(&self, window_id: &Uuid, event: UiEvent) -> bool {
+        lock_or_recover(&self.ui_event_txs)
+            .get(window_id)
+            .is_some_and(|tx| tx.send(event).is_ok())
     }
 
     pub fn notify_ui_refresh(&self) {
@@ -317,9 +334,6 @@ fn activate(app: &adw::Application, state: &Rc<AppState>) {
         return;
     }
 
-    let (ui_event_tx, ui_event_rx) = tokio::sync::mpsc::unbounded_channel();
-    state.shared.install_ui_event_sender(ui_event_tx);
-
     // Apply saved theme preference
     apply_theme_from_settings();
 
@@ -330,23 +344,36 @@ fn activate(app: &adw::Application, state: &Rc<AppState>) {
     init_ghostty(state);
 
     // Restore session after ghostty is initialized so terminals can be created
-    restore_session(state);
+    let restored_window_ids = restore_session(state);
 
-    // Create the main window
-    let window = ui::window::create_window(app, state, ui_event_rx);
-    window.present();
+    // Open windows — either restored or a fresh default
+    if restored_window_ids.is_empty() {
+        let window_id = Uuid::new_v4();
+        open_window(app, state, window_id);
+    } else {
+        for window_id in restored_window_ids {
+            open_window(app, state, window_id);
+        }
+    }
 
     // Start periodic autosave (every 8 seconds, matching macOS cmux)
     {
         let state = state.clone();
-        let window_weak = window.downgrade();
+        let app_weak = app.downgrade();
         glib::timeout_add_local(std::time::Duration::from_secs(8), move || {
-            // Capture current window size before snapshot
-            if let Some(win) = window_weak.upgrade() {
-                let w = win.width();
-                let h = win.height();
-                if w > 0 && h > 0 {
-                    *lock_or_recover(&state.shared.window_size) = (w, h);
+            // Capture current window sizes from all windows
+            if let Some(app) = app_weak.upgrade() {
+                for win in app.windows() {
+                    if let Some(win) = win.downcast_ref::<adw::ApplicationWindow>() {
+                        if let Ok(wid) = Uuid::parse_str(&win.widget_name()) {
+                            let w = win.width();
+                            let h = win.height();
+                            if w > 0 && h > 0 {
+                                lock_or_recover(&state.shared.window_sizes)
+                                    .insert(wid, (w, h));
+                            }
+                        }
+                    }
                 }
             }
             let snapshot = session::store::create_snapshot(&state);
@@ -358,111 +385,135 @@ fn activate(app: &adw::Application, state: &Rc<AppState>) {
     }
 }
 
-/// Restore workspaces from a saved session, if one exists.
-fn restore_session(state: &Rc<AppState>) {
-    let snapshot = match session::store::load_session() {
-        Ok(Some(snapshot)) => snapshot,
-        Ok(None) => return,
-        Err(e) => {
-            tracing::warn!("Failed to load session: {}", e);
-            return;
-        }
-    };
+/// Open a new window with its own event channel and workspace set.
+pub fn open_window(
+    app: &adw::Application,
+    state: &Rc<AppState>,
+    window_id: Uuid,
+) {
+    let (ui_event_tx, ui_event_rx) = tokio::sync::mpsc::unbounded_channel();
+    state.shared.install_ui_event_sender(window_id, ui_event_tx);
 
-    // Take the first window's tab manager snapshot (Linux typically has one window)
-    let Some(window_snapshot) = snapshot.windows.into_iter().next() else {
-        return;
-    };
-
-    // Restore window geometry if saved
-    if let Some(frame) = &window_snapshot.frame {
-        let w = frame.width as i32;
-        let h = frame.height as i32;
-        if w > 0 && h > 0 {
-            *lock_or_recover(&state.shared.window_size) = (w, h);
+    // If no workspaces are assigned to this window, create a default one
+    {
+        let mut tm = lock_or_recover(&state.shared.tab_manager);
+        let has_workspaces = tm.iter().any(|ws| ws.window_id == Some(window_id));
+        if !has_workspaces {
+            let mut ws = crate::model::Workspace::new();
+            ws.window_id = Some(window_id);
+            tm.add_workspace(ws);
         }
     }
 
-    let tm_snapshot = window_snapshot.tab_manager;
-    if tm_snapshot.workspaces.is_empty() {
-        return;
+    let window = ui::window::create_window(app, state, window_id, ui_event_rx);
+    window.present();
+}
+
+/// Restore workspaces from a saved session. Returns window IDs for each restored window.
+fn restore_session(state: &Rc<AppState>) -> Vec<Uuid> {
+    let snapshot = match session::store::load_session() {
+        Ok(Some(snapshot)) => snapshot,
+        Ok(None) => return vec![],
+        Err(e) => {
+            tracing::warn!("Failed to load session: {}", e);
+            return vec![];
+        }
+    };
+
+    if snapshot.windows.is_empty() {
+        return vec![];
     }
 
     let mut tab_manager = lock_or_recover(&state.shared.tab_manager);
-
-    // Replace the default workspace with restored ones
     *tab_manager = TabManager::empty();
 
-    for ws_snapshot in &tm_snapshot.workspaces {
-        let mut workspace = crate::model::Workspace::with_directory(&ws_snapshot.current_directory);
-        workspace.custom_title = ws_snapshot.custom_title.clone();
-        workspace.custom_color = ws_snapshot.custom_color.clone();
-        workspace.is_pinned = ws_snapshot.is_pinned;
-        workspace.process_title = ws_snapshot.process_title.clone();
-        workspace.status_entries = ws_snapshot.status_entries.clone();
-        workspace.log_entries = ws_snapshot.log_entries.clone();
-        workspace.progress = ws_snapshot.progress.clone();
-        workspace.git_branch = ws_snapshot.git_branch.clone();
+    // Restore each window's workspaces and geometry
+    // First window uses the window_id from activate(), subsequent windows get new IDs
+    let mut window_ids: Vec<Uuid> = Vec::new();
+    for window_snapshot in &snapshot.windows {
+        let window_id = Uuid::new_v4();
 
-        // Restore layout from snapshot
-        let layout = ws_snapshot.layout.to_layout();
-
-        // Rebuild panels map from snapshot panels
-        let mut panels = std::collections::HashMap::new();
-        for panel_snapshot in &ws_snapshot.panels {
-            let panel_type = match panel_snapshot.panel_type.as_str() {
-                "browser" => crate::model::PanelType::Browser,
-                "markdown" => crate::model::PanelType::Markdown,
-                _ => crate::model::PanelType::Terminal,
-            };
-            let panel = crate::model::panel::Panel {
-                id: panel_snapshot.id,
-                panel_type,
-                title: panel_snapshot.title.clone(),
-                custom_title: panel_snapshot.custom_title.clone(),
-                directory: panel_snapshot.directory.clone(),
-                is_pinned: panel_snapshot.is_pinned,
-                is_manually_unread: panel_snapshot.is_manually_unread,
-                git_branch: panel_snapshot.git_branch.clone(),
-                listening_ports: panel_snapshot.listening_ports.clone(),
-                tty_name: panel_snapshot.tty_name.clone(),
-                browser_url: panel_snapshot
-                    .browser
-                    .as_ref()
-                    .and_then(|b| b.url_string.clone()),
-                markdown_file: panel_snapshot
-                    .markdown
-                    .as_ref()
-                    .map(|m| m.file_path.clone()),
-                pending_scrollback: panel_snapshot
-                    .terminal
-                    .as_ref()
-                    .and_then(|t| t.scrollback.clone()),
-                pending_zoom: panel_snapshot
-                    .browser
-                    .as_ref()
-                    .map(|b| b.page_zoom)
-                    .filter(|&z| z != 1.0),
-            };
-            panels.insert(panel.id, panel);
+        // Restore window geometry
+        if let Some(frame) = &window_snapshot.frame {
+            let w = frame.width as i32;
+            let h = frame.height as i32;
+            if w > 0 && h > 0 {
+                lock_or_recover(&state.shared.window_sizes).insert(window_id, (w, h));
+            }
         }
 
-        workspace.layout = layout;
-        workspace.panels = panels;
-        workspace.focused_panel_id = ws_snapshot.focused_panel_id;
+        window_ids.push(window_id);
 
-        tab_manager.add_workspace(workspace);
-    }
+        let tm_snapshot = &window_snapshot.tab_manager;
 
-    // Restore selection
-    if let Some(index) = tm_snapshot.selected_workspace_index {
-        tab_manager.select(index);
+        for ws_snapshot in &tm_snapshot.workspaces {
+            let mut workspace =
+                crate::model::Workspace::with_directory(&ws_snapshot.current_directory);
+            workspace.window_id = Some(window_id);
+            workspace.custom_title = ws_snapshot.custom_title.clone();
+            workspace.custom_color = ws_snapshot.custom_color.clone();
+            workspace.is_pinned = ws_snapshot.is_pinned;
+            workspace.process_title = ws_snapshot.process_title.clone();
+            workspace.status_entries = ws_snapshot.status_entries.clone();
+            workspace.log_entries = ws_snapshot.log_entries.clone();
+            workspace.progress = ws_snapshot.progress.clone();
+            workspace.git_branch = ws_snapshot.git_branch.clone();
+
+            let layout = ws_snapshot.layout.to_layout();
+            let mut panels = std::collections::HashMap::new();
+            for panel_snapshot in &ws_snapshot.panels {
+                let panel_type = match panel_snapshot.panel_type.as_str() {
+                    "browser" => crate::model::PanelType::Browser,
+                    "markdown" => crate::model::PanelType::Markdown,
+                    _ => crate::model::PanelType::Terminal,
+                };
+                let panel = crate::model::panel::Panel {
+                    id: panel_snapshot.id,
+                    panel_type,
+                    title: panel_snapshot.title.clone(),
+                    custom_title: panel_snapshot.custom_title.clone(),
+                    directory: panel_snapshot.directory.clone(),
+                    is_pinned: panel_snapshot.is_pinned,
+                    is_manually_unread: panel_snapshot.is_manually_unread,
+                    git_branch: panel_snapshot.git_branch.clone(),
+                    listening_ports: panel_snapshot.listening_ports.clone(),
+                    tty_name: panel_snapshot.tty_name.clone(),
+                    browser_url: panel_snapshot
+                        .browser
+                        .as_ref()
+                        .and_then(|b| b.url_string.clone()),
+                    markdown_file: panel_snapshot
+                        .markdown
+                        .as_ref()
+                        .map(|m| m.file_path.clone()),
+                    pending_scrollback: panel_snapshot
+                        .terminal
+                        .as_ref()
+                        .and_then(|t| t.scrollback.clone()),
+                    pending_zoom: panel_snapshot
+                        .browser
+                        .as_ref()
+                        .map(|b| b.page_zoom)
+                        .filter(|&z| z != 1.0),
+                };
+                panels.insert(panel.id, panel);
+            }
+
+            workspace.layout = layout;
+            workspace.panels = panels;
+            workspace.focused_panel_id = ws_snapshot.focused_panel_id;
+            tab_manager.add_workspace(workspace);
+        }
     }
 
     tracing::info!(
-        "Restored {} workspaces from session",
-        tab_manager.len()
+        "Restored {} workspaces across {} windows from session",
+        tab_manager.len(),
+        window_ids.len(),
     );
+
+    drop(tab_manager);
+    window_ids
 }
 
 /// Write scrollback text to a temp file for session restore.

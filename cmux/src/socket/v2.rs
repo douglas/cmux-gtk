@@ -2973,13 +2973,8 @@ fn handle_markdown_open(id: Value, params: &Value, state: &Arc<SharedState>) -> 
 // -----------------------------------------------------------------------
 
 fn handle_window_new(id: Value, state: &Arc<SharedState>) -> Response {
-    state.send_ui_event(UiEvent::Refresh);
-    Response::success(
-        id,
-        serde_json::json!({
-            "note": "Multiple windows not yet fully supported on Linux; use workspace.new instead"
-        }),
-    )
+    state.send_ui_event(UiEvent::CreateWindow);
+    Response::success(id, serde_json::json!({"created": true}))
 }
 
 fn handle_window_list(id: Value, _state: &Arc<SharedState>) -> Response {
@@ -3103,7 +3098,7 @@ mod tests {
     fn test_surface_send_input_dispatches_ui_event() {
         let state = Arc::new(SharedState::new());
         let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
-        state.install_ui_event_sender(tx);
+        state.install_ui_event_sender(uuid::Uuid::new_v4(), tx);
 
         let panel_id = {
             let tab_manager = lock_or_recover(&state.tab_manager);

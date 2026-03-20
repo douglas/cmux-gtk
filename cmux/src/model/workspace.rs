@@ -55,6 +55,8 @@ pub struct Workspace {
     pub pr_status: Option<String>,
     /// PR URL for the workspace.
     pub pr_url: Option<String>,
+    /// Window this workspace belongs to (None = default/first window).
+    pub window_id: Option<Uuid>,
 }
 
 /// Status entry (agent metadata key-value pairs shown in sidebar).
@@ -127,6 +129,7 @@ impl Workspace {
             attention_panel_id: None,
             pr_status: None,
             pr_url: None,
+            window_id: None,
         }
     }
 

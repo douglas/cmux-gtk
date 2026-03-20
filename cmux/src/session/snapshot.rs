@@ -119,7 +119,7 @@ pub struct SessionMarkdownPanelSnapshot {
 }
 
 /// Window geometry.
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SessionRectSnapshot {
     pub x: f64,

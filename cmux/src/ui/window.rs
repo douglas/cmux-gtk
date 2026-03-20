@@ -15,16 +15,20 @@ use crate::model::panel::{GitBranch, SplitOrientation};
 use crate::model::{PanelType, Workspace};
 use crate::ui::{notifications_panel, search_overlay, sidebar, split_view};
 
-/// Create the main application window.
+/// Create an application window with per-window ID for multi-window support.
 pub fn create_window(
     app: &adw::Application,
     state: &Rc<AppState>,
+    window_id: uuid::Uuid,
     ui_events: UnboundedReceiver<UiEvent>,
 ) -> adw::ApplicationWindow {
     install_css();
 
     // Use saved window geometry if available, otherwise defaults
-    let (width, height) = *lock_or_recover(&state.shared.window_size);
+    let (width, height) = lock_or_recover(&state.shared.window_sizes)
+        .get(&window_id)
+        .copied()
+        .unwrap_or((1280, 860));
 
     let window = adw::ApplicationWindow::builder()
         .application(app)
@@ -32,6 +36,7 @@ pub fn create_window(
         .default_width(width)
         .default_height(height)
         .build();
+    window.set_widget_name(&window_id.to_string());
 
     let split_view = adw::NavigationSplitView::new();
     split_view.set_min_sidebar_width(220.0);
@@ -180,10 +185,28 @@ pub fn create_window(
         });
     }
 
-    // Quit confirmation dialog
+    // Close/quit handling
     {
         let state = state.clone();
         window.connect_close_request(move |window| {
+            let wid = uuid::Uuid::parse_str(&window.widget_name()).ok();
+
+            // Clean up per-window state
+            if let Some(ref wid) = wid {
+                state.shared.remove_ui_event_sender(wid);
+                lock_or_recover(&state.shared.window_sizes).remove(wid);
+            }
+
+            // If other windows exist, just close this one without confirmation
+            let other_windows = window
+                .application()
+                .map(|app| app.windows().len() > 1)
+                .unwrap_or(false);
+            if other_windows {
+                return glib::Propagation::Proceed;
+            }
+
+            // Last window — check for quit confirmation
             let settings = crate::settings::load();
             if !settings.confirm_before_close {
                 return glib::Propagation::Proceed;
@@ -653,6 +676,16 @@ fn bind_shared_state_updates(
                     UiEvent::BrowserAction { panel_id, action } => {
                         crate::ui::browser_panel::execute_action(panel_id, action);
                     }
+                    UiEvent::CreateWindow => {
+                        if let Some(win) = window_weak.upgrade() {
+                            if let Some(app) = win.application() {
+                                if let Some(adw_app) = app.downcast_ref::<adw::Application>() {
+                                    let new_window_id = uuid::Uuid::new_v4();
+                                    crate::app::open_window(adw_app, &state, new_window_id);
+                                }
+                            }
+                        }
+                    }
                     // directly via its own callbacks.
                     UiEvent::StartSearch
                     | UiEvent::EndSearch
@@ -1012,11 +1045,23 @@ fn setup_shortcuts(
             }
             // Ctrl+Shift+T: New workspace
             (gdk4::Key::T, true, true) => {
-                let workspace = Workspace::new();
+                let mut workspace = Workspace::new();
+                workspace.window_id = uuid::Uuid::parse_str(
+                    &window_weak.upgrade()
+                        .map(|w| w.widget_name().to_string())
+                        .unwrap_or_default(),
+                ).ok();
                 let placement = crate::settings::load().new_workspace_placement;
                 lock_or_recover(&state.shared.tab_manager)
                     .add_workspace_with_placement(workspace, placement);
                 refresh_ui(&list_box, &content_box, &state);
+                glib::Propagation::Stop
+            }
+            // Ctrl+Shift+N: New window
+            (gdk4::Key::N, true, true) => {
+                state
+                    .shared
+                    .send_ui_event(crate::app::UiEvent::CreateWindow);
                 glib::Propagation::Stop
             }
             // Ctrl+Shift+W: Close workspace
