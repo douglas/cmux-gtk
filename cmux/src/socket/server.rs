@@ -214,14 +214,26 @@ async fn handle_client(
             continue;
         }
 
-        // Dispatch on a blocking thread to avoid holding std::sync::Mutex on async runtime
+        // Dispatch: detect V1 (plain text) vs V2 (JSON) protocol
         let state_clone = state.clone();
         let trimmed_owned = trimmed.to_string();
-        let response =
-            tokio::task::spawn_blocking(move || v2::dispatch(&trimmed_owned, &state_clone)).await?;
-        let mut response_json = serde_json::to_string(&response)?;
-        response_json.push('\n');
-        writer.write_all(response_json.as_bytes()).await?;
+        if super::v1::is_v1(&trimmed_owned) {
+            // V1 text protocol — parse and translate to V2 internally
+            let response_str =
+                tokio::task::spawn_blocking(move || {
+                    super::v1::dispatch(&trimmed_owned, &state_clone)
+                })
+                .await?;
+            writer.write_all(response_str.as_bytes()).await?;
+        } else {
+            // V2 JSON protocol
+            let response =
+                tokio::task::spawn_blocking(move || v2::dispatch(&trimmed_owned, &state_clone))
+                    .await?;
+            let mut response_json = serde_json::to_string(&response)?;
+            response_json.push('\n');
+            writer.write_all(response_json.as_bytes()).await?;
+        }
         writer.flush().await?;
 
         if eof {
