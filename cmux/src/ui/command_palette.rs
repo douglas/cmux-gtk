@@ -298,6 +298,30 @@ fn build_actions(state: &Rc<AppState>) -> Rc<Vec<PaletteAction>> {
             name: "markdown.open".into(),
             label: "Open Markdown File...".into(),
         },
+        PaletteAction {
+            name: "tab.close_others".into(),
+            label: "Close Other Tabs in Pane".into(),
+        },
+        PaletteAction {
+            name: "pane.split_browser_h".into(),
+            label: "Split Browser (Horizontal)".into(),
+        },
+        PaletteAction {
+            name: "pane.split_browser_v".into(),
+            label: "Split Browser (Vertical)".into(),
+        },
+        PaletteAction {
+            name: "font.increase".into(),
+            label: "Increase Font Size".into(),
+        },
+        PaletteAction {
+            name: "font.decrease".into(),
+            label: "Decrease Font Size".into(),
+        },
+        PaletteAction {
+            name: "font.reset".into(),
+            label: "Reset Font Size".into(),
+        },
     ];
 
     // Add "Open in..." commands for installed editors
@@ -411,10 +435,6 @@ fn execute_action(name: &str, state: &Rc<AppState>, on_refresh: &Rc<dyn Fn()>) {
             if let Some(ws) = tm.selected_mut() {
                 if let Some(panel_id) = ws.focused_panel_id {
                     ws.remove_panel(panel_id);
-                    if ws.is_empty() {
-                        let ws_id = ws.id;
-                        tm.remove_by_id(ws_id);
-                    }
                 }
             }
         }
@@ -595,10 +615,6 @@ fn execute_action(name: &str, state: &Rc<AppState>, on_refresh: &Rc<dyn Fn()>) {
             if let Some(ws) = tm.selected_mut() {
                 if let Some(panel_id) = ws.focused_panel_id {
                     ws.remove_panel(panel_id);
-                    if ws.is_empty() {
-                        let ws_id = ws.id;
-                        tm.remove_by_id(ws_id);
-                    }
                 }
             }
         }
@@ -663,6 +679,97 @@ fn execute_action(name: &str, state: &Rc<AppState>, on_refresh: &Rc<dyn Fn()>) {
                 .shared
                 .send_ui_event(crate::app::UiEvent::OpenMarkdownFile);
             return; // UiEvent handled
+        }
+        "tab.close_others" => {
+            let mut tm = lock_or_recover(&state.shared.tab_manager);
+            if let Some(ws) = tm.selected_mut() {
+                if let Some(panel_id) = ws.focused_panel_id {
+                    if let Some(pane_ids) = ws.layout.find_pane_with_panel_readonly(panel_id)
+                    {
+                        let to_close: Vec<uuid::Uuid> = pane_ids
+                            .iter()
+                            .filter(|&&pid| pid != panel_id)
+                            .copied()
+                            .collect();
+                        for pid in &to_close {
+                            ws.panels.remove(pid);
+                            ws.layout.remove_panel(*pid);
+                        }
+                    }
+                }
+            }
+        }
+        "pane.split_browser_h" => {
+            if let Some(ws) = lock_or_recover(&state.shared.tab_manager).selected_mut() {
+                ws.split(SplitOrientation::Horizontal, PanelType::Browser);
+            }
+        }
+        "pane.split_browser_v" => {
+            if let Some(ws) = lock_or_recover(&state.shared.tab_manager).selected_mut() {
+                ws.split(SplitOrientation::Vertical, PanelType::Browser);
+            }
+        }
+        "font.increase" => {
+            let info = {
+                let tm = lock_or_recover(&state.shared.tab_manager);
+                tm.selected().and_then(|ws| {
+                    ws.focused_panel_id
+                        .and_then(|pid| ws.panels.get(&pid).map(|p| (pid, p.panel_type)))
+                })
+            };
+            if let Some((panel_id, panel_type)) = info {
+                if panel_type == PanelType::Browser {
+                    state.shared.send_ui_event(crate::app::UiEvent::BrowserAction {
+                        panel_id,
+                        action: crate::ui::browser_panel::BrowserActionKind::ZoomIn,
+                    });
+                } else if let Some(surface) = state.terminal_cache.borrow().get(&panel_id) {
+                    surface.binding_action("increase_font_size:1");
+                }
+            }
+            return;
+        }
+        "font.decrease" => {
+            let info = {
+                let tm = lock_or_recover(&state.shared.tab_manager);
+                tm.selected().and_then(|ws| {
+                    ws.focused_panel_id
+                        .and_then(|pid| ws.panels.get(&pid).map(|p| (pid, p.panel_type)))
+                })
+            };
+            if let Some((panel_id, panel_type)) = info {
+                if panel_type == PanelType::Browser {
+                    state.shared.send_ui_event(crate::app::UiEvent::BrowserAction {
+                        panel_id,
+                        action: crate::ui::browser_panel::BrowserActionKind::ZoomOut,
+                    });
+                } else if let Some(surface) = state.terminal_cache.borrow().get(&panel_id) {
+                    surface.binding_action("decrease_font_size:1");
+                }
+            }
+            return;
+        }
+        "font.reset" => {
+            let info = {
+                let tm = lock_or_recover(&state.shared.tab_manager);
+                tm.selected().and_then(|ws| {
+                    ws.focused_panel_id
+                        .and_then(|pid| ws.panels.get(&pid).map(|p| (pid, p.panel_type)))
+                })
+            };
+            if let Some((panel_id, panel_type)) = info {
+                if panel_type == PanelType::Browser {
+                    state.shared.send_ui_event(crate::app::UiEvent::BrowserAction {
+                        panel_id,
+                        action: crate::ui::browser_panel::BrowserActionKind::SetZoom {
+                            zoom: 1.0,
+                        },
+                    });
+                } else if let Some(surface) = state.terminal_cache.borrow().get(&panel_id) {
+                    surface.binding_action("reset_font_size");
+                }
+            }
+            return;
         }
         name if name.starts_with("workspace.select.") => {
             if let Ok(index) = name[17..].parse::<usize>() {

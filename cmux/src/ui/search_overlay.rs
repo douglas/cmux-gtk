@@ -203,6 +203,22 @@ fn do_search_needle(state: &Rc<AppState>, needle: &str, forward: bool) {
     }
 }
 
+/// Trigger find-next from an external shortcut (Ctrl+G).
+pub fn trigger_find_next(state: &Rc<AppState>, entry: &gtk4::SearchEntry) {
+    let text = entry.text().to_string();
+    if !text.is_empty() {
+        do_search_needle(state, &text, true);
+    }
+}
+
+/// Trigger find-previous from an external shortcut (Ctrl+Shift+G).
+pub fn trigger_find_prev(state: &Rc<AppState>, entry: &gtk4::SearchEntry) {
+    let text = entry.text().to_string();
+    if !text.is_empty() {
+        do_search_needle(state, &text, false);
+    }
+}
+
 /// Update the search overlay match count from ghostty callbacks.
 pub fn update_search_count(overlay: &SearchOverlay) {
     let total = overlay.state.total.get();

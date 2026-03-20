@@ -31,6 +31,8 @@ impl std::fmt::Debug for BrowserActionKind {
             Self::GoForward => write!(f, "GoForward"),
             Self::Reload => write!(f, "Reload"),
             Self::SetZoom { zoom } => f.debug_struct("SetZoom").field("zoom", zoom).finish(),
+            Self::ZoomIn => write!(f, "ZoomIn"),
+            Self::ZoomOut => write!(f, "ZoomOut"),
             Self::WaitForSelector { selector, .. } => {
                 f.debug_struct("WaitForSelector").field("selector", selector).finish()
             }
@@ -67,6 +69,8 @@ pub enum BrowserActionKind {
     GoForward,
     Reload,
     SetZoom { zoom: f64 },
+    ZoomIn,
+    ZoomOut,
 
     // Phase 5: Wait commands
     WaitForSelector {
@@ -275,6 +279,18 @@ pub fn execute_action(panel_id: uuid::Uuid, action: BrowserActionKind) {
         BrowserActionKind::SetZoom { zoom } => {
             if let Some(wv) = get_webview(panel_id) {
                 wv.set_zoom_level(zoom);
+            }
+        }
+        BrowserActionKind::ZoomIn => {
+            if let Some(wv) = get_webview(panel_id) {
+                let new_zoom = (wv.zoom_level() + 0.1).min(5.0);
+                wv.set_zoom_level(new_zoom);
+            }
+        }
+        BrowserActionKind::ZoomOut => {
+            if let Some(wv) = get_webview(panel_id) {
+                let new_zoom = (wv.zoom_level() - 0.1).max(0.25);
+                wv.set_zoom_level(new_zoom);
             }
         }
         BrowserActionKind::WaitForSelector {

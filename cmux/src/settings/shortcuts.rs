@@ -118,12 +118,71 @@ impl Default for ShortcutConfig {
             Keybinding::ctrl("f"),
         );
         bindings.insert(
+            "find.next".into(),
+            Keybinding::ctrl("g"),
+        );
+        bindings.insert(
+            "find.previous".into(),
+            Keybinding::ctrl_shift("G"),
+        );
+        bindings.insert(
             "notifications.toggle".into(),
             Keybinding::ctrl_shift("I"),
         );
         bindings.insert(
             "settings".into(),
             Keybinding::ctrl("comma"),
+        );
+
+        // Terminal font size
+        bindings.insert(
+            "font.increase".into(),
+            Keybinding::ctrl("equal"),
+        );
+        bindings.insert(
+            "font.decrease".into(),
+            Keybinding::ctrl("minus"),
+        );
+        bindings.insert(
+            "font.reset".into(),
+            Keybinding::ctrl("0"),
+        );
+
+        // Clear scrollback
+        bindings.insert(
+            "surface.clear".into(),
+            Keybinding::ctrl("k"),
+        );
+
+        // Browser-specific splits
+        bindings.insert(
+            "browser.split_horizontal".into(),
+            Keybinding {
+                key: "d".to_string(),
+                ctrl: true,
+                shift: false,
+                alt: true,
+            },
+        );
+        bindings.insert(
+            "browser.split_vertical".into(),
+            Keybinding {
+                key: "e".to_string(),
+                ctrl: true,
+                shift: false,
+                alt: true,
+            },
+        );
+
+        // Close other pane tabs
+        bindings.insert(
+            "tab.close_others".into(),
+            Keybinding {
+                key: "W".to_string(),
+                ctrl: true,
+                shift: true,
+                alt: true,
+            },
         );
 
         Self { bindings }

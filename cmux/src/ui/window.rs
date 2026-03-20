@@ -284,6 +284,11 @@ pub fn rebuild_content(content_box: &gtk4::Box, state: &Rc<AppState>) {
         if let Some((id, layout, panels, attention_panel_id, zoomed_panel_id, focused_panel_id)) =
             workspace_data
         {
+            let effective_attention = if crate::settings::load().pane_attention_ring {
+                attention_panel_id
+            } else {
+                None
+            };
             let widget = if let Some(zoomed_id) = zoomed_panel_id {
                 split_view::build_zoomed(zoomed_id, &panels, &state)
             } else {
@@ -291,7 +296,7 @@ pub fn rebuild_content(content_box: &gtk4::Box, state: &Rc<AppState>) {
                     id,
                     &layout,
                     &panels,
-                    attention_panel_id,
+                    effective_attention,
                     focused_panel_id,
                     &state,
                 )
@@ -413,6 +418,9 @@ fn bind_shared_state_updates(
                         }
                     }
                     UiEvent::TriggerFlash { panel_id } => {
+                        if !crate::settings::load().pane_flash_enabled {
+                            continue;
+                        }
                         if let Some(surface) = state.terminal_cache.borrow().get(&panel_id) {
                             let widget = surface.clone().upcast::<gtk4::Widget>();
                             // Two-phase pulse: on → off → on → off
@@ -818,6 +826,74 @@ fn setup_shortcuts(
             }
         }
 
+        // Ctrl+Alt combinations (no shift)
+        if ctrl && alt && !shift {
+            match keyval {
+                // Ctrl+Alt+D: Split browser horizontal
+                gdk4::Key::d => {
+                    if let Some(workspace) =
+                        lock_or_recover(&state.shared.tab_manager).selected_mut()
+                    {
+                        workspace.split(
+                            SplitOrientation::Horizontal,
+                            PanelType::Browser,
+                        );
+                    }
+                    refresh_ui(&list_box, &content_box, &state);
+                    return glib::Propagation::Stop;
+                }
+                // Ctrl+Alt+E: Split browser vertical
+                gdk4::Key::e => {
+                    if let Some(workspace) =
+                        lock_or_recover(&state.shared.tab_manager).selected_mut()
+                    {
+                        workspace.split(
+                            SplitOrientation::Vertical,
+                            PanelType::Browser,
+                        );
+                    }
+                    refresh_ui(&list_box, &content_box, &state);
+                    return glib::Propagation::Stop;
+                }
+                _ => {}
+            }
+        }
+
+        // Ctrl+Shift+Alt+W: Close other tabs in the current pane
+        if ctrl && shift && alt && keyval == gdk4::Key::W {
+            let closed = {
+                let mut tm = lock_or_recover(&state.shared.tab_manager);
+                if let Some(ws) = tm.selected_mut() {
+                    if let Some(panel_id) = ws.focused_panel_id {
+                        let pane_ids =
+                            ws.layout.find_pane_with_panel_readonly(panel_id);
+                        if let Some(pane_ids) = pane_ids {
+                            let to_close: Vec<uuid::Uuid> = pane_ids
+                                .iter()
+                                .filter(|&&pid| pid != panel_id)
+                                .copied()
+                                .collect();
+                            for pid in &to_close {
+                                ws.panels.remove(pid);
+                                ws.layout.remove_panel(*pid);
+                            }
+                            !to_close.is_empty()
+                        } else {
+                            false
+                        }
+                    } else {
+                        false
+                    }
+                } else {
+                    false
+                }
+            };
+            if closed {
+                refresh_ui(&list_box, &content_box, &state);
+            }
+            return glib::Propagation::Stop;
+        }
+
         match (keyval, ctrl, shift) {
             // Ctrl+Comma or Ctrl+Shift+Comma: Settings
             (gdk4::Key::comma, true, false) | (gdk4::Key::comma, true, true) => {
@@ -947,12 +1023,7 @@ fn setup_shortcuts(
                                     }
                                 }
                             }
-                            let removed = ws.remove_panel(panel_id);
-                            if removed && ws.is_empty() {
-                                let ws_id = ws.id;
-                                tm.remove_by_id(ws_id);
-                            }
-                            removed
+                            ws.remove_panel(panel_id)
                         } else {
                             false
                         }
@@ -1156,6 +1227,116 @@ fn setup_shortcuts(
                 };
                 if select_workspace_by_index(&state, index) {
                     refresh_ui(&list_box, &content_box, &state);
+                }
+                glib::Propagation::Stop
+            }
+            // Ctrl+K: Clear screen + scrollback
+            (gdk4::Key::k, true, false) => {
+                let panel_id = {
+                    let tm = lock_or_recover(&state.shared.tab_manager);
+                    tm.selected().and_then(|ws| ws.focused_panel_id)
+                };
+                if let Some(panel_id) = panel_id {
+                    state
+                        .shared
+                        .send_ui_event(crate::app::UiEvent::ClearHistory { panel_id });
+                }
+                glib::Propagation::Stop
+            }
+            // Ctrl+G: Find next match
+            (gdk4::Key::g, true, false) => {
+                if search_bar.is_visible() {
+                    search_overlay::trigger_find_next(&state, &search_entry);
+                }
+                glib::Propagation::Stop
+            }
+            // Ctrl+Shift+G: Find previous match
+            (gdk4::Key::G, true, true) => {
+                if search_bar.is_visible() {
+                    search_overlay::trigger_find_prev(&state, &search_entry);
+                }
+                glib::Propagation::Stop
+            }
+            // Ctrl+Equal/Plus: Increase font size (terminal) or zoom (browser)
+            (gdk4::Key::equal, true, false) | (gdk4::Key::plus, true, _) => {
+                let info = {
+                    let tm = lock_or_recover(&state.shared.tab_manager);
+                    tm.selected().and_then(|ws| {
+                        ws.focused_panel_id.and_then(|pid| {
+                            ws.panels.get(&pid).map(|p| (pid, p.panel_type))
+                        })
+                    })
+                };
+                if let Some((panel_id, panel_type)) = info {
+                    if panel_type == PanelType::Browser {
+                        state.shared.send_ui_event(
+                            crate::app::UiEvent::BrowserAction {
+                                panel_id,
+                                action:
+                                    crate::ui::browser_panel::BrowserActionKind::ZoomIn,
+                            },
+                        );
+                    } else if let Some(surface) =
+                        state.terminal_cache.borrow().get(&panel_id)
+                    {
+                        surface.binding_action("increase_font_size:1");
+                    }
+                }
+                glib::Propagation::Stop
+            }
+            // Ctrl+Minus: Decrease font size (terminal) or zoom (browser)
+            (gdk4::Key::minus, true, false) => {
+                let info = {
+                    let tm = lock_or_recover(&state.shared.tab_manager);
+                    tm.selected().and_then(|ws| {
+                        ws.focused_panel_id.and_then(|pid| {
+                            ws.panels.get(&pid).map(|p| (pid, p.panel_type))
+                        })
+                    })
+                };
+                if let Some((panel_id, panel_type)) = info {
+                    if panel_type == PanelType::Browser {
+                        state.shared.send_ui_event(
+                            crate::app::UiEvent::BrowserAction {
+                                panel_id,
+                                action:
+                                    crate::ui::browser_panel::BrowserActionKind::ZoomOut,
+                            },
+                        );
+                    } else if let Some(surface) =
+                        state.terminal_cache.borrow().get(&panel_id)
+                    {
+                        surface.binding_action("decrease_font_size:1");
+                    }
+                }
+                glib::Propagation::Stop
+            }
+            // Ctrl+0: Reset font size (terminal) or zoom (browser)
+            (gdk4::Key::_0, true, false) => {
+                let info = {
+                    let tm = lock_or_recover(&state.shared.tab_manager);
+                    tm.selected().and_then(|ws| {
+                        ws.focused_panel_id.and_then(|pid| {
+                            ws.panels.get(&pid).map(|p| (pid, p.panel_type))
+                        })
+                    })
+                };
+                if let Some((panel_id, panel_type)) = info {
+                    if panel_type == PanelType::Browser {
+                        state.shared.send_ui_event(
+                            crate::app::UiEvent::BrowserAction {
+                                panel_id,
+                                action:
+                                    crate::ui::browser_panel::BrowserActionKind::SetZoom {
+                                        zoom: 1.0,
+                                    },
+                            },
+                        );
+                    } else if let Some(surface) =
+                        state.terminal_cache.borrow().get(&panel_id)
+                    {
+                        surface.binding_action("reset_font_size");
+                    }
                 }
                 glib::Propagation::Stop
             }
