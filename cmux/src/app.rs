@@ -486,6 +486,9 @@ pub fn apply_theme_from_settings() {
                      .attention-panel {{\n\
                          border-color: {accent};\n\
                          background-color: alpha({accent}, 0.08);\n\
+                     }}\n\
+                     .sidebar-progress progress {{\n\
+                         background-color: {accent};\n\
                      }}\n"
                 );
             }

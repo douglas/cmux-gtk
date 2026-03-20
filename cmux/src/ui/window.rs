@@ -1298,20 +1298,22 @@ fn install_css() {
             color: #986a44;
         }
 
-        /* ── Progress bar ── */
+        /* ── Progress bar (capsule style) ── */
         .sidebar-progress {
-            min-height: 4px;
-            border-radius: 2px;
+            min-height: 3px;
+            border-radius: 1.5px;
         }
 
         .sidebar-progress trough {
-            min-height: 4px;
-            border-radius: 2px;
+            min-height: 3px;
+            border-radius: 1.5px;
+            background-color: alpha(@theme_fg_color, 0.12);
         }
 
         .sidebar-progress progress {
-            min-height: 4px;
-            border-radius: 2px;
+            min-height: 3px;
+            border-radius: 1.5px;
+            background-color: @accent_bg_color;
         }
 
         /* ── Log entry levels ── */
@@ -1332,7 +1334,7 @@ fn install_css() {
         }
 
         .log-progress {
-            color: #3584e4;
+            color: @accent_color;
         }
 
         /* ── Port badges ── */
