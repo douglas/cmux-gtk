@@ -161,6 +161,25 @@ pub enum UiEvent {
     RenameTab {
         panel_id: Uuid,
     },
+    SetTitle {
+        surface: SendSurfacePtr,
+        title: String,
+    },
+    SetPwd {
+        surface: SendSurfacePtr,
+        directory: String,
+    },
+}
+
+/// Wrapper to send a raw ghostty_surface_t across threads.
+#[derive(Clone, Copy)]
+pub struct SendSurfacePtr(pub ghostty_surface_t);
+unsafe impl Send for SendSurfacePtr {}
+unsafe impl Sync for SendSurfacePtr {}
+impl std::fmt::Debug for SendSurfacePtr {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_tuple("SendSurfacePtr").field(&(self.0 as *const ())).finish()
+    }
 }
 
 /// Thread-safe state shared between GTK main thread and socket server.
@@ -448,7 +467,50 @@ impl ghostty_gtk::callbacks::GhosttyCallbackHandler for CmuxCallbackHandler {
                 }
                 true
             }
-            ghostty_action_tag_e::GHOSTTY_ACTION_SET_TITLE => true,
+            ghostty_action_tag_e::GHOSTTY_ACTION_SET_TITLE => {
+                if target.tag == ghostty_target_tag_e::GHOSTTY_TARGET_SURFACE {
+                    let surface_ptr = unsafe { target.target.surface };
+                    if !surface_ptr.is_null() {
+                        let title = unsafe {
+                            let cstr = action.action.set_title.title;
+                            if cstr.is_null() {
+                                None
+                            } else {
+                                std::ffi::CStr::from_ptr(cstr).to_str().ok().map(String::from)
+                            }
+                        };
+                        if let Some(title) = title {
+                            self.shared.send_ui_event(UiEvent::SetTitle {
+                                surface: SendSurfacePtr(surface_ptr),
+                                title,
+                            });
+                        }
+                    }
+                }
+                true
+            }
+            ghostty_action_tag_e::GHOSTTY_ACTION_PWD => {
+                if target.tag == ghostty_target_tag_e::GHOSTTY_TARGET_SURFACE {
+                    let surface_ptr = unsafe { target.target.surface };
+                    if !surface_ptr.is_null() {
+                        let pwd = unsafe {
+                            let cstr = action.action.pwd.pwd;
+                            if cstr.is_null() {
+                                None
+                            } else {
+                                std::ffi::CStr::from_ptr(cstr).to_str().ok().map(String::from)
+                            }
+                        };
+                        if let Some(pwd) = pwd {
+                            self.shared.send_ui_event(UiEvent::SetPwd {
+                                surface: SendSurfacePtr(surface_ptr),
+                                directory: pwd,
+                            });
+                        }
+                    }
+                }
+                true
+            }
             ghostty_action_tag_e::GHOSTTY_ACTION_START_SEARCH => {
                 self.shared.send_ui_event(UiEvent::StartSearch);
                 true

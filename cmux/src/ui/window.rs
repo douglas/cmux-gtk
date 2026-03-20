@@ -10,7 +10,7 @@ use tokio::sync::mpsc::UnboundedReceiver;
 use std::cell::Cell;
 
 use crate::app::{lock_or_recover, AppState, UiEvent};
-use crate::model::panel::SplitOrientation;
+use crate::model::panel::{GitBranch, SplitOrientation};
 use crate::model::{PanelType, Workspace};
 use crate::ui::{notifications_panel, search_overlay, sidebar, split_view};
 
@@ -415,6 +415,53 @@ fn bind_shared_state_updates(
                     }
                     // Search events are handled but we don't have the search
                     // overlay widget refs here. The search overlay reads state
+                    UiEvent::SetTitle { surface, title } => {
+                        // Reverse-lookup panel_id from terminal_cache
+                        let panel_id = state
+                            .terminal_cache
+                            .borrow()
+                            .iter()
+                            .find(|(_, s)| s.raw_surface() == surface.0)
+                            .map(|(id, _)| *id);
+
+                        if let Some(panel_id) = panel_id {
+                            let mut tm = lock_or_recover(&state.shared.tab_manager);
+                            if let Some(ws) = tm.find_workspace_with_panel_mut(panel_id) {
+                                if let Some(panel) = ws.panels.get_mut(&panel_id) {
+                                    panel.title = Some(title.clone());
+                                }
+                                if ws.focused_panel_id == Some(panel_id) {
+                                    ws.process_title = title;
+                                }
+                            }
+                            drop(tm);
+                            needs_refresh = true;
+                        }
+                    }
+                    UiEvent::SetPwd { surface, directory } => {
+                        let panel_id = state
+                            .terminal_cache
+                            .borrow()
+                            .iter()
+                            .find(|(_, s)| s.raw_surface() == surface.0)
+                            .map(|(id, _)| *id);
+
+                        if let Some(panel_id) = panel_id {
+                            let mut tm = lock_or_recover(&state.shared.tab_manager);
+                            if let Some(ws) = tm.find_workspace_with_panel_mut(panel_id) {
+                                if let Some(panel) = ws.panels.get_mut(&panel_id) {
+                                    panel.directory = Some(directory.clone());
+                                }
+                                if ws.focused_panel_id == Some(panel_id) {
+                                    ws.current_directory = directory.clone();
+                                    // Auto-detect git branch from directory
+                                    ws.git_branch = detect_git_branch(&directory);
+                                }
+                            }
+                            drop(tm);
+                            needs_refresh = true;
+                        }
+                    }
                     // directly via its own callbacks.
                     UiEvent::StartSearch
                     | UiEvent::EndSearch
@@ -1307,4 +1354,34 @@ fn install_css() {
             gtk4::STYLE_PROVIDER_PRIORITY_APPLICATION,
         );
     }
+}
+
+/// Detect git branch and dirty state from a directory path.
+fn detect_git_branch(directory: &str) -> Option<GitBranch> {
+    let output = std::process::Command::new("git")
+        .args(["rev-parse", "--abbrev-ref", "HEAD"])
+        .current_dir(directory)
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::null())
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let branch = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    if branch.is_empty() {
+        return None;
+    }
+
+    let is_dirty = std::process::Command::new("git")
+        .args(["status", "--porcelain", "-uno"])
+        .current_dir(directory)
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::null())
+        .output()
+        .ok()
+        .map(|o| !o.stdout.is_empty())
+        .unwrap_or(false);
+
+    Some(GitBranch { branch, is_dirty })
 }
