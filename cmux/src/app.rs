@@ -101,10 +101,7 @@ impl AppState {
             if !workspace.remove_panel(panel_id) {
                 return false;
             }
-            let empty_workspace_id = workspace.is_empty().then_some(workspace.id);
-            if let Some(workspace_id) = empty_workspace_id {
-                tab_manager.remove_by_id(workspace_id);
-            }
+            // Keep workspace alive even when empty (parity with macOS behavior)
         }
 
         self.terminal_cache.borrow_mut().remove(&panel_id);
@@ -714,7 +711,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn close_panel_removes_last_workspace() {
+    fn close_panel_keeps_workspace_alive() {
         let shared = Arc::new(SharedState::new());
         let state = AppState::new(shared.clone());
         let panel_id = shared
@@ -726,7 +723,10 @@ mod tests {
             .expect("workspace should have a focused panel");
 
         assert!(state.close_panel(panel_id, false));
-        assert!(shared.tab_manager.lock().unwrap().is_empty());
+        // Workspace stays alive even after closing its last panel
+        let tm = shared.tab_manager.lock().unwrap();
+        assert_eq!(tm.len(), 1);
+        assert!(tm.selected().unwrap().is_empty());
     }
 
     #[test]

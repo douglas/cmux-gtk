@@ -311,10 +311,7 @@ fn build_tab_button(
             let mut tm = lock_or_recover(&state.shared.tab_manager);
             if let Some(ws) = tm.find_workspace_with_panel_mut(panel_id) {
                 ws.remove_panel(panel_id);
-                if ws.is_empty() {
-                    let ws_id = ws.id;
-                    tm.remove_by_id(ws_id);
-                }
+                // Keep workspace alive even when empty
             }
             drop(tm);
             state.shared.notify_ui_refresh();
@@ -352,10 +349,7 @@ fn build_tab_button(
             let mut tm = lock_or_recover(&state.shared.tab_manager);
             if let Some(ws) = tm.find_workspace_with_panel_mut(panel_id) {
                 ws.remove_panel(panel_id);
-                if ws.is_empty() {
-                    let ws_id = ws.id;
-                    tm.remove_by_id(ws_id);
-                }
+                // Keep workspace alive even when empty
             }
             drop(tm);
             state.shared.notify_ui_refresh();
