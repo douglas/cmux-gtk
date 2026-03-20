@@ -195,6 +195,7 @@ pub enum SearchEngine {
     DuckDuckGo,
     Bing,
     Kagi,
+    Startpage,
 }
 
 impl SearchEngine {
@@ -206,6 +207,7 @@ impl SearchEngine {
             Self::DuckDuckGo => format!("https://duckduckgo.com/?q={encoded}"),
             Self::Bing => format!("https://www.bing.com/search?q={encoded}"),
             Self::Kagi => format!("https://kagi.com/search?q={encoded}"),
+            Self::Startpage => format!("https://www.startpage.com/do/search?q={encoded}"),
         }
     }
 
@@ -214,6 +216,7 @@ impl SearchEngine {
         Self::DuckDuckGo,
         Self::Bing,
         Self::Kagi,
+        Self::Startpage,
     ];
 
     pub fn label(self) -> &'static str {
@@ -222,6 +225,7 @@ impl SearchEngine {
             Self::DuckDuckGo => "DuckDuckGo",
             Self::Bing => "Bing",
             Self::Kagi => "Kagi",
+            Self::Startpage => "Startpage",
         }
     }
 
@@ -231,6 +235,7 @@ impl SearchEngine {
             1 => Self::DuckDuckGo,
             2 => Self::Bing,
             3 => Self::Kagi,
+            4 => Self::Startpage,
             _ => Self::DuckDuckGo,
         }
     }
@@ -241,6 +246,7 @@ impl SearchEngine {
             Self::DuckDuckGo => 1,
             Self::Bing => 2,
             Self::Kagi => 3,
+            Self::Startpage => 4,
         }
     }
 }
