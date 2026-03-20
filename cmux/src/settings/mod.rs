@@ -11,6 +11,8 @@ use std::path::PathBuf;
 pub struct AppSettings {
     /// Appearance settings.
     pub theme: ThemeMode,
+    /// Focus pane on mouse hover (focus-follows-mouse).
+    pub focus_follows_mouse: bool,
     /// Notification settings.
     pub notifications: NotificationSettings,
     /// Socket access mode.
@@ -31,6 +33,72 @@ pub enum ThemeMode {
     System,
     Light,
     Dark,
+    Omarchy,
+}
+
+/// Check whether this system is running Omarchy (theme dir exists).
+pub fn is_omarchy() -> bool {
+    dirs::config_dir()
+        .map(|d| d.join("omarchy/current/theme/colors.toml").exists())
+        .unwrap_or(false)
+}
+
+/// Read the Omarchy theme and determine if it's light or dark.
+/// Returns `true` if the current Omarchy theme is a light theme.
+pub fn omarchy_is_light() -> bool {
+    dirs::config_dir()
+        .map(|d| d.join("omarchy/current/theme/light.mode").exists())
+        .unwrap_or(false)
+}
+
+/// Parsed Omarchy theme colors from colors.toml.
+#[derive(Debug, Default)]
+pub struct OmarchyColors {
+    pub accent: Option<String>,
+    pub background: Option<String>,
+    pub foreground: Option<String>,
+    pub cursor: Option<String>,
+    pub selection_foreground: Option<String>,
+    pub selection_background: Option<String>,
+    pub color0: Option<String>,
+    pub color8: Option<String>,
+}
+
+/// Read all colors from the current Omarchy theme's colors.toml.
+pub fn omarchy_colors() -> OmarchyColors {
+    let path = match dirs::config_dir() {
+        Some(d) => d.join("omarchy/current/theme/colors.toml"),
+        None => return OmarchyColors::default(),
+    };
+    let content = match std::fs::read_to_string(path) {
+        Ok(c) => c,
+        Err(_) => return OmarchyColors::default(),
+    };
+
+    let mut colors = OmarchyColors::default();
+    for line in content.lines() {
+        let line = line.trim();
+        if let Some((key, value)) = line.split_once('=') {
+            let key = key.trim();
+            let value = value.trim().trim_matches('"');
+            if value.is_empty() {
+                continue;
+            }
+            let v = Some(value.to_string());
+            match key {
+                "accent" => colors.accent = v,
+                "background" => colors.background = v,
+                "foreground" => colors.foreground = v,
+                "cursor" => colors.cursor = v,
+                "selection_foreground" => colors.selection_foreground = v,
+                "selection_background" => colors.selection_background = v,
+                "color0" => colors.color0 = v,
+                "color8" => colors.color8 = v,
+                _ => {}
+            }
+        }
+    }
+    colors
 }
 
 /// Notification preferences.
@@ -160,6 +228,7 @@ impl Default for AppSettings {
     fn default() -> Self {
         Self {
             theme: ThemeMode::System,
+            focus_follows_mouse: false,
             notifications: NotificationSettings::default(),
             socket_access: SocketAccess::CmuxOnly,
             sidebar: SidebarDisplaySettings::default(),

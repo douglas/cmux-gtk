@@ -276,17 +276,11 @@ fn activate(app: &adw::Application, state: &Rc<AppState>) {
     state.shared.install_ui_event_sender(ui_event_tx);
 
     // Apply saved theme preference
-    {
-        let settings = crate::settings::load();
-        if let Some(display) = gdk4::Display::default() {
-            let style_manager = adw::StyleManager::for_display(&display);
-            style_manager.set_color_scheme(match settings.theme {
-                crate::settings::ThemeMode::System => adw::ColorScheme::Default,
-                crate::settings::ThemeMode::Light => adw::ColorScheme::ForceLight,
-                crate::settings::ThemeMode::Dark => adw::ColorScheme::ForceDark,
-            });
-        }
-    }
+    apply_theme_from_settings();
+
+    // Register SIGUSR2 handler for Omarchy live theme switching.
+    // Signal handler sets an AtomicBool; a glib timer polls it.
+    install_sigusr2_theme_reload();
 
     init_ghostty(state);
 
@@ -388,6 +382,108 @@ fn restore_session(state: &Rc<AppState>) {
         "Restored {} workspaces from session",
         tab_manager.len()
     );
+}
+
+/// Atomic flag set by the SIGUSR2 signal handler.
+static SIGUSR2_RECEIVED: AtomicBool = AtomicBool::new(false);
+
+/// Install a SIGUSR2 signal handler that triggers Omarchy theme reload.
+fn install_sigusr2_theme_reload() {
+    // Register the signal handler (async-signal-safe: only sets an atomic)
+    unsafe {
+        libc::signal(
+            libc::SIGUSR2,
+            sigusr2_handler as *const () as libc::sighandler_t,
+        );
+    }
+
+    // Poll the flag from the GTK main loop
+    glib::timeout_add_local(std::time::Duration::from_millis(500), move || {
+        if SIGUSR2_RECEIVED.swap(false, Ordering::Relaxed) {
+            let settings = crate::settings::load();
+            if settings.theme == crate::settings::ThemeMode::Omarchy {
+                tracing::info!("SIGUSR2 received — reloading Omarchy theme");
+                apply_theme_from_settings();
+            }
+        }
+        glib::ControlFlow::Continue
+    });
+}
+
+extern "C" fn sigusr2_handler(_sig: libc::c_int) {
+    SIGUSR2_RECEIVED.store(true, Ordering::Relaxed);
+}
+
+/// Apply the current theme from settings. Handles System/Light/Dark/Omarchy modes.
+pub fn apply_theme_from_settings() {
+    let settings = crate::settings::load();
+    let Some(display) = gdk4::Display::default() else {
+        return;
+    };
+    let style_manager = adw::StyleManager::for_display(&display);
+
+    match settings.theme {
+        crate::settings::ThemeMode::System => {
+            style_manager.set_color_scheme(adw::ColorScheme::Default);
+        }
+        crate::settings::ThemeMode::Light => {
+            style_manager.set_color_scheme(adw::ColorScheme::ForceLight);
+        }
+        crate::settings::ThemeMode::Dark => {
+            style_manager.set_color_scheme(adw::ColorScheme::ForceDark);
+        }
+        crate::settings::ThemeMode::Omarchy => {
+            let is_light = crate::settings::omarchy_is_light();
+            style_manager.set_color_scheme(if is_light {
+                adw::ColorScheme::ForceLight
+            } else {
+                adw::ColorScheme::ForceDark
+            });
+
+            // Apply full Omarchy color palette via CSS overrides
+            let colors = crate::settings::omarchy_colors();
+            let mut css = String::new();
+            if let Some(ref bg) = colors.background {
+                css += &format!(
+                    "@define-color window_bg_color {bg};\n\
+                     @define-color view_bg_color {bg};\n\
+                     @define-color headerbar_bg_color {bg};\n\
+                     @define-color headerbar_backdrop_color {bg};\n\
+                     @define-color sidebar_bg_color {bg};\n\
+                     @define-color sidebar_backdrop_color {bg};\n\
+                     @define-color card_bg_color {bg};\n\
+                     @define-color dialog_bg_color {bg};\n\
+                     @define-color popover_bg_color {bg};\n"
+                );
+            }
+            if let Some(ref fg) = colors.foreground {
+                css += &format!(
+                    "@define-color window_fg_color {fg};\n\
+                     @define-color view_fg_color {fg};\n\
+                     @define-color headerbar_fg_color {fg};\n\
+                     @define-color sidebar_fg_color {fg};\n\
+                     @define-color card_fg_color {fg};\n\
+                     @define-color dialog_fg_color {fg};\n\
+                     @define-color popover_fg_color {fg};\n"
+                );
+            }
+            if let Some(ref accent) = colors.accent {
+                css += &format!(
+                    "@define-color accent_color {accent};\n\
+                     @define-color accent_bg_color {accent};\n"
+                );
+            }
+            if !css.is_empty() {
+                let provider = gtk4::CssProvider::new();
+                provider.load_from_data(&css);
+                gtk4::style_context_add_provider_for_display(
+                    &display,
+                    &provider,
+                    gtk4::STYLE_PROVIDER_PRIORITY_APPLICATION + 1,
+                );
+            }
+        }
+    }
 }
 
 /// Initialize the ghostty embedded runtime and store it in AppState.
