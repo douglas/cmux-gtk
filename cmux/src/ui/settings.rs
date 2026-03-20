@@ -130,7 +130,7 @@ pub fn show_settings(parent: &adw::ApplicationWindow) {
     // ── Browser page ──
     let browser_page = adw::PreferencesPage::new();
     browser_page.set_title("Browser");
-    browser_page.set_icon_name(Some("web-browser-symbolic"));
+    browser_page.set_icon_name(Some("globe-symbolic"));
 
     let browser_group = adw::PreferencesGroup::new();
     browser_group.set_title("Browser Panel");

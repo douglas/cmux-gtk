@@ -224,7 +224,7 @@ fn create_workspace_row(
         .values()
         .any(|p| p.panel_type == crate::model::PanelType::Browser);
     let icon_name = if has_browser {
-        "web-browser-symbolic"
+        "globe-symbolic"
     } else {
         "utilities-terminal-symbolic"
     };
