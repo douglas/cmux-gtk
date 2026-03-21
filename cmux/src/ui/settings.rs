@@ -483,6 +483,35 @@ pub fn show_settings(parent: &adw::ApplicationWindow, on_close: impl Fn() + 'sta
     keyboard_page.add(&shortcuts_group);
     window.add(&keyboard_page);
 
+    // ── About page ──
+    let about_page = adw::PreferencesPage::new();
+    about_page.set_title("About");
+    about_page.set_icon_name(Some("help-about-symbolic"));
+
+    let about_group = adw::PreferencesGroup::new();
+    about_group.set_title("cmux-gtk");
+    about_group.set_description(Some(
+        "GTK4/libadwaita terminal multiplexer for AI coding agents",
+    ));
+
+    let version_row = adw::ActionRow::new();
+    version_row.set_title("Version");
+    version_row.set_subtitle(env!("CARGO_PKG_VERSION"));
+    about_group.add(&version_row);
+
+    let ghostty_row = adw::ActionRow::new();
+    ghostty_row.set_title("Terminal Engine");
+    ghostty_row.set_subtitle("Ghostty (libghostty embedded)");
+    about_group.add(&ghostty_row);
+
+    let toolkit_row = adw::ActionRow::new();
+    toolkit_row.set_title("UI Toolkit");
+    toolkit_row.set_subtitle("GTK4 + libadwaita");
+    about_group.add(&toolkit_row);
+
+    about_page.add(&about_group);
+    window.add(&about_page);
+
     // ── Save on close ──
     {
         let theme_row = theme_row.clone();
