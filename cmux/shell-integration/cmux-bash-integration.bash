@@ -211,6 +211,28 @@ _cmux_start_pr_poll() {
             _cmux_pr_last_status="$pr_state"
             _cmux_send "report_pr $pr_state $(_cmux_flags)" >/dev/null 2>&1
           fi
+          # Parse individual check results from statusCheckRollup
+          if command -v python3 >/dev/null 2>&1; then
+            local checks_json
+            checks_json=$(python3 -c '
+import json, sys
+try:
+    data = json.loads(sys.stdin.read())
+    rollup = data.get("statusCheckRollup", []) or []
+    checks = []
+    for c in rollup[:20]:
+        name = c.get("name") or c.get("context", "")
+        conclusion = (c.get("conclusion") or c.get("state") or "PENDING").upper()
+        if name:
+            checks.append({"name": name, "conclusion": conclusion})
+    print(json.dumps(checks))
+except:
+    pass
+' <<< "$pr_output" 2>/dev/null)
+            if [[ -n "$checks_json" && "$checks_json" != "[]" ]]; then
+              _cmux_send "report_pr_checks $checks_json $(_cmux_flags)" >/dev/null 2>&1
+            fi
+          fi
         elif _cmux_pr_output_indicates_no_pr "$pr_output" "$pr_exit"; then
           if [[ -n "$_cmux_pr_last_status" ]]; then
             _cmux_pr_last_status=""

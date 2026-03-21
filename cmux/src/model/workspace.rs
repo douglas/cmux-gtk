@@ -61,8 +61,18 @@ pub struct Workspace {
     pub pr_status: Option<String>,
     /// PR URL for the workspace.
     pub pr_url: Option<String>,
+    /// Individual PR check results (name → conclusion).
+    pub pr_checks: Vec<PrCheck>,
     /// Window this workspace belongs to (None = default/first window).
     pub window_id: Option<Uuid>,
+}
+
+/// Individual PR check result.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PrCheck {
+    pub name: String,
+    /// SUCCESS, FAILURE, PENDING, NEUTRAL, SKIPPED, etc.
+    pub conclusion: String,
 }
 
 /// Status entry (agent metadata key-value pairs shown in sidebar).
@@ -168,6 +178,7 @@ impl Workspace {
             attention_panel_id: None,
             pr_status: None,
             pr_url: None,
+            pr_checks: Vec::new(),
             window_id: None,
         }
     }

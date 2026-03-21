@@ -125,6 +125,9 @@ pub fn dispatch(json_line: &str, state: &Arc<SharedState>) -> Response {
         "workspace.rename" => handle_workspace_rename(id, &req.params, state),
         "workspace.action" => handle_workspace_action(id, &req.params, state),
         "workspace.report_pr" => handle_workspace_report_pr(id, &req.params, state),
+        "workspace.report_pr_checks" => {
+            handle_workspace_report_pr_checks(id, &req.params, state)
+        }
         "workspace.move_to_window" => {
             handle_workspace_move_to_window(id, &req.params, state)
         }
@@ -582,9 +585,22 @@ fn handle_workspace_report_git(id: Value, params: &Value, state: &Arc<SharedStat
         .get("is_dirty")
         .and_then(|v| v.as_bool())
         .unwrap_or(false);
+    let surface_id = params
+        .get("surface")
+        .and_then(|v| v.as_str())
+        .and_then(|s| uuid::Uuid::parse_str(s).ok());
 
     let Some(branch) = branch else {
         return Response::error(id, "invalid_params", "Provide 'branch'");
+    };
+
+    let git_branch = if branch.is_empty() {
+        None
+    } else {
+        Some(crate::model::panel::GitBranch {
+            branch: crate::model::workspace::truncate_str(branch, 256).to_string(),
+            is_dirty,
+        })
     };
 
     let updated = {
@@ -596,10 +612,14 @@ fn handle_workspace_report_git(id: Value, params: &Value, state: &Arc<SharedStat
         };
 
         if let Some(ws) = ws {
-            ws.git_branch = Some(crate::model::panel::GitBranch {
-                branch: crate::model::workspace::truncate_str(branch, 256).to_string(),
-                is_dirty,
-            });
+            // Always update workspace-level branch
+            ws.git_branch = git_branch.clone();
+            // Also update per-panel branch when surface ID is provided
+            if let Some(pid) = surface_id {
+                if let Some(panel) = ws.panels.get_mut(&pid) {
+                    panel.git_branch = git_branch;
+                }
+            }
             true
         } else {
             false
@@ -2220,6 +2240,58 @@ fn handle_workspace_report_pr(id: Value, params: &Value, state: &Arc<SharedState
         crate::model::workspace::truncate_str(s, 1024).to_string()
     });
 
+    drop(tm);
+    state.notify_ui_refresh();
+    Response::success(id, serde_json::json!({"updated": true}))
+}
+
+// -----------------------------------------------------------------------
+// workspace.report_pr_checks
+// -----------------------------------------------------------------------
+
+fn handle_workspace_report_pr_checks(
+    id: Value,
+    params: &Value,
+    state: &Arc<SharedState>,
+) -> Response {
+    let ws_id = match parse_workspace_param(params) {
+        Ok(v) => v,
+        Err(()) => return Response::error(id, "invalid_params", "Invalid workspace UUID"),
+    };
+    let checks = params.get("checks").and_then(|v| v.as_array());
+
+    let Some(checks_arr) = checks else {
+        return Response::error(id, "invalid_params", "Provide 'checks' array");
+    };
+
+    let parsed: Vec<crate::model::workspace::PrCheck> = checks_arr
+        .iter()
+        .filter_map(|item| {
+            let name = item.get("name")?.as_str()?;
+            let conclusion = item
+                .get("conclusion")
+                .and_then(|v| v.as_str())
+                .unwrap_or("PENDING");
+            Some(crate::model::workspace::PrCheck {
+                name: crate::model::workspace::truncate_str(name, 128).to_string(),
+                conclusion: conclusion.to_uppercase(),
+            })
+        })
+        .take(20) // Cap at 20 checks
+        .collect();
+
+    let mut tm = lock_or_recover(&state.tab_manager);
+    let ws = if let Some(wid) = ws_id {
+        tm.workspace_mut(wid)
+    } else {
+        tm.selected_mut()
+    };
+
+    let Some(ws) = ws else {
+        return Response::error(id, "not_found", "No workspace");
+    };
+
+    ws.pr_checks = parsed;
     drop(tm);
     state.notify_ui_refresh();
     Response::success(id, serde_json::json!({"updated": true}))

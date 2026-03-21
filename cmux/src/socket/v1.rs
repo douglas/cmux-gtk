@@ -45,10 +45,19 @@ pub fn dispatch(line: &str, state: &Arc<SharedState>) -> String {
             ("workspace.report_pwd", p)
         }
         "report_git_branch" => {
-            let branch = args.first().map(|s| s.as_str()).unwrap_or("");
-            let mut p = json!({"branch": branch});
+            let raw = args.first().map(|s| s.as_str()).unwrap_or("");
+            // Detect dirty from trailing * (shell sends "main*") or --status=dirty flag
+            let (branch, is_dirty) = if let Some(stripped) = raw.strip_suffix('*') {
+                (stripped, true)
+            } else {
+                (raw, flags.get("status") == Some(&"dirty".to_string()))
+            };
+            let mut p = json!({"branch": branch, "is_dirty": is_dirty});
             if let Some(ws) = workspace_id {
                 p["workspace"] = json!(ws);
+            }
+            if let Some(panel) = panel_id {
+                p["surface"] = json!(panel);
             }
             ("workspace.report_git_branch", p)
         }
@@ -61,9 +70,19 @@ pub fn dispatch(line: &str, state: &Arc<SharedState>) -> String {
         }
         "report_pr" => {
             let status = args.first().map(|s| s.as_str()).unwrap_or("");
-            let mut p = json!({"status": status});
+            let url = args.get(1).map(|s| s.as_str());
+            let state_flag = flags.get("state").map(|s| s.as_str());
+            // Accept: report_pr <status> [url] [--state=X] [--branch=X]
+            let effective_status = state_flag.unwrap_or(status);
+            let mut p = json!({"status": effective_status});
+            if let Some(u) = url {
+                p["url"] = json!(u);
+            }
             if let Some(ws) = workspace_id {
                 p["workspace"] = json!(ws);
+            }
+            if let Some(panel) = panel_id {
+                p["surface"] = json!(panel);
             }
             ("workspace.report_pr", p)
         }
@@ -73,6 +92,17 @@ pub fn dispatch(line: &str, state: &Arc<SharedState>) -> String {
                 p["workspace"] = json!(ws);
             }
             ("workspace.report_pr", p)
+        }
+        // report_pr_checks <json_array>
+        // Shell sends a JSON array of {name, conclusion} objects as a single arg.
+        "report_pr_checks" => {
+            let raw = args.first().map(|s| s.as_str()).unwrap_or("[]");
+            let checks: Value = serde_json::from_str(raw).unwrap_or(json!([]));
+            let mut p = json!({"checks": checks});
+            if let Some(ws) = workspace_id {
+                p["workspace"] = json!(ws);
+            }
+            ("workspace.report_pr_checks", p)
         }
         "report_tty" => {
             let tty = args.first().map(|s| s.as_str()).unwrap_or("");
