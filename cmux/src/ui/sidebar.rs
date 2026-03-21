@@ -248,6 +248,29 @@ fn create_workspace_row(
         header.append(&pin_icon);
     }
 
+    // Remote connection state indicator
+    if workspace.remote_config.is_some() {
+        let (icon_name, css_class, tooltip) = match &workspace.remote_state {
+            Some(crate::remote::session::RemoteState::Connected { .. }) => {
+                ("emblem-ok-symbolic", "remote-connected", "Remote: Connected")
+            }
+            Some(crate::remote::session::RemoteState::Connecting) => {
+                ("content-loading-symbolic", "remote-connecting", "Remote: Connecting...")
+            }
+            Some(crate::remote::session::RemoteState::Error(msg)) => {
+                ("dialog-warning-symbolic", "remote-error", msg.as_str())
+            }
+            _ => {
+                ("network-offline-symbolic", "remote-disconnected", "Remote: Disconnected")
+            }
+        };
+        let state_icon = gtk4::Image::from_icon_name(icon_name);
+        state_icon.set_pixel_size(12);
+        state_icon.add_css_class(css_class);
+        state_icon.set_tooltip_text(Some(tooltip));
+        header.append(&state_icon);
+    }
+
     let title_label = gtk4::Label::new(Some(workspace.display_title()));
     title_label.set_hexpand(true);
     title_label.set_halign(gtk4::Align::Start);

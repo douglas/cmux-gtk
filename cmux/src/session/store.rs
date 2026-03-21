@@ -221,6 +221,7 @@ pub fn create_snapshot(state: &crate::app::AppState) -> AppSessionSnapshot {
             log_entries: ws.log_entries.clone(),
             progress: ws.progress.clone(),
             git_branch: ws.git_branch.clone(),
+            remote_config: ws.remote_config.clone(),
         }
     };
 

@@ -48,6 +48,9 @@ pub struct SessionWorkspaceSnapshot {
     pub log_entries: Vec<LogEntry>,
     pub progress: Option<Progress>,
     pub git_branch: Option<GitBranch>,
+    /// Remote SSH config for remote workspaces (None for local).
+    #[serde(default)]
+    pub remote_config: Option<crate::remote::session::RemoteConfig>,
 }
 
 /// Recursive layout snapshot (matches macOS JSON format).

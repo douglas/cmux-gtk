@@ -543,6 +543,7 @@ fn restore_session(state: &Rc<AppState>) -> Vec<Uuid> {
             workspace.log_entries = ws_snapshot.log_entries.clone();
             workspace.progress = ws_snapshot.progress.clone();
             workspace.git_branch = ws_snapshot.git_branch.clone();
+            workspace.remote_config = ws_snapshot.remote_config.clone();
 
             let layout = ws_snapshot.layout.to_layout();
             let mut panels = std::collections::HashMap::new();
