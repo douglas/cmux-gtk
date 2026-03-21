@@ -92,11 +92,29 @@ impl RemoteSessionController {
     }
 
     /// Attempt to connect to the remote daemon and start the proxy tunnel.
+    ///
+    /// If `auto_bootstrap` is true, probes the remote platform and uploads
+    /// the daemon binary if missing before connecting.
     pub fn start(&mut self) -> Result<(), String> {
         self.state = RemoteState::Connecting;
 
         let ssh_args = self.config.ssh_args();
-        let daemon_path = self.config.daemon_path().to_string();
+
+        // Bootstrap: probe platform, upload daemon if needed
+        let daemon_path = if self.config.remote_daemon_path.is_some() {
+            self.config.daemon_path().to_string()
+        } else {
+            match super::bootstrap::bootstrap_daemon(&ssh_args) {
+                Ok(path) => {
+                    self.config.remote_daemon_path = Some(path.clone());
+                    path
+                }
+                Err(e) => {
+                    self.state = RemoteState::Error(format!("Bootstrap failed: {}", e));
+                    return Err(e);
+                }
+            }
+        };
 
         tracing::info!(
             destination = %self.config.destination,
