@@ -1,0 +1,52 @@
+#!/usr/bin/env bash
+# cmux xdg-open wrapper - routes HTTP(S) URLs to cmux's in-app browser
+#
+# When running inside a cmux terminal (CMUX_SOCKET_PATH is set), this wrapper
+# intercepts `xdg-open https://...` invocations and opens them in cmux's
+# built-in browser. All other arguments pass through to the real xdg-open.
+
+# Find the real xdg-open binary, skipping our own directory.
+find_real_xdg_open() {
+    local self_dir
+    self_dir="$(cd "$(dirname "$0")" && pwd)"
+    local IFS=:
+    for d in $PATH; do
+        [[ "$d" == "$self_dir" ]] && continue
+        [[ -x "$d/xdg-open" ]] && printf '%s' "$d/xdg-open" && return 0
+    done
+    return 1
+}
+
+REAL_XDG_OPEN="$(find_real_xdg_open)" || { echo "Error: xdg-open not found in PATH" >&2; exit 127; }
+
+system_open() {
+    exec "$REAL_XDG_OPEN" "$@"
+}
+
+# Pass through if not in a cmux terminal or no arguments.
+if [[ -z "${CMUX_SOCKET_PATH:-}" ]] || [[ $# -eq 0 ]]; then
+    system_open "$@"
+fi
+
+# Check if the argument is an HTTP(S) URL.
+is_http_url() {
+    case "$1" in
+        [Hh][Tt][Tt][Pp]://*|[Hh][Tt][Tt][Pp][Ss]://*)
+            return 0
+            ;;
+    esac
+    return 1
+}
+
+# xdg-open takes exactly one argument. If it's an HTTP(S) URL, route to cmux.
+if is_http_url "$1"; then
+    SELF_DIR="$(cd "$(dirname "$0")" && pwd)"
+    CMUX_CLI="$SELF_DIR/cmux"
+
+    if [[ -x "$CMUX_CLI" ]]; then
+        "$CMUX_CLI" navigate "$1" 2>/dev/null && exit 0
+    fi
+fi
+
+# Fall back to system xdg-open for anything else or on failure.
+system_open "$@"

@@ -189,6 +189,42 @@ case "$command" in
     _cmux_send "markdown \"${1:-}\""
     ;;
 
+  # ── Claude Code hooks ──
+  claude-hook)
+    hook_event="${1:-}"
+    shift || true
+    case "$hook_event" in
+      session-start)
+        _cmux_send "set_status claude running \"Claude running\""
+        ;;
+      stop)
+        _cmux_send "set_status claude idle \"Done\""
+        ;;
+      session-end)
+        _cmux_send "clear_status claude"
+        ;;
+      notification)
+        # Hook receives JSON on stdin; extract title and body.
+        if hook_json="$(cat)"; then
+          title="$(printf '%s' "$hook_json" | sed -n 's/.*"title"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p')"
+          body="$(printf '%s' "$hook_json" | sed -n 's/.*"body"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p')"
+          _cmux_send "notify \"${title:-Claude}\" \"${body:-}\""
+        fi
+        ;;
+      prompt-submit)
+        _cmux_send "clear_status needs-input"
+        _cmux_send "set_status claude running \"Running\""
+        ;;
+      pre-tool-use)
+        _cmux_send "clear_status needs-input"
+        ;;
+      *)
+        echo "Unknown claude-hook event: $hook_event" >&2
+        exit 1
+        ;;
+    esac
+    ;;
+
   # ── Pass-through: any unrecognized command is sent as V1 text ──
   *)
     _cmux_send "$command ${*}"
