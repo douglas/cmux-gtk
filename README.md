@@ -23,14 +23,14 @@ cargo build --release # Release build
 - **Terminal multiplexer** — workspaces, split panes, tab management
 - **Integrated browser** — WebKit6 panels with 78+ automation commands
 - **Shell integration** — auto-injected via ZDOTDIR/BASH_ENV; CWD, git branch, PR polling, semantic prompts
-- **Session persistence** — scrollback, geometry, zoom, URLs restored on restart
+- **Session persistence** — scrollback, geometry, zoom, URLs, browser back/forward history restored on restart
 - **Socket API** — V1 text (90+ commands) + V2 JSON protocol for automation
 - **CLI wrapper** — `cmux/bin/cmux` shell script for quick socket interaction
 - **Command palette** — 50+ commands, fuzzy search
 - **All-surfaces search** — Ctrl+P to search text across all terminals
 - **Omnibar** — inline ghost text completion, switch-to-tab suggestions, search engine fallback
 - **Sidebar metadata** — status pills, rich metadata entries, markdown blocks, progress bars, log entries
-- **Notification sounds** — freedesktop theme sounds, custom file playback, desktop notifications
+- **Notification sounds** — freedesktop theme sound presets (8 presets + custom), desktop notifications
 - **OSC notifications** — OSC 9/777 triggers desktop notifications with pane attention ring
 - **Browser profiles** — per-profile isolated NetworkSession with persistent cookies
 - **Browser history** — frecency-scored history with omnibar autocomplete
@@ -49,7 +49,7 @@ cargo build --release # Release build
   - `ui/` — Window, Sidebar, SplitView, TerminalPanel, BrowserPanel, CommandPalette, Omnibar, AllSurfacesSearch, Welcome, Settings
   - `socket/` — Unix socket server, V1 text protocol, V2 JSON protocol, browser automation, auth
   - `session/` — Session persistence (XDG, JSON compatible with macOS cmux)
-  - `settings/` — AppSettings, ShortcutConfig, SidebarDisplay, Notifications, LinkRouting
+  - `settings/` — AppSettings, ShortcutConfig, SidebarDisplay (light/dark tint), Notifications, LinkRouting
   - `notifications.rs` — Notification store, desktop notifications, sound playback
   - `browser_history.rs` — Frecency-scored browser history with search
   - `browser_profiles.rs` — Per-profile WebKit NetworkSession isolation
@@ -67,7 +67,7 @@ cmux auto-injects shell integration via:
 - **Zsh**: ZDOTDIR override → `.zshenv` bootstrap → sources integration, restores user ZDOTDIR
 - **Bash**: BASH_ENV → sources integration script (PS0 preexec on Bash 4.4+)
 
-Features: CWD reporting, fast git HEAD resolution (no fork), async git HEAD watcher, smart PR polling with `gh` CLI (45s interval, 20s timeout, transient failure resilience), port scanning, semantic prompt markers (OSC 133), scrollback restoration, WINCH guard (zsh), process cleanup on exit.
+Features: CWD reporting, fast git HEAD resolution (no fork), async git branch detection (3s throttle, background subshell), async git HEAD watcher during commands, smart PR polling with `gh` CLI (45s interval, 20s timeout, transient failure resilience), port scanning, semantic prompt markers (OSC 133 with `redraw=last;cl=line`), scrollback restoration, prompt wrap guard (zsh), WINCH guard (zsh), PATH prepend for cmux CLI, recursive process tree cleanup on exit.
 
 ## Socket Protocol
 
