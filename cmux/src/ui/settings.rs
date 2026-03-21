@@ -94,15 +94,33 @@ pub fn show_settings(parent: &adw::ApplicationWindow) {
     sidebar_group.set_title("Sidebar Display");
     sidebar_group.set_description(Some("Choose which metadata to show in workspace rows"));
 
+    let hide_all_row = adw::SwitchRow::new();
+    hide_all_row.set_title("Hide All Details");
+    hide_all_row.set_subtitle("Collapse all metadata into a minimal view");
+    hide_all_row.set_active(current_settings.sidebar.hide_all_details);
+    sidebar_group.add(&hide_all_row);
+
     let git_row = adw::SwitchRow::new();
     git_row.set_title("Git Branch");
     git_row.set_active(current_settings.sidebar.show_git_branch);
     sidebar_group.add(&git_row);
 
+    let branch_layout_row = adw::SwitchRow::new();
+    branch_layout_row.set_title("Vertical Branch Layout");
+    branch_layout_row.set_subtitle("Show per-pane branches on separate lines");
+    branch_layout_row.set_active(current_settings.sidebar.branch_vertical_layout);
+    sidebar_group.add(&branch_layout_row);
+
     let dir_row = adw::SwitchRow::new();
     dir_row.set_title("Directory Path");
     dir_row.set_active(current_settings.sidebar.show_directory);
     sidebar_group.add(&dir_row);
+
+    let notif_msg_row = adw::SwitchRow::new();
+    notif_msg_row.set_title("Notification Message");
+    notif_msg_row.set_subtitle("Show latest notification below workspace title");
+    notif_msg_row.set_active(current_settings.sidebar.show_notification_message);
+    sidebar_group.add(&notif_msg_row);
 
     let pr_row = adw::SwitchRow::new();
     pr_row.set_title("PR Status");
@@ -128,6 +146,35 @@ pub fn show_settings(parent: &adw::ApplicationWindow) {
     pills_row.set_title("Status Pills");
     pills_row.set_active(current_settings.sidebar.show_status_pills);
     sidebar_group.add(&pills_row);
+
+    // When "Hide All Details" is active, gray out individual toggles
+    let detail_rows: Vec<adw::SwitchRow> = vec![
+        git_row.clone(),
+        branch_layout_row.clone(),
+        dir_row.clone(),
+        notif_msg_row.clone(),
+        pr_row.clone(),
+        ports_row.clone(),
+        logs_row.clone(),
+        progress_row.clone(),
+        pills_row.clone(),
+    ];
+    // Set initial sensitivity based on hide_all_details
+    {
+        let sensitive = !hide_all_row.is_active();
+        for row in &detail_rows {
+            row.set_sensitive(sensitive);
+        }
+    }
+    {
+        let detail_rows = detail_rows.clone();
+        hide_all_row.connect_active_notify(move |row| {
+            let sensitive = !row.is_active();
+            for r in &detail_rows {
+                r.set_sensitive(sensitive);
+            }
+        });
+    }
 
     let focus_style_row = adw::ComboRow::new();
     focus_style_row.set_title("Selection Style");
@@ -520,6 +567,9 @@ pub fn show_settings(parent: &adw::ApplicationWindow) {
                     show_logs: logs_row.is_active(),
                     show_progress: progress_row.is_active(),
                     show_status_pills: pills_row.is_active(),
+                    hide_all_details: hide_all_row.is_active(),
+                    branch_vertical_layout: branch_layout_row.is_active(),
+                    show_notification_message: notif_msg_row.is_active(),
                     focus_style: SidebarFocusStyle::from_index(focus_style_row.selected()),
                     width: current_settings.sidebar.width,
                     tint_color: current_settings.sidebar.tint_color.clone(),

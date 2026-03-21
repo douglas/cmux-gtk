@@ -282,8 +282,46 @@ fn create_workspace_row(
     meta_label.add_css_class("dim-label");
     outer.append(&meta_label);
 
+    // ── Per-panel branch vertical layout ──
+    if !sidebar.hide_all_details
+        && sidebar.branch_vertical_layout
+        && sidebar.show_git_branch
+    {
+        let branches: Vec<_> = workspace
+            .panels
+            .values()
+            .filter_map(|p| p.git_branch.as_ref())
+            .collect();
+        if branches.len() > 1
+            || (branches.len() == 1 && workspace.git_branch.is_some())
+        {
+            let branch_box = gtk4::Box::new(gtk4::Orientation::Vertical, 1);
+            for panel in workspace.panels.values() {
+                if let Some(ref gb) = panel.git_branch {
+                    let panel_title = panel
+                        .custom_title
+                        .as_deref()
+                        .or(panel.title.as_deref())
+                        .unwrap_or("pane");
+                    let text = if gb.is_dirty {
+                        format!("  {} git {} *", panel_title, gb.branch)
+                    } else {
+                        format!("  {} git {}", panel_title, gb.branch)
+                    };
+                    let label = gtk4::Label::new(Some(&text));
+                    label.set_halign(gtk4::Align::Start);
+                    label.set_ellipsize(gtk4::pango::EllipsizeMode::End);
+                    label.add_css_class("caption");
+                    label.add_css_class("dim-label");
+                    branch_box.append(&label);
+                }
+            }
+            outer.append(&branch_box);
+        }
+    }
+
     // ── Status pills ──
-    if sidebar.show_status_pills && !workspace.status_entries.is_empty() {
+    if !sidebar.hide_all_details && sidebar.show_status_pills && !workspace.status_entries.is_empty() {
         let pills_box = gtk4::Box::new(gtk4::Orientation::Horizontal, 4);
         pills_box.set_halign(gtk4::Align::Start);
         // Show up to 4 most recent status entries
@@ -316,7 +354,7 @@ fn create_workspace_row(
     }
 
     // ── Metadata entries (sorted by priority desc) ──
-    if !workspace.metadata_entries.is_empty() {
+    if !sidebar.hide_all_details && !workspace.metadata_entries.is_empty() {
         let mut sorted: Vec<_> = workspace.metadata_entries.iter().collect();
         sorted.sort_by(|a, b| {
             b.priority
@@ -353,7 +391,7 @@ fn create_workspace_row(
     }
 
     // ── Metadata blocks (freeform markdown, sorted by priority desc) ──
-    if !workspace.metadata_blocks.is_empty() {
+    if !sidebar.hide_all_details && !workspace.metadata_blocks.is_empty() {
         let mut sorted: Vec<_> = workspace.metadata_blocks.iter().collect();
         sorted.sort_by(|a, b| {
             b.priority
@@ -383,7 +421,7 @@ fn create_workspace_row(
     }
 
     // ── Progress bar ──
-    if sidebar.show_progress {
+    if !sidebar.hide_all_details && sidebar.show_progress {
         if let Some(ref progress) = workspace.progress {
             let progress_box = gtk4::Box::new(gtk4::Orientation::Vertical, 2);
             if let Some(ref label_text) = progress.label {
@@ -407,7 +445,7 @@ fn create_workspace_row(
     }
 
     // ── Listening ports ──
-    if sidebar.show_ports {
+    if !sidebar.hide_all_details && sidebar.show_ports {
     let all_ports: Vec<u16> = workspace
         .panels
         .values()
@@ -437,7 +475,7 @@ fn create_workspace_row(
     }
 
     // ── Latest log entry ──
-    if sidebar.show_logs {
+    if !sidebar.hide_all_details && sidebar.show_logs {
     if let Some(log_entry) = workspace.log_entries.last() {
         let log_text = if let Some(ref source) = log_entry.source {
             format!("[{}] {}", source, log_entry.message)
@@ -461,9 +499,9 @@ fn create_workspace_row(
     }
 
     // ── PR status pill ──
-    if sidebar.show_pr_status {
+    if !sidebar.hide_all_details && sidebar.show_pr_status {
     if let Some(ref pr_status) = workspace.pr_status {
-        let pr_box = gtk4::Box::new(gtk4::Orientation::Horizontal, 4);
+        let pr_box = gtk4::Box::new(gtk4::Orientation::Vertical, 2);
         pr_box.set_halign(gtk4::Align::Start);
         let pr_label = gtk4::Label::new(Some(&format!("PR: {pr_status}")));
         pr_label.add_css_class("status-pill");
@@ -474,27 +512,57 @@ fn create_workspace_row(
             "closed" => pr_label.add_css_class("status-pill-red"),
             _ => {}
         }
-        pr_box.append(&pr_label);
+        // Show individual check icons if available
+        if !workspace.pr_checks.is_empty() {
+            for check in workspace.pr_checks.iter().take(8) {
+                let icon = match check.conclusion.as_str() {
+                    "SUCCESS" => "\u{2713}",  // ✓
+                    "FAILURE" => "\u{2717}",  // ✗
+                    "NEUTRAL" | "SKIPPED" => "\u{2014}", // —
+                    _ => "\u{25CB}",          // ○ (pending)
+                };
+                let check_label = gtk4::Label::new(
+                    Some(&format!("{} {}", icon, check.name)),
+                );
+                check_label.set_halign(gtk4::Align::Start);
+                check_label.set_ellipsize(gtk4::pango::EllipsizeMode::End);
+                check_label.set_max_width_chars(30);
+                check_label.add_css_class("caption");
+                match check.conclusion.as_str() {
+                    "SUCCESS" => check_label.add_css_class("status-pill-green"),
+                    "FAILURE" => check_label.add_css_class("status-pill-red"),
+                    "PENDING" | "" => check_label.add_css_class("status-pill-yellow"),
+                    _ => check_label.add_css_class("dim-label"),
+                }
+                pr_box.append(&check_label);
+            }
+        }
         outer.append(&pr_box);
     }
     }
 
     // ── Notification line ──
-    let notification_text = workspace
-        .latest_notification
-        .clone()
-        .unwrap_or_else(|| compact_path(&workspace.current_directory));
-    let notification_label = gtk4::Label::new(Some(&notification_text));
-    notification_label.set_halign(gtk4::Align::Start);
-    notification_label.set_wrap(false);
-    notification_label.set_ellipsize(gtk4::pango::EllipsizeMode::End);
-    notification_label.add_css_class("caption");
-    if workspace.unread_count > 0 {
-        notification_label.add_css_class("sidebar-notification");
-    } else {
-        notification_label.add_css_class("dim-label");
+    if !sidebar.hide_all_details {
+        let notification_text = if sidebar.show_notification_message {
+            workspace
+                .latest_notification
+                .clone()
+                .unwrap_or_else(|| compact_path(&workspace.current_directory))
+        } else {
+            compact_path(&workspace.current_directory)
+        };
+        let notification_label = gtk4::Label::new(Some(&notification_text));
+        notification_label.set_halign(gtk4::Align::Start);
+        notification_label.set_wrap(false);
+        notification_label.set_ellipsize(gtk4::pango::EllipsizeMode::End);
+        notification_label.add_css_class("caption");
+        if sidebar.show_notification_message && workspace.unread_count > 0 {
+            notification_label.add_css_class("sidebar-notification");
+        } else {
+            notification_label.add_css_class("dim-label");
+        }
+        outer.append(&notification_label);
     }
-    outer.append(&notification_label);
 
     // ── Hover show/hide close button ──
     let motion = gtk4::EventControllerMotion::new();
@@ -1049,22 +1117,24 @@ fn setup_row_close_button(row: &gtk4::ListBoxRow, index: usize, state: &Rc<AppSt
 fn workspace_meta_text(workspace: &Workspace, sidebar: &SidebarDisplaySettings) -> String {
     let mut parts = Vec::new();
 
-    if let Some(status) = workspace.sidebar_status_label() {
-        parts.push(status.to_string());
-    }
-
-    if sidebar.show_git_branch {
-        if let Some(git_branch) = &workspace.git_branch {
-            parts.push(if git_branch.is_dirty {
-                format!("git {} *", git_branch.branch)
-            } else {
-                format!("git {}", git_branch.branch)
-            });
+    if !sidebar.hide_all_details {
+        if let Some(status) = workspace.sidebar_status_label() {
+            parts.push(status.to_string());
         }
-    }
 
-    if sidebar.show_directory {
-        parts.push(compact_path(&workspace.current_directory));
+        if sidebar.show_git_branch {
+            if let Some(git_branch) = &workspace.git_branch {
+                parts.push(if git_branch.is_dirty {
+                    format!("git {} *", git_branch.branch)
+                } else {
+                    format!("git {}", git_branch.branch)
+                });
+            }
+        }
+
+        if sidebar.show_directory {
+            parts.push(compact_path(&workspace.current_directory));
+        }
     }
 
     parts.join(" | ")

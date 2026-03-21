@@ -321,6 +321,15 @@ pub struct SidebarDisplaySettings {
     pub show_logs: bool,
     pub show_progress: bool,
     pub show_status_pills: bool,
+    /// When true, all metadata (git, PR, ports, logs, progress, pills, notifications)
+    /// is hidden. Individual toggles are ignored.
+    pub hide_all_details: bool,
+    /// When true, show each panel's git branch on its own line instead of the
+    /// single workspace-level branch.
+    pub branch_vertical_layout: bool,
+    /// When true, show latest notification message below workspace title.
+    /// When false, always show directory path.
+    pub show_notification_message: bool,
     pub focus_style: SidebarFocusStyle,
     /// Sidebar width in pixels (0 = use default from libadwaita).
     pub width: u32,
@@ -344,6 +353,9 @@ impl Default for SidebarDisplaySettings {
             show_logs: true,
             show_progress: true,
             show_status_pills: true,
+            hide_all_details: false,
+            branch_vertical_layout: false,
+            show_notification_message: true,
             focus_style: SidebarFocusStyle::default(),
             width: 0,
             tint_color: String::new(),
