@@ -92,6 +92,7 @@ pub fn dispatch(json_line: &str, state: &Arc<SharedState>) -> Response {
         "workspace.new" => handle_workspace_new(id, &req.params, state),
         "workspace.create" => handle_workspace_create(id, &req.params, state),
         "workspace.create_ssh" => handle_workspace_create_ssh(id, &req.params, state),
+        "workspace.remote.status" => handle_workspace_remote_status(id, &req.params, state),
         "workspace.select" => handle_workspace_select(id, &req.params, state),
         "workspace.next" => handle_workspace_next(id, &req.params, state),
         "workspace.previous" => handle_workspace_previous(id, &req.params, state),
@@ -237,6 +238,7 @@ fn handle_capabilities(id: Value) -> Response {
         "workspace.new",
         "workspace.create",
         "workspace.create_ssh",
+        "workspace.remote.status",
         "workspace.select",
         "workspace.next",
         "workspace.previous",
@@ -428,15 +430,30 @@ fn handle_workspace_create_ssh(
         None => return Response::error(id, "invalid_params", "destination is required"),
     };
 
+    let port = params.get("port").and_then(|v| v.as_u64()).map(|p| p as u16);
+    let identity = params
+        .get("identity")
+        .and_then(|v| v.as_str())
+        .map(String::from);
+
     // Build SSH command
     let mut ssh_cmd = "ssh".to_string();
-    if let Some(port) = params.get("port").and_then(|v| v.as_u64()) {
-        ssh_cmd += &format!(" -p {}", port);
+    if let Some(p) = port {
+        ssh_cmd += &format!(" -p {}", p);
     }
-    if let Some(identity) = params.get("identity").and_then(|v| v.as_str()) {
-        ssh_cmd += &format!(" -i {}", identity);
+    if let Some(ref i) = identity {
+        ssh_cmd += &format!(" -i {}", i);
     }
     ssh_cmd += &format!(" {}", destination);
+
+    // Build remote config
+    let remote_config = crate::remote::session::RemoteConfig {
+        destination: destination.to_string(),
+        port,
+        identity,
+        ssh_options: Vec::new(),
+        remote_daemon_path: None,
+    };
 
     // Create workspace with SSH command and title
     let mut create_params = params.clone();
@@ -445,7 +462,80 @@ fn handle_workspace_create_ssh(
         create_params["title"] = serde_json::json!(destination);
     }
 
-    create_workspace(id, &create_params, state, false)
+    let response = create_workspace(id, &create_params, state, false);
+
+    // Store remote config on the workspace
+    if response.ok {
+        if let Some(ws_id_str) = response
+            .result
+            .as_ref()
+            .and_then(|r| r.get("workspace_id"))
+            .and_then(|v| v.as_str())
+        {
+            if let Ok(ws_id) = uuid::Uuid::parse_str(ws_id_str) {
+                let mut tm = lock_or_recover(&state.tab_manager);
+                if let Some(ws) = tm.workspace_mut(ws_id) {
+                    ws.remote_config = Some(remote_config);
+                }
+            }
+        }
+    }
+
+    response
+}
+
+fn handle_workspace_remote_status(
+    id: Value,
+    params: &Value,
+    state: &Arc<SharedState>,
+) -> Response {
+    let ws_id = parse_workspace_param(params).ok().flatten();
+
+    let tm = lock_or_recover(&state.tab_manager);
+    let ws = if let Some(wid) = ws_id {
+        tm.workspace(wid)
+    } else {
+        tm.selected()
+    };
+
+    let Some(ws) = ws else {
+        return Response::error(id, "not_found", "No workspace found");
+    };
+
+    let config = ws.remote_config.as_ref().map(|c| {
+        serde_json::json!({
+            "destination": c.destination,
+            "port": c.port,
+            "identity": c.identity,
+        })
+    });
+
+    let state_json = ws.remote_state.as_ref().map(|s| {
+        match s {
+            crate::remote::session::RemoteState::Disconnected => serde_json::json!("disconnected"),
+            crate::remote::session::RemoteState::Connecting => serde_json::json!("connecting"),
+            crate::remote::session::RemoteState::Connected { proxy_port, daemon_version } => {
+                serde_json::json!({
+                    "state": "connected",
+                    "proxy_port": proxy_port,
+                    "daemon_version": daemon_version,
+                })
+            }
+            crate::remote::session::RemoteState::Error(msg) => serde_json::json!({
+                "state": "error",
+                "message": msg,
+            }),
+        }
+    });
+
+    Response::success(
+        id,
+        serde_json::json!({
+            "is_remote": ws.remote_config.is_some(),
+            "config": config,
+            "remote_state": state_json,
+        }),
+    )
 }
 
 fn handle_workspace_select(id: Value, params: &Value, state: &Arc<SharedState>) -> Response {
