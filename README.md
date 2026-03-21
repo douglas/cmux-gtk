@@ -23,6 +23,7 @@ cargo build --release # Release build
 - **Terminal multiplexer** — workspaces, split panes, tab management
 - **Integrated browser** — WebKit6 panels with 78+ automation commands
 - **Shell integration** — auto-injected via ZDOTDIR/BASH_ENV; CWD, git branch, PR polling, semantic prompts
+- **Remote SSH workspaces** — `cmux ssh user@host` with auto-bootstrap daemon, SOCKS5 proxy tunnel for browser traffic, CLI relay for remote cmux commands, sidebar connection indicators
 - **Session persistence** — scrollback, geometry, zoom, URLs, browser back/forward history restored on restart
 - **Socket API** — V1 text (90+ commands) + V2 JSON protocol for automation
 - **CLI wrapper** — `cmux/bin/cmux` shell script for quick socket interaction
