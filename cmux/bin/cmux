@@ -64,6 +64,159 @@ _cmux_json() {
   _cmux_send "{\"id\":\"cli\",\"method\":\"$method\",\"params\":$params}"
 }
 
+# ── Tmux compatibility ────────────────────────────────────────────
+# Maps tmux command syntax to cmux socket calls for tool compatibility
+# (e.g., claude-teams agent coordination).
+_cmux_tmux_compat() {
+  local tcmd="$1"; shift
+  case "$tcmd" in
+    new-session|new-window|neww)
+      local name="" cmd=""
+      while [[ $# -gt 0 ]]; do
+        case "$1" in
+          -n) shift; name="${1:-}"; shift ;;
+          -d|-P|-F*|-t*|-s*|-e*) shift ;; # ignore tmux flags
+          *) cmd="${cmd:+$cmd }$1"; shift ;;
+        esac
+      done
+      local result
+      result=$(_cmux_send "new")
+      [[ -n "$name" ]] && _cmux_send "rename \"$name\""
+      [[ -n "$cmd" ]] && _cmux_send "send $cmd"
+      echo "$result"
+      ;;
+    split-window|splitw)
+      local dir="right"
+      while [[ $# -gt 0 ]]; do
+        case "$1" in
+          -h) dir="right"; shift ;;
+          -v) dir="down"; shift ;;
+          -b) [[ "$dir" == "right" ]] && dir="left" || dir="up"; shift ;;
+          *) shift ;;
+        esac
+      done
+      _cmux_json "surface.split" "{\"direction\":\"$dir\"}"
+      ;;
+    select-window|selectw)
+      local target="${1:-}"
+      [[ "$target" == -t* ]] && target="${target#-t}"
+      _cmux_send "select $target"
+      ;;
+    select-pane|selectp)
+      local target=""
+      while [[ $# -gt 0 ]]; do
+        case "$1" in
+          -t) shift; target="${1:-}"; shift ;;
+          -t*) target="${1#-t}"; shift ;;
+          *) shift ;;
+        esac
+      done
+      [[ -n "$target" ]] && _cmux_json "pane.focus" "{\"pane\":\"$target\"}"
+      ;;
+    kill-window|killw)
+      _cmux_send "close_workspace ${*}"
+      ;;
+    kill-pane|killp)
+      _cmux_json "surface.close" "{}"
+      ;;
+    send-keys|send)
+      local text=""
+      while [[ $# -gt 0 ]]; do
+        case "$1" in
+          -l|-t*) shift ;; # ignore literal flag and target
+          *) text="${text:+$text }$1"; shift ;;
+        esac
+      done
+      [[ -n "$text" ]] && _cmux_send "send $text"
+      ;;
+    capture-pane|capturep)
+      _cmux_send "read_screen ${*}"
+      ;;
+    list-windows|lsw)
+      _cmux_send "list"
+      ;;
+    list-panes|lsp)
+      _cmux_json "pane.list" "{}"
+      ;;
+    rename-window|renamew)
+      local name=""
+      while [[ $# -gt 0 ]]; do
+        case "$1" in
+          -t*) shift ;;
+          *) name="$1"; shift ;;
+        esac
+      done
+      [[ -n "$name" ]] && _cmux_send "rename \"$name\""
+      ;;
+    resize-pane|resizep)
+      local dir="" amount="5"
+      while [[ $# -gt 0 ]]; do
+        case "$1" in
+          -L) dir="left"; shift ;;
+          -R) dir="right"; shift ;;
+          -U) dir="up"; shift ;;
+          -D) dir="down"; shift ;;
+          -t*) shift ;;
+          [0-9]*) amount="$1"; shift ;;
+          *) shift ;;
+        esac
+      done
+      [[ -n "$dir" ]] && _cmux_json "pane.resize" "{\"direction\":\"$dir\",\"amount\":$amount}"
+      ;;
+    last-window) _cmux_send "last" ;;
+    next-window) _cmux_send "next" ;;
+    previous-window) _cmux_send "prev" ;;
+    last-pane) _cmux_json "pane.last" "{}" ;;
+    swap-pane) _cmux_json "pane.swap" "{}" ;;
+    break-pane) _cmux_json "pane.break" "{}" ;;
+    join-pane) _cmux_json "pane.join" "{}" ;;
+    clear-history) _cmux_json "surface.clear_history" "{}" ;;
+    wait-for)
+      local signal=false name=""
+      while [[ $# -gt 0 ]]; do
+        case "$1" in
+          -S) signal=true; shift ;;
+          *) name="$1"; shift ;;
+        esac
+      done
+      if [[ -z "$name" ]]; then
+        echo "error: wait-for requires a channel name" >&2
+        return 1
+      fi
+      local sigfile="/tmp/cmux-wait-for-${name}.sig"
+      if $signal; then
+        touch "$sigfile"
+      else
+        local elapsed=0
+        while [[ ! -f "$sigfile" && $elapsed -lt 300 ]]; do
+          sleep 0.1
+          elapsed=$((elapsed + 1))
+        done
+        rm -f "$sigfile"
+        [[ $elapsed -ge 300 ]] && return 1
+      fi
+      ;;
+    display-message|display|displayp)
+      local msg=""
+      while [[ $# -gt 0 ]]; do
+        case "$1" in
+          -p|-F*|-t*) shift ;;
+          *) msg="${msg:+$msg }$1"; shift ;;
+        esac
+      done
+      [[ -n "$msg" ]] && _cmux_send "notify \"cmux\" \"$msg\""
+      ;;
+    respawn-pane)
+      local cmd="${*:-$SHELL}"
+      _cmux_send "send $cmd"
+      ;;
+    *)
+      echo "error: unsupported tmux command: $tcmd" >&2
+      return 1
+      ;;
+  esac
+}
+
 # ── Main ──────────────────────────────────────────────────────────────
 if [[ $# -eq 0 ]]; then
   echo "Usage: cmux <command> [args...]"
@@ -223,6 +376,41 @@ case "$command" in
         exit 1
         ;;
     esac
+    ;;
+
+  # ── Tmux compatibility layer ──────────────────────────────────────
+  __tmux-compat)
+    if [[ $# -eq 0 ]]; then
+      echo "Usage: cmux __tmux-compat <tmux-command> [args...]" >&2
+      exit 1
+    fi
+    _cmux_tmux_compat "$@"
+    ;;
+
+  new-session|new-window|neww|split-window|splitw|\
+  select-window|selectw|select-pane|selectp|\
+  kill-window|killw|kill-pane|killp|\
+  send-keys|\
+  capture-pane|capturep|\
+  list-windows|lsw|list-panes|lsp|\
+  rename-window|renamew|\
+  resize-pane|resizep|\
+  last-window|next-window|previous-window|last-pane|\
+  swap-pane|break-pane|join-pane|\
+  clear-history|wait-for|\
+  display-message|display|displayp|respawn-pane)
+    _cmux_tmux_compat "$command" "$@"
+    ;;
+
+  # Tmux no-op stubs (silently ignored for compatibility)
+  select-layout|set-option|set-window-option|setw|\
+  source-file|refresh-client|attach-session|detach-client)
+    ;;
+
+  # Tmux unsupported (explicit error)
+  popup|bind-key|unbind-key|copy-mode|set-buffer|paste-buffer|list-buffers)
+    echo "error: $command is not supported in cmux tmux compatibility mode" >&2
+    exit 1
     ;;
 
   # ── Pass-through: any unrecognized command is sent as V1 text ──
