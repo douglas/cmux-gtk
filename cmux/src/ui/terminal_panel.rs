@@ -213,10 +213,7 @@ fn create_terminal_widget(
         let state = Rc::clone(state);
         let panel_id = panel.id;
         click.connect_pressed(move |gesture, _n, _x, _y| {
-            // Don't claim the event — let it propagate to the terminal
-            gesture.set_state(gtk4::EventSequenceState::None);
-
-            let needs_refresh = {
+            let was_unfocused = {
                 let mut tm = lock_or_recover(&state.shared.tab_manager);
                 if let Some(ws) = tm.find_workspace_with_panel_mut(panel_id) {
                     if ws.focused_panel_id != Some(panel_id) {
@@ -230,7 +227,16 @@ fn create_terminal_widget(
                 }
             };
 
-            if needs_refresh {
+            // When first_click_focus is enabled and this pane was
+            // unfocused, claim the event so the click only focuses
+            // without passing through to the terminal.
+            if was_unfocused && crate::settings::load().first_click_focus {
+                gesture.set_state(gtk4::EventSequenceState::Claimed);
+            } else {
+                gesture.set_state(gtk4::EventSequenceState::None);
+            }
+
+            if was_unfocused {
                 state.shared.notify_ui_refresh();
             }
         });

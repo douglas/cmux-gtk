@@ -58,6 +58,12 @@ pub fn show_settings(parent: &adw::ApplicationWindow, on_close: impl Fn() + 'sta
     focus_hover_row.set_active(current_settings.focus_follows_mouse);
     behavior_group.add(&focus_hover_row);
 
+    let first_click_row = adw::SwitchRow::new();
+    first_click_row.set_title("First Click Focus Only");
+    first_click_row.set_subtitle("Clicking an unfocused pane only focuses it, without passing the click to the terminal");
+    first_click_row.set_active(current_settings.first_click_focus);
+    behavior_group.add(&first_click_row);
+
     let confirm_close_row = adw::SwitchRow::new();
     confirm_close_row.set_title("Confirm Before Close");
     confirm_close_row.set_subtitle("Show confirmation when quitting with active terminals");
@@ -516,6 +522,7 @@ pub fn show_settings(parent: &adw::ApplicationWindow, on_close: impl Fn() + 'sta
     {
         let theme_row = theme_row.clone();
         let focus_hover_row = focus_hover_row.clone();
+        let first_click_row = first_click_row.clone();
         let confirm_close_row = confirm_close_row.clone();
         let placement_row = placement_row.clone();
         let sound_row = sound_row.clone();
@@ -566,6 +573,7 @@ pub fn show_settings(parent: &adw::ApplicationWindow, on_close: impl Fn() + 'sta
             let new_settings = AppSettings {
                 theme,
                 focus_follows_mouse: focus_hover_row.is_active(),
+                first_click_focus: first_click_row.is_active(),
                 confirm_before_close: confirm_close_row.is_active(),
                 new_workspace_placement: NewWorkspacePlacement::from_index(
                     placement_row.selected(),

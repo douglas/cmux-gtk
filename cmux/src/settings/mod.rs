@@ -25,6 +25,8 @@ pub struct AppSettings {
     pub sidebar: SidebarDisplaySettings,
     /// Browser settings.
     pub browser: BrowserSettings,
+    /// First click on an unfocused pane only focuses it (doesn't pass through).
+    pub first_click_focus: bool,
     /// Show attention ring on panes that receive output while unfocused.
     pub pane_attention_ring: bool,
     /// Enable flash effect on focused pane (Ctrl+Shift+H).
@@ -446,6 +448,7 @@ impl Default for AppSettings {
             socket_access: SocketAccess::CmuxOnly,
             sidebar: SidebarDisplaySettings::default(),
             browser: BrowserSettings::default(),
+            first_click_focus: false,
             pane_attention_ring: true,
             pane_flash_enabled: true,
             link_routing: LinkRoutingSettings::default(),
