@@ -53,6 +53,7 @@ impl AppState {
         &self,
         panel_id: Uuid,
         working_directory: Option<&str>,
+        command: Option<&str>,
     ) -> ghostty_gtk::surface::GhosttyGlSurface {
         if let Some(surface) = self.terminal_cache.borrow().get(&panel_id) {
             return surface.clone();
@@ -124,7 +125,7 @@ impl AppState {
             gl_surface.initialize_with_env(
                 app.raw(),
                 working_directory,
-                None,
+                command,
                 &env_vars,
             );
         }
@@ -139,7 +140,7 @@ impl AppState {
         let surface = if let Some(surface) = self.terminal_cache.borrow().get(&panel_id).cloned() {
             surface
         } else {
-            let working_directory = {
+            let (working_directory, command) = {
                 let tab_manager = lock_or_recover(&self.shared.tab_manager);
                 let Some(workspace) = tab_manager.find_workspace_with_panel(panel_id) else {
                     return false;
@@ -150,9 +151,13 @@ impl AppState {
                 if panel.panel_type != crate::model::PanelType::Terminal {
                     return false;
                 }
-                panel.directory.clone()
+                (panel.directory.clone(), panel.command.clone())
             };
-            self.terminal_surface_for(panel_id, working_directory.as_deref())
+            self.terminal_surface_for(
+                panel_id,
+                working_directory.as_deref(),
+                command.as_deref(),
+            )
         };
 
         surface.send_text(text)
@@ -566,6 +571,7 @@ fn restore_session(state: &Rc<AppState>) -> Vec<Uuid> {
                         .markdown
                         .as_ref()
                         .map(|m| m.file_path.clone()),
+                    command: panel_snapshot.command.clone(),
                     pending_scrollback: panel_snapshot
                         .terminal
                         .as_ref()

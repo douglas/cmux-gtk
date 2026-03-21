@@ -247,6 +247,13 @@ pub fn dispatch(line: &str, state: &Arc<SharedState>) -> String {
             }
             ("workspace.new", p)
         }
+        "ssh" => {
+            let mut p = json!({});
+            if let Some(dest) = args.first() {
+                p["destination"] = json!(dest);
+            }
+            ("workspace.create_ssh", p)
+        }
         "select_workspace" | "workspace_select" | "select" => {
             let target = args.first().map(|s| s.as_str()).unwrap_or("");
             // Accept both UUID and numeric index

@@ -296,6 +296,11 @@ case "$command" in
     _cmux_send "new_window"
     ;;
 
+  # ── SSH ──
+  ssh)
+    _cmux_send "ssh ${*}"
+    ;;
+
   # ── Workspaces ──
   list|ls)
     _cmux_send "list"

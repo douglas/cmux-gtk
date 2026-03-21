@@ -35,6 +35,8 @@ pub struct Panel {
     pub browser_url: Option<String>,
     /// File path for markdown panels.
     pub markdown_file: Option<String>,
+    /// Custom command to run instead of the default shell (e.g., "ssh user@host").
+    pub command: Option<String>,
     /// Scrollback text to replay when the terminal surface is first created (session restore).
     pub pending_scrollback: Option<String>,
     /// Browser zoom level to restore (session restore).
@@ -57,9 +59,17 @@ impl Panel {
             tty_name: None,
             browser_url: None,
             markdown_file: None,
+            command: None,
             pending_scrollback: None,
             pending_zoom: None,
         }
+    }
+
+    /// Create a new terminal panel that runs a custom command.
+    pub fn new_terminal_with_command(command: &str) -> Self {
+        let mut panel = Self::new_terminal();
+        panel.command = Some(command.to_string());
+        panel
     }
 
     /// Create a new browser panel.
@@ -77,6 +87,7 @@ impl Panel {
             tty_name: None,
             browser_url: None,
             markdown_file: None,
+            command: None,
             pending_scrollback: None,
             pending_zoom: None,
         }
@@ -101,6 +112,7 @@ impl Panel {
             tty_name: None,
             browser_url: None,
             markdown_file: Some(file_path.to_string()),
+            command: None,
             pending_scrollback: None,
             pending_zoom: None,
         }

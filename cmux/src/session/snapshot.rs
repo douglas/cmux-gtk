@@ -91,6 +91,8 @@ pub struct SessionPanelSnapshot {
     pub git_branch: Option<GitBranch>,
     pub listening_ports: Vec<u16>,
     pub tty_name: Option<String>,
+    #[serde(default)]
+    pub command: Option<String>,
     pub terminal: Option<SessionTerminalPanelSnapshot>,
     pub browser: Option<SessionBrowserPanelSnapshot>,
     pub markdown: Option<SessionMarkdownPanelSnapshot>,
@@ -217,6 +219,7 @@ impl SessionPanelSnapshot {
             git_branch: panel.git_branch.clone(),
             listening_ports: panel.listening_ports.clone(),
             tty_name: panel.tty_name.clone(),
+            command: panel.command.clone(),
             terminal: if panel.panel_type == crate::model::PanelType::Terminal {
                 Some(SessionTerminalPanelSnapshot {
                     working_directory: panel.directory.clone(),

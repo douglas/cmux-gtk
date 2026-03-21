@@ -87,7 +87,11 @@ fn create_terminal_widget(
         container.add_css_class("focused-panel");
     }
 
-    let gl_surface = state.terminal_surface_for(panel.id, panel.directory.as_deref());
+    let gl_surface = state.terminal_surface_for(
+        panel.id,
+        panel.directory.as_deref(),
+        panel.command.as_deref(),
+    );
     {
         let state = Rc::clone(state);
         let panel_id = panel.id;

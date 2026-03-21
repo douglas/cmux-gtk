@@ -91,6 +91,7 @@ pub fn dispatch(json_line: &str, state: &Arc<SharedState>) -> Response {
         "workspace.list" => handle_workspace_list(id, state),
         "workspace.new" => handle_workspace_new(id, &req.params, state),
         "workspace.create" => handle_workspace_create(id, &req.params, state),
+        "workspace.create_ssh" => handle_workspace_create_ssh(id, &req.params, state),
         "workspace.select" => handle_workspace_select(id, &req.params, state),
         "workspace.next" => handle_workspace_next(id, &req.params, state),
         "workspace.previous" => handle_workspace_previous(id, &req.params, state),
@@ -235,6 +236,7 @@ fn handle_capabilities(id: Value) -> Response {
         "workspace.list",
         "workspace.new",
         "workspace.create",
+        "workspace.create_ssh",
         "workspace.select",
         "workspace.next",
         "workspace.previous",
@@ -381,6 +383,17 @@ fn create_workspace(
         ws.custom_title = Some(t.to_string());
     }
 
+    // Set command on the first panel if provided
+    let command = params
+        .get("command")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string());
+    if let Some(ref cmd) = command {
+        if let Some(panel) = ws.panels.values_mut().next() {
+            panel.command = Some(cmd.clone());
+        }
+    }
+
     let ws_id = ws.id;
     let mut tab_manager = lock_or_recover(&state.tab_manager);
     let previously_selected = if preserve_selection {
@@ -403,6 +416,36 @@ fn create_workspace(
             "workspace": ws_id.to_string()
         }),
     )
+}
+
+fn handle_workspace_create_ssh(
+    id: Value,
+    params: &Value,
+    state: &Arc<SharedState>,
+) -> Response {
+    let destination = match params.get("destination").and_then(|v| v.as_str()) {
+        Some(d) => d,
+        None => return Response::error(id, "invalid_params", "destination is required"),
+    };
+
+    // Build SSH command
+    let mut ssh_cmd = "ssh".to_string();
+    if let Some(port) = params.get("port").and_then(|v| v.as_u64()) {
+        ssh_cmd += &format!(" -p {}", port);
+    }
+    if let Some(identity) = params.get("identity").and_then(|v| v.as_str()) {
+        ssh_cmd += &format!(" -i {}", identity);
+    }
+    ssh_cmd += &format!(" {}", destination);
+
+    // Create workspace with SSH command and title
+    let mut create_params = params.clone();
+    create_params["command"] = serde_json::json!(ssh_cmd);
+    if create_params.get("title").and_then(|v| v.as_str()).is_none() {
+        create_params["title"] = serde_json::json!(destination);
+    }
+
+    create_workspace(id, &create_params, state, false)
 }
 
 fn handle_workspace_select(id: Value, params: &Value, state: &Arc<SharedState>) -> Response {
