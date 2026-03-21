@@ -26,10 +26,12 @@ cargo build --release # Release build
 - **Session persistence** — scrollback, geometry, zoom, URLs, browser back/forward history restored on restart
 - **Socket API** — V1 text (90+ commands) + V2 JSON protocol for automation
 - **CLI wrapper** — `cmux/bin/cmux` shell script for quick socket interaction
+- **Claude Code wrapper** — `cmux/bin/claude` injects hooks for status/notifications in sidebar
+- **URL routing** — `cmux/bin/xdg-open` intercepts HTTP(S) URLs to cmux in-app browser
 - **Command palette** — 50+ commands, fuzzy search
 - **All-surfaces search** — Ctrl+P to search text across all terminals
 - **Omnibar** — inline ghost text completion, switch-to-tab suggestions, search engine fallback
-- **Sidebar metadata** — status pills, rich metadata entries, markdown blocks, progress bars, log entries
+- **Sidebar metadata** — status pills, rich metadata entries, markdown blocks, progress bars, log entries, PR check icons, hide-all-details toggle, vertical branch layout
 - **Notification sounds** — freedesktop theme sound presets (8 presets + custom), desktop notifications
 - **OSC notifications** — OSC 9/777 triggers desktop notifications with pane attention ring
 - **Browser profiles** — per-profile isolated NetworkSession with persistent cookies
@@ -49,11 +51,13 @@ cargo build --release # Release build
   - `ui/` — Window, Sidebar, SplitView, TerminalPanel, BrowserPanel, CommandPalette, Omnibar, AllSurfacesSearch, Welcome, Settings
   - `socket/` — Unix socket server, V1 text protocol, V2 JSON protocol, browser automation, auth
   - `session/` — Session persistence (XDG, JSON compatible with macOS cmux)
-  - `settings/` — AppSettings, ShortcutConfig, SidebarDisplay (light/dark tint), Notifications, LinkRouting
+  - `settings/` — AppSettings, ShortcutConfig, SidebarDisplay (hide-all-details, vertical branch layout, notification message toggle, light/dark tint), Notifications, LinkRouting
   - `notifications.rs` — Notification store, desktop notifications, sound playback
   - `browser_history.rs` — Frecency-scored browser history with search
   - `browser_profiles.rs` — Per-profile WebKit NetworkSession isolation
-- `cmux/bin/cmux` — CLI wrapper script (socket auto-discovery, ncat/socat/nc transport)
+- `cmux/bin/cmux` — CLI wrapper script (socket auto-discovery, ncat/socat/nc transport, claude-hook subcommand)
+- `cmux/bin/claude` — Claude Code wrapper (session hooks, status reporting)
+- `cmux/bin/xdg-open` — URL routing wrapper (HTTP(S) → cmux browser, fallback to system)
 - `cmux/shell-integration/` — Auto-injected zsh/bash integration scripts
 
 ## Architecture Review
