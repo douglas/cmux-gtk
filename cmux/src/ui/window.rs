@@ -735,6 +735,17 @@ fn bind_shared_state_updates(
                             }
                         }
                     }
+                    UiEvent::ReloadConfig => {
+                        if let Some(app) = state.ghostty_app.borrow_mut().as_mut() {
+                            app.reload_config();
+                            let ui_config =
+                                crate::ghostty_config::GhosttyUiConfig::from_app(app);
+                            tracing::info!(?ui_config, "Reloaded ghostty config");
+                            crate::app::apply_ghostty_css(&ui_config);
+                            *state.ghostty_ui_config.borrow_mut() = ui_config;
+                        }
+                        refresh_ui(&list_box, &content_box, &state);
+                    }
                     UiEvent::DesktopNotification {
                         surface,
                         title,
@@ -1033,8 +1044,8 @@ fn setup_shortcuts(
         }
 
         match (keyval, ctrl, shift) {
-            // Ctrl+Comma or Ctrl+Shift+Comma: Settings
-            (gdk4::Key::comma, true, false) | (gdk4::Key::comma, true, true) => {
+            // Ctrl+Comma: Settings
+            (gdk4::Key::comma, true, false) => {
                 if let Some(window) = window_weak.upgrade() {
                     let lb = list_box.clone();
                     let cb = content_box.clone();
@@ -1043,6 +1054,13 @@ fn setup_shortcuts(
                         refresh_ui(&lb, &cb, &st);
                     });
                 }
+                glib::Propagation::Stop
+            }
+            // Ctrl+Shift+Comma: Reload ghostty config
+            (gdk4::Key::comma, true, true) => {
+                state
+                    .shared
+                    .send_ui_event(crate::app::UiEvent::ReloadConfig);
                 glib::Propagation::Stop
             }
             // Ctrl+F: Toggle terminal find

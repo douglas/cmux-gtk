@@ -252,6 +252,8 @@ pub enum UiEvent {
     },
     /// Create a new application window.
     CreateWindow,
+    /// Reload ghostty configuration from disk.
+    ReloadConfig,
 }
 
 /// Wrapper to send a raw ghostty_surface_t across threads.
@@ -843,7 +845,7 @@ fn init_ghostty(state: &Rc<AppState>) {
 }
 
 /// Apply CSS overrides derived from ghostty config (split divider color, etc.).
-fn apply_ghostty_css(config: &crate::ghostty_config::GhosttyUiConfig) {
+pub fn apply_ghostty_css(config: &crate::ghostty_config::GhosttyUiConfig) {
     let Some(display) = gdk4::Display::default() else {
         return;
     };

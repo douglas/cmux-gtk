@@ -121,6 +121,26 @@ impl GhosttyApp {
     #[cfg(not(feature = "link-ghostty"))]
     pub fn set_color_scheme(&self, _scheme: ghostty_color_scheme_e) {}
 
+    /// Reload the ghostty configuration from disk and apply it.
+    #[cfg(feature = "link-ghostty")]
+    pub fn reload_config(&mut self) {
+        let new_config = unsafe { ghostty_config_new() };
+        if new_config.is_null() {
+            return;
+        }
+        unsafe {
+            ghostty_config_load_default_files(new_config);
+            ghostty_config_load_recursive_files(new_config);
+            ghostty_config_finalize(new_config);
+            ghostty_app_update_config(self.app, new_config);
+            ghostty_config_free(self.config);
+        }
+        self.config = new_config;
+    }
+
+    #[cfg(not(feature = "link-ghostty"))]
+    pub fn reload_config(&mut self) {}
+
     /// Check if any surfaces need confirmation before quitting.
     #[cfg(feature = "link-ghostty")]
     pub fn needs_confirm_quit(&self) -> bool {

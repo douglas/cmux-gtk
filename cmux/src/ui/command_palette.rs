@@ -176,6 +176,7 @@ fn shortcut_for_action(
         "pane.focus_next" => "pane.focus_next",
         "pane.focus_prev" => "pane.focus_prev",
         "settings.open" => "settings",
+        "config.reload" => "config.reload",
         "notifications.toggle" => "notifications.toggle",
         "font.increase" => "font.increase",
         "font.decrease" => "font.decrease",
@@ -211,6 +212,7 @@ fn build_actions(state: &Rc<AppState>) -> Rc<Vec<PaletteAction>> {
         cmd("workspace.close", "Close Workspace"),
         cmd("pane.zoom_toggle", "Toggle Pane Zoom"),
         cmd("settings.open", "Open Settings"),
+        cmd("config.reload", "Reload Ghostty Config"),
         cmd("pane.focus_next", "Focus Next Pane"),
         cmd("pane.focus_prev", "Focus Previous Pane"),
         cmd("pane.last", "Focus Last Pane"),
@@ -467,6 +469,12 @@ fn execute_action(name: &str, state: &Rc<AppState>, on_refresh: &Rc<dyn Fn()>) {
         "settings.open" => {
             state.shared.send_ui_event(crate::app::UiEvent::OpenSettings);
             return; // Don't refresh — the settings dialog handles itself
+        }
+        "config.reload" => {
+            state
+                .shared
+                .send_ui_event(crate::app::UiEvent::ReloadConfig);
+            return;
         }
         "pane.focus_next" => {
             if let Some(ws) = lock_or_recover(&state.shared.tab_manager).selected_mut() {

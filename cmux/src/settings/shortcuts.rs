@@ -196,6 +196,12 @@ impl Default for ShortcutConfig {
             },
         );
 
+        // Reload ghostty configuration
+        bindings.insert(
+            "config.reload".into(),
+            Keybinding::ctrl_shift("comma"),
+        );
+
         Self { bindings }
     }
 }
