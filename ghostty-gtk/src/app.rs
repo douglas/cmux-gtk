@@ -136,6 +136,62 @@ impl GhosttyApp {
     pub fn config(&self) -> ghostty_config_t {
         self.config
     }
+
+    /// Read a color value from the ghostty config (e.g., "background", "foreground").
+    /// Returns `None` if the key doesn't exist or is unset.
+    #[cfg(feature = "link-ghostty")]
+    pub fn get_config_color(&self, key: &str) -> Option<(u8, u8, u8)> {
+        if self.config.is_null() {
+            return None;
+        }
+        let mut out = ghostty_config_color_s { r: 0, g: 0, b: 0 };
+        let ok = unsafe {
+            ghostty_config_get(
+                self.config,
+                &mut out as *mut ghostty_config_color_s as *mut std::ffi::c_void,
+                key.as_ptr() as *const std::os::raw::c_char,
+                key.len(),
+            )
+        };
+        if ok {
+            Some((out.r, out.g, out.b))
+        } else {
+            None
+        }
+    }
+
+    #[cfg(not(feature = "link-ghostty"))]
+    pub fn get_config_color(&self, _key: &str) -> Option<(u8, u8, u8)> {
+        None
+    }
+
+    /// Read a float value from the ghostty config (e.g., "background-opacity").
+    /// Returns `None` if the key doesn't exist or is unset.
+    #[cfg(feature = "link-ghostty")]
+    pub fn get_config_f64(&self, key: &str) -> Option<f64> {
+        if self.config.is_null() {
+            return None;
+        }
+        let mut out: f64 = 0.0;
+        let ok = unsafe {
+            ghostty_config_get(
+                self.config,
+                &mut out as *mut f64 as *mut std::ffi::c_void,
+                key.as_ptr() as *const std::os::raw::c_char,
+                key.len(),
+            )
+        };
+        if ok {
+            Some(out)
+        } else {
+            None
+        }
+    }
+
+    #[cfg(not(feature = "link-ghostty"))]
+    pub fn get_config_f64(&self, _key: &str) -> Option<f64> {
+        None
+    }
 }
 
 #[cfg(feature = "link-ghostty")]

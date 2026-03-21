@@ -32,6 +32,8 @@ pub struct AppState {
     pub shared: Arc<SharedState>,
     pub ghostty_app: RefCell<Option<ghostty_gtk::app::GhosttyApp>>,
     pub terminal_cache: RefCell<HashMap<Uuid, ghostty_gtk::surface::GhosttyGlSurface>>,
+    /// Cached ghostty config values for UI decisions (background, opacity, etc.).
+    pub ghostty_ui_config: RefCell<crate::ghostty_config::GhosttyUiConfig>,
     /// Stored to keep the callbacks alive for the lifetime of the app.
     _callbacks: RefCell<Option<ghostty_gtk::callbacks::RuntimeCallbacks>>,
 }
@@ -42,6 +44,7 @@ impl AppState {
             shared,
             ghostty_app: RefCell::new(None),
             terminal_cache: RefCell::new(HashMap::new()),
+            ghostty_ui_config: RefCell::new(Default::default()),
             _callbacks: RefCell::new(None),
         }
     }
@@ -59,9 +62,12 @@ impl AppState {
         gl_surface.set_hexpand(true);
         gl_surface.set_vexpand(true);
 
-        // Match the grace-period background to the terminal theme color
+        // Match the grace-period background to the terminal theme color.
+        // Priority: Omarchy theme > ghostty config background > default black.
         if let Some(ref bg) = crate::settings::omarchy_colors().background {
             gl_surface.set_initial_bg(bg);
+        } else if let Some(ref hex) = self.ghostty_ui_config.borrow().background_hex() {
+            gl_surface.set_initial_bg(hex);
         }
 
         // Check if this panel has pending scrollback to restore
@@ -820,12 +826,48 @@ fn init_ghostty(state: &Rc<AppState>) {
         Ok(ghostty_app) => {
             tracing::info!("Ghostty app initialized successfully");
             *GHOSTTY_APP_PTR.lock().unwrap() = SendAppPtr(ghostty_app.raw());
+
+            // Cache ghostty config values for cmux UI decisions
+            let ui_config = crate::ghostty_config::GhosttyUiConfig::from_app(&ghostty_app);
+            tracing::info!(?ui_config, "Loaded ghostty UI config");
+            apply_ghostty_css(&ui_config);
+            *state.ghostty_ui_config.borrow_mut() = ui_config;
+
             *state.ghostty_app.borrow_mut() = Some(ghostty_app);
             *state._callbacks.borrow_mut() = Some(callbacks);
         }
         Err(e) => {
             tracing::error!("Failed to create GhosttyApp: {}", e);
         }
+    }
+}
+
+/// Apply CSS overrides derived from ghostty config (split divider color, etc.).
+fn apply_ghostty_css(config: &crate::ghostty_config::GhosttyUiConfig) {
+    let Some(display) = gdk4::Display::default() else {
+        return;
+    };
+
+    let mut css = String::new();
+
+    if let Some((r, g, b)) = config.split_divider_color {
+        let hex = format!(
+            "#{:02x}{:02x}{:02x}",
+            (r * 255.0) as u8,
+            (g * 255.0) as u8,
+            (b * 255.0) as u8,
+        );
+        css += &format!("paned > separator {{ background-color: {hex}; }}\n");
+    }
+
+    if !css.is_empty() {
+        let provider = gtk4::CssProvider::new();
+        provider.load_from_data(&css);
+        gtk4::style_context_add_provider_for_display(
+            &display,
+            &provider,
+            gtk4::STYLE_PROVIDER_PRIORITY_APPLICATION,
+        );
     }
 }
 

@@ -1,6 +1,7 @@
 mod app;
 mod browser_history;
 mod browser_profiles;
+mod ghostty_config;
 mod model;
 mod notifications;
 mod port_scanner;

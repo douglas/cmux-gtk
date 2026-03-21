@@ -38,6 +38,7 @@ cargo build --release # Release build
 - **Browser history** — frecency-scored history with omnibar autocomplete
 - **Link routing** — configurable URL patterns for system vs cmux browser
 - **Keyboard copy mode** — Ghostty vi-style navigation with vim badge indicator
+- **Ghostty config** — reads `~/.config/ghostty/config` for themes, fonts, colors, background opacity, unfocused split opacity, and split divider color
 - **Omarchy themes** — colors.toml parsing with SIGUSR2 live reload
 - **Multi-window** — workspaces assignable across windows
 - **Welcome screen** — first-launch getting-started tips

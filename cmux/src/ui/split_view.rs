@@ -257,6 +257,18 @@ fn build_pane(
     vbox.append(&stack);
     vbox.set_hexpand(true);
     vbox.set_vexpand(true);
+
+    // Apply unfocused split opacity from ghostty config
+    let pane_has_focus = panel_ids.iter().any(|id| focused_panel_id == Some(*id));
+    if !pane_has_focus {
+        let ui_config = state.ghostty_ui_config.borrow();
+        if let Some(opacity) = ui_config.unfocused_split_opacity {
+            if opacity < 1.0 {
+                vbox.set_opacity(opacity.clamp(0.15, 1.0));
+            }
+        }
+    }
+
     vbox.upcast()
 }
 
