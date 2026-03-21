@@ -64,6 +64,49 @@ _cmux_json() {
   _cmux_send "{\"id\":\"cli\",\"method\":\"$method\",\"params\":$params}"
 }
 
+# ── Theme listing ─────────────────────────────────────────────────
+_cmux_list_themes() {
+  local filter="${1:-}"
+  local dirs=()
+
+  # User themes
+  [[ -d "$HOME/.config/ghostty/themes" ]] && dirs+=("$HOME/.config/ghostty/themes")
+
+  # System themes via GHOSTTY_RESOURCES_DIR
+  local res="${GHOSTTY_RESOURCES_DIR:-/usr/share/ghostty}"
+  [[ -d "$res/themes" ]] && dirs+=("$res/themes")
+
+  # XDG data dirs
+  local IFS=:
+  for d in ${XDG_DATA_DIRS:-/usr/local/share:/usr/share}; do
+    [[ -d "$d/ghostty/themes" ]] && dirs+=("$d/ghostty/themes")
+  done
+  unset IFS
+
+  if [[ ${#dirs[@]} -eq 0 ]]; then
+    echo "No ghostty theme directories found." >&2
+    return 1
+  fi
+
+  # Collect and deduplicate theme names
+  local themes=()
+  for d in "${dirs[@]}"; do
+    for f in "$d"/*; do
+      [[ -f "$f" ]] || continue
+      local name
+      name="$(basename "$f")"
+      themes+=("$name")
+    done
+  done
+
+  # Sort, deduplicate, optionally filter
+  printf '%s\n' "${themes[@]}" | sort -u | if [[ -n "$filter" ]]; then
+    grep -i "$filter" || echo "No themes matching '$filter'."
+  else
+    cat
+  fi
+}
+
 # ── Tmux compatibility ────────────────────────────────────────────
 # Maps tmux command syntax to cmux socket calls for tool compatibility
 # (e.g., claude-teams agent coordination).
@@ -340,6 +383,11 @@ case "$command" in
     ;;
   markdown|md)
     _cmux_send "markdown \"${1:-}\""
+    ;;
+
+  # ── Themes ──
+  themes)
+    _cmux_list_themes "$@"
     ;;
 
   # ── Claude Code hooks ──
