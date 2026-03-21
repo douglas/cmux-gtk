@@ -547,21 +547,27 @@ fn create_workspace_row(
             workspace
                 .latest_notification
                 .clone()
-                .unwrap_or_else(|| compact_path(&workspace.current_directory))
+                .or_else(|| {
+                    sidebar.show_directory.then(|| compact_path(&workspace.current_directory))
+                })
+        } else if sidebar.show_directory {
+            Some(compact_path(&workspace.current_directory))
         } else {
-            compact_path(&workspace.current_directory)
+            None
         };
-        let notification_label = gtk4::Label::new(Some(&notification_text));
-        notification_label.set_halign(gtk4::Align::Start);
-        notification_label.set_wrap(false);
-        notification_label.set_ellipsize(gtk4::pango::EllipsizeMode::End);
-        notification_label.add_css_class("caption");
-        if sidebar.show_notification_message && workspace.unread_count > 0 {
-            notification_label.add_css_class("sidebar-notification");
-        } else {
-            notification_label.add_css_class("dim-label");
+        if let Some(text) = notification_text {
+            let notification_label = gtk4::Label::new(Some(&text));
+            notification_label.set_halign(gtk4::Align::Start);
+            notification_label.set_wrap(false);
+            notification_label.set_ellipsize(gtk4::pango::EllipsizeMode::End);
+            notification_label.add_css_class("caption");
+            if sidebar.show_notification_message && workspace.unread_count > 0 {
+                notification_label.add_css_class("sidebar-notification");
+            } else {
+                notification_label.add_css_class("dim-label");
+            }
+            outer.append(&notification_label);
         }
-        outer.append(&notification_label);
     }
 
     // ── Hover show/hide close button ──

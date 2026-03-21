@@ -196,15 +196,15 @@ _cmux_start_pr_poll() {
   [[ -n "$_cmux_pr_poll_pid" ]] && kill "$_cmux_pr_poll_pid" 2>/dev/null
 
   (
+    # Suppress trace output in the background poller
+    set +x 2>/dev/null
     while true; do
       sleep 45
       if command -v gh >/dev/null 2>&1 \
          && git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
-        local pr_output pr_exit
         pr_output=$(timeout 20 gh pr view --json state,statusCheckRollup 2>&1)
         pr_exit=$?
         if [[ "$pr_exit" -eq 0 && -n "$pr_output" ]]; then
-          local pr_state
           pr_state=$(echo "$pr_output" \
                      | grep -o '"state":"[^"]*"' | head -1 | cut -d'"' -f4)
           if [[ -n "$pr_state" ]]; then
@@ -213,7 +213,6 @@ _cmux_start_pr_poll() {
           fi
           # Parse individual check results from statusCheckRollup
           if command -v python3 >/dev/null 2>&1; then
-            local checks_json
             checks_json=$(python3 -c '
 import json, sys
 try:

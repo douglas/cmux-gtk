@@ -10,7 +10,8 @@ use crate::settings::{
 };
 
 /// Create and show the settings preferences window.
-pub fn show_settings(parent: &adw::ApplicationWindow) {
+/// `on_close` is called after settings are saved so callers can refresh the UI.
+pub fn show_settings(parent: &adw::ApplicationWindow, on_close: impl Fn() + 'static) {
     let current_settings = settings::load();
 
     let window = adw::PreferencesWindow::new();
@@ -596,6 +597,14 @@ pub fn show_settings(parent: &adw::ApplicationWindow) {
             glib::Propagation::Proceed
         });
     }
+
+    // Refresh UI when settings window is hidden/closed.
+    // AdwPreferencesWindow may not emit close-request reliably,
+    // so we also listen for unmap.
+    window.connect_unmap(move |_| {
+        tracing::info!("Settings window unmapped, refreshing sidebar");
+        on_close();
+    });
 
     window.present();
 }

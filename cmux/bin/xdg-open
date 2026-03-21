@@ -44,7 +44,7 @@ if is_http_url "$1"; then
     CMUX_CLI="$SELF_DIR/cmux"
 
     if [[ -x "$CMUX_CLI" ]]; then
-        "$CMUX_CLI" navigate "$1" 2>/dev/null && exit 0
+        "$CMUX_CLI" browser "$1" 2>/dev/null && exit 0
     fi
 fi
 

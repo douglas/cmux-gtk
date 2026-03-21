@@ -103,6 +103,10 @@ fn create_terminal_widget(
 
     container.append(&gl_surface);
 
+    // Force a resize after reparenting a cached surface so the GL area
+    // picks up its new (possibly smaller) allocation from the GtkPaned.
+    gl_surface.queue_resize();
+
     // Store the panel ID for later lookup
     container.set_widget_name(&panel.id.to_string());
 

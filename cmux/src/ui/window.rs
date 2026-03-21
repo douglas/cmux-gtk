@@ -154,8 +154,16 @@ pub fn create_window(
     settings_btn.add_css_class("flat");
     {
         let window_ref = window.clone();
+        let list_box = list_box.clone();
+        let content_box = content_box.clone();
+        let state = Rc::clone(&state);
         settings_btn.connect_clicked(move |_| {
-            super::settings::show_settings(&window_ref);
+            let lb = list_box.clone();
+            let cb = content_box.clone();
+            let st = Rc::clone(&state);
+            super::settings::show_settings(&window_ref, move || {
+                refresh_ui(&lb, &cb, &st);
+            });
         });
     }
     header.pack_end(&settings_btn);
@@ -448,7 +456,12 @@ fn bind_shared_state_updates(
                     }
                     UiEvent::OpenSettings => {
                         if let Some(window) = window_weak.upgrade() {
-                            super::settings::show_settings(&window);
+                            let lb = list_box.clone();
+                            let cb = content_box.clone();
+                            let st = Rc::clone(&state);
+                            super::settings::show_settings(&window, move || {
+                                refresh_ui(&lb, &cb, &st);
+                            });
                         }
                     }
                     UiEvent::TriggerFlash { panel_id } => {
@@ -1032,7 +1045,12 @@ fn setup_shortcuts(
             // Ctrl+Comma or Ctrl+Shift+Comma: Settings
             (gdk4::Key::comma, true, false) | (gdk4::Key::comma, true, true) => {
                 if let Some(window) = window_weak.upgrade() {
-                    super::settings::show_settings(&window);
+                    let lb = list_box.clone();
+                    let cb = content_box.clone();
+                    let st = Rc::clone(&state);
+                    super::settings::show_settings(&window, move || {
+                        refresh_ui(&lb, &cb, &st);
+                    });
                 }
                 glib::Propagation::Stop
             }

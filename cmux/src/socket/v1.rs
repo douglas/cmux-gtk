@@ -865,4 +865,72 @@ mod tests {
         assert_eq!(args, vec!["/path with spaces"]);
         assert_eq!(flags.get("tab").unwrap(), "abc");
     }
+
+    #[test]
+    fn test_git_branch_dirty_star() {
+        // Simulate the parsing logic from dispatch for "main*"
+        let (args, flags) = parse_args("main* --tab=ws1");
+        let raw = args.first().map(|s| s.as_str()).unwrap_or("");
+        let (branch, is_dirty) = if let Some(stripped) = raw.strip_suffix('*') {
+            (stripped, true)
+        } else {
+            (raw, flags.get("status") == Some(&"dirty".to_string()))
+        };
+        assert_eq!(branch, "main");
+        assert!(is_dirty);
+        assert_eq!(flags.get("tab").unwrap(), "ws1");
+    }
+
+    #[test]
+    fn test_git_branch_clean() {
+        let (args, flags) = parse_args("feature/foo --tab=ws1");
+        let raw = args.first().map(|s| s.as_str()).unwrap_or("");
+        let (branch, is_dirty) = if let Some(stripped) = raw.strip_suffix('*') {
+            (stripped, true)
+        } else {
+            (raw, flags.get("status") == Some(&"dirty".to_string()))
+        };
+        assert_eq!(branch, "feature/foo");
+        assert!(!is_dirty);
+    }
+
+    #[test]
+    fn test_git_branch_dirty_flag() {
+        let (args, flags) = parse_args("main --tab=ws1 --status=dirty");
+        let raw = args.first().map(|s| s.as_str()).unwrap_or("");
+        let (_, is_dirty) = if let Some(stripped) = raw.strip_suffix('*') {
+            (stripped, true)
+        } else {
+            (raw, flags.get("status") == Some(&"dirty".to_string()))
+        };
+        assert!(is_dirty);
+    }
+
+    #[test]
+    fn test_git_branch_with_panel() {
+        let (_, flags) = parse_args("main --tab=ws1 --panel=p1");
+        assert_eq!(flags.get("panel").unwrap(), "p1");
+        assert_eq!(flags.get("tab").unwrap(), "ws1");
+    }
+
+    #[test]
+    fn test_pr_checks_parse() {
+        let input = r#"[{"name":"ci","conclusion":"SUCCESS"},{"name":"lint","conclusion":"FAILURE"}] --tab=ws1"#;
+        let (args, _flags) = parse_args(input);
+        let raw = args.first().map(|s| s.as_str()).unwrap_or("[]");
+        let checks: serde_json::Value = serde_json::from_str(raw).unwrap_or(json!([]));
+        let arr = checks.as_array().unwrap();
+        assert_eq!(arr.len(), 2);
+        assert_eq!(arr[0]["name"], "ci");
+        assert_eq!(arr[0]["conclusion"], "SUCCESS");
+        assert_eq!(arr[1]["conclusion"], "FAILURE");
+    }
+
+    #[test]
+    fn test_pr_checks_empty() {
+        let (args, _) = parse_args("[] --tab=ws1");
+        let raw = args.first().map(|s| s.as_str()).unwrap_or("[]");
+        let checks: serde_json::Value = serde_json::from_str(raw).unwrap_or(json!([]));
+        assert_eq!(checks.as_array().unwrap().len(), 0);
+    }
 }
