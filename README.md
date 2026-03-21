@@ -41,6 +41,8 @@ cargo build --release # Release build
 - **Ghostty config** — reads `~/.config/ghostty/config` for themes, fonts, colors, background opacity, unfocused split opacity, and split divider color; live reload via Ctrl+Shift+,
 - **File drag-and-drop** — drop files from file manager onto terminal to paste shell-escaped paths
 - **Omarchy themes** — colors.toml parsing with SIGUSR2 live reload
+- **tmux compatibility** — CLI shim maps tmux commands (split-window, send-keys, capture-pane, etc.) to cmux socket API for tool compatibility
+- **Theme browser** — `cmux themes [filter]` lists bundled ghostty themes from system and user directories
 - **Multi-window** — workspaces assignable across windows
 - **Welcome screen** — first-launch getting-started tips
 
