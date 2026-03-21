@@ -20,6 +20,11 @@ fn session_path() -> PathBuf {
     data_dir.join("session.json")
 }
 
+/// Check if a saved session file exists.
+pub fn session_file_exists() -> bool {
+    session_path().exists()
+}
+
 /// Save a session snapshot to disk.
 pub fn save_session(snapshot: &AppSessionSnapshot) -> anyhow::Result<()> {
     let path = session_path();
@@ -80,14 +85,72 @@ fn write_atomic(path: &Path, bytes: &[u8]) -> anyhow::Result<()> {
 
 /// Maximum lines of scrollback to capture per terminal (matching macOS cmux).
 const MAX_SCROLLBACK_LINES: usize = 4000;
+/// Maximum characters of scrollback to capture (matching macOS: 400,000).
+const MAX_SCROLLBACK_CHARS: usize = 400_000;
 
-/// Truncate text to at most `max_lines` lines from the end.
+/// Truncate text to at most `max_lines` lines from the end, then cap at
+/// `MAX_SCROLLBACK_CHARS`. ANSI-safe: if truncation would split inside a
+/// CSI escape sequence (ESC [ ... final_byte), back up to before the ESC.
 fn truncate_scrollback(text: &str) -> String {
+    // First: line-based truncation from the end
     let lines: Vec<&str> = text.lines().collect();
-    if lines.len() <= MAX_SCROLLBACK_LINES {
-        return text.to_string();
+    let truncated = if lines.len() > MAX_SCROLLBACK_LINES {
+        lines[lines.len() - MAX_SCROLLBACK_LINES..].join("\n")
+    } else {
+        text.to_string()
+    };
+
+    // Second: character-based truncation from the end
+    if truncated.len() <= MAX_SCROLLBACK_CHARS {
+        return truncated;
     }
-    lines[lines.len() - MAX_SCROLLBACK_LINES..].join("\n")
+
+    // Take the last MAX_SCROLLBACK_CHARS bytes, then ANSI-safe adjust the start
+    let start = truncated.len() - MAX_SCROLLBACK_CHARS;
+    // Find a safe UTF-8 boundary
+    let mut safe_start = start;
+    while safe_start < truncated.len() && !truncated.is_char_boundary(safe_start) {
+        safe_start += 1;
+    }
+
+    // Check if we're splitting inside an ANSI CSI sequence (ESC [ ... letter).
+    // Scan backward from safe_start looking for an ESC that hasn't been terminated.
+    let bytes = truncated.as_bytes();
+    let mut i = safe_start;
+    // Look back up to 32 bytes for an unterminated ESC[
+    let lookback = safe_start.saturating_sub(32);
+    let mut in_escape = false;
+    let mut escape_start = 0;
+    for pos in lookback..safe_start {
+        if bytes[pos] == 0x1b {
+            in_escape = true;
+            escape_start = pos;
+        } else if in_escape {
+            if bytes[pos] == b'[' {
+                // CSI sequence — look for terminating byte (0x40-0x7e)
+                continue;
+            } else if (0x40..=0x7e).contains(&bytes[pos]) {
+                // Found terminator — sequence is complete
+                in_escape = false;
+            }
+        }
+    }
+
+    if in_escape {
+        // We're inside an unterminated CSI — skip past the escape start
+        i = escape_start;
+        // Find the start of the previous line to avoid partial line
+        while i > lookback && bytes[i] != b'\n' {
+            i -= 1;
+        }
+        if bytes.get(i) == Some(&b'\n') {
+            i += 1;
+        }
+    } else {
+        i = safe_start;
+    }
+
+    truncated[i..].to_string()
 }
 
 /// Create a snapshot from the current application state.

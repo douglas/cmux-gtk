@@ -315,6 +315,73 @@ fn create_workspace_row(
         outer.append(&pills_box);
     }
 
+    // ── Metadata entries (sorted by priority desc) ──
+    if !workspace.metadata_entries.is_empty() {
+        let mut sorted: Vec<_> = workspace.metadata_entries.iter().collect();
+        sorted.sort_by(|a, b| {
+            b.priority
+                .cmp(&a.priority)
+                .then(a.timestamp.partial_cmp(&b.timestamp)
+                    .unwrap_or(std::cmp::Ordering::Equal))
+        });
+        let meta_box = gtk4::Box::new(gtk4::Orientation::Vertical, 2);
+        for entry in sorted.iter().take(6) {
+            let text = format!("{}: {}", entry.key, entry.value);
+            let label = gtk4::Label::new(Some(&text));
+            label.set_halign(gtk4::Align::Start);
+            label.set_wrap(false);
+            label.set_ellipsize(gtk4::pango::EllipsizeMode::End);
+            label.add_css_class("caption");
+            if entry.url.is_some() {
+                label.add_css_class("meta-link");
+            }
+            if let Some(ref color) = entry.color {
+                match color.as_str() {
+                    "blue" => label.add_css_class("status-pill-blue"),
+                    "green" => label.add_css_class("status-pill-green"),
+                    "red" => label.add_css_class("status-pill-red"),
+                    "orange" => label.add_css_class("status-pill-orange"),
+                    "purple" => label.add_css_class("status-pill-purple"),
+                    _ => label.add_css_class("dim-label"),
+                }
+            } else {
+                label.add_css_class("dim-label");
+            }
+            meta_box.append(&label);
+        }
+        outer.append(&meta_box);
+    }
+
+    // ── Metadata blocks (freeform markdown, sorted by priority desc) ──
+    if !workspace.metadata_blocks.is_empty() {
+        let mut sorted: Vec<_> = workspace.metadata_blocks.iter().collect();
+        sorted.sort_by(|a, b| {
+            b.priority
+                .cmp(&a.priority)
+                .then(a.timestamp.partial_cmp(&b.timestamp)
+                    .unwrap_or(std::cmp::Ordering::Equal))
+        });
+        for block in sorted.iter().take(3) {
+            let first_line = block
+                .content
+                .lines()
+                .next()
+                .unwrap_or(&block.content);
+            let text = if block.key.is_empty() {
+                first_line.to_string()
+            } else {
+                format!("[{}] {}", block.key, first_line)
+            };
+            let label = gtk4::Label::new(Some(&text));
+            label.set_halign(gtk4::Align::Start);
+            label.set_wrap(false);
+            label.set_ellipsize(gtk4::pango::EllipsizeMode::End);
+            label.add_css_class("caption");
+            label.add_css_class("dim-label");
+            outer.append(&label);
+        }
+    }
+
     // ── Progress bar ──
     if sidebar.show_progress {
         if let Some(ref progress) = workspace.progress {

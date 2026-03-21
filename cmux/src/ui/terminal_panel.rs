@@ -1,11 +1,53 @@
 //! Terminal panel — wraps a GhosttyGlSurface in a panel container.
 
+use std::cell::RefCell;
+use std::collections::HashMap;
 use std::rc::Rc;
 
 use gtk4::prelude::*;
+use uuid::Uuid;
 
 use crate::app::{lock_or_recover, AppState};
 use crate::model::panel::{Panel, PanelType};
+
+// ── Vim badge registry ───────────────────────────────────────────────
+// Thread-local map: panel_id → vim badge label widget.
+// Used by window.rs CopyMode handler to show/hide the badge.
+thread_local! {
+    static VIM_BADGES: RefCell<HashMap<Uuid, gtk4::Label>> = RefCell::new(HashMap::new());
+}
+
+fn register_vim_badge(panel_id: Uuid, badge: gtk4::Label) {
+    VIM_BADGES.with(|map| {
+        map.borrow_mut().insert(panel_id, badge);
+    });
+}
+
+/// Show the vim copy-mode badge for a panel.
+pub fn show_vim_badge(panel_id: Uuid) {
+    VIM_BADGES.with(|map| {
+        if let Some(badge) = map.borrow().get(&panel_id) {
+            badge.set_visible(true);
+        }
+    });
+}
+
+/// Hide the vim copy-mode badge for a panel.
+pub fn hide_vim_badge(panel_id: Uuid) {
+    VIM_BADGES.with(|map| {
+        if let Some(badge) = map.borrow().get(&panel_id) {
+            badge.set_visible(false);
+        }
+    });
+}
+
+/// Remove a vim badge (cleanup when panel is destroyed).
+#[allow(dead_code)]
+pub fn unregister_vim_badge(panel_id: &Uuid) {
+    VIM_BADGES.with(|map| {
+        map.borrow_mut().remove(panel_id);
+    });
+}
 
 /// Create a GTK widget for a panel.
 pub fn create_panel_widget(
@@ -110,6 +152,24 @@ fn create_terminal_widget(
         });
     }
     overlay.add_controller(file_drop);
+
+    // "vim" copy-mode badge — top-right corner, initially hidden.
+    // Made visible when copy mode is activated via UiEvent::CopyMode.
+    let vim_badge = gtk4::Label::new(Some("vim"));
+    vim_badge.add_css_class("vim-badge");
+    vim_badge.set_halign(gtk4::Align::End);
+    vim_badge.set_valign(gtk4::Align::Start);
+    vim_badge.set_margin_top(6);
+    vim_badge.set_margin_end(6);
+    vim_badge.set_can_target(false);
+    vim_badge.set_visible(false);
+    overlay.add_overlay(&vim_badge);
+
+    // Register badge for this panel so window.rs can show/hide it
+    {
+        let badge = vim_badge.clone();
+        register_vim_badge(panel.id, badge);
+    }
 
     // Hover-to-focus: when focus_follows_mouse is enabled, focus on mouse enter.
     let motion = gtk4::EventControllerMotion::new();

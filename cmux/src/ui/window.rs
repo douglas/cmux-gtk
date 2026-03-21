@@ -39,8 +39,14 @@ pub fn create_window(
     window.set_widget_name(&window_id.to_string());
 
     let split_view = adw::NavigationSplitView::new();
-    split_view.set_min_sidebar_width(220.0);
-    split_view.set_max_sidebar_width(360.0);
+    let sidebar_settings = &crate::settings::load().sidebar;
+    let sidebar_width = if sidebar_settings.width > 0 {
+        sidebar_settings.width as f64
+    } else {
+        280.0
+    };
+    split_view.set_min_sidebar_width(180.0);
+    split_view.set_max_sidebar_width(sidebar_width.max(280.0));
     split_view.set_vexpand(true);
     split_view.set_hexpand(true);
 
@@ -603,6 +609,16 @@ fn bind_shared_state_updates(
                     UiEvent::CopyMode { panel_id } => {
                         if let Some(surface) = state.terminal_cache.borrow().get(&panel_id) {
                             surface.binding_action("copy_mode");
+                            // Show vim badge overlay
+                            crate::ui::terminal_panel::show_vim_badge(panel_id);
+                            // Auto-hide after 30 seconds (copy mode may end earlier,
+                            // but we can't detect Ghostty's internal state change)
+                            glib::timeout_add_local_once(
+                                std::time::Duration::from_secs(30),
+                                move || {
+                                    crate::ui::terminal_panel::hide_vim_badge(panel_id);
+                                },
+                            );
                         }
                     }
                     UiEvent::ReopenClosedBrowser => {
@@ -712,6 +728,42 @@ fn bind_shared_state_updates(
                                 }
                             }
                         }
+                    }
+                    UiEvent::DesktopNotification {
+                        surface,
+                        title,
+                        body,
+                    } => {
+                        // Reverse-lookup panel_id from terminal_cache
+                        let panel_id = state
+                            .terminal_cache
+                            .borrow()
+                            .iter()
+                            .find(|(_, s)| s.raw_surface() == surface.0)
+                            .map(|(id, _)| *id);
+
+                        let ws_id = panel_id.and_then(|pid| {
+                            let tm = lock_or_recover(&state.shared.tab_manager);
+                            tm.find_workspace_with_panel(pid).map(|ws| ws.id)
+                        });
+
+                        // Record in notification store with desktop alert
+                        {
+                            let mut store =
+                                lock_or_recover(&state.shared.notifications);
+                            store.add(&title, &body, ws_id, panel_id, true);
+                        }
+
+                        // Record workspace-level notification for sidebar badge
+                        if let Some(ws_id) = ws_id {
+                            let mut tm =
+                                lock_or_recover(&state.shared.tab_manager);
+                            if let Some(ws) = tm.workspace_mut(ws_id) {
+                                ws.record_notification(&title, &body, panel_id);
+                            }
+                        }
+
+                        needs_refresh = true;
                     }
                     // directly via its own callbacks.
                     UiEvent::StartSearch
@@ -1005,6 +1057,15 @@ fn setup_shortcuts(
                     notif_panel.refresh(&state);
                     nav_split_view.set_sidebar(Some(&notif_page));
                     showing_notifications.set(true);
+                }
+                glib::Propagation::Stop
+            }
+            // Ctrl+P: All-surfaces search
+            (gdk4::Key::p, true, false) => {
+                if let Some(window) = window_weak.upgrade() {
+                    super::all_surfaces_search::show_all_surfaces_search(
+                        &window, &state,
+                    );
                 }
                 glib::Propagation::Stop
             }
@@ -1739,6 +1800,18 @@ fn install_css() {
             min-height: 24px;
         }
 
+        /* ── Omnibar ghost text (inline completion) ── */
+        .omnibar-ghost {
+            color: alpha(@theme_fg_color, 0.3);
+            padding: 4px 8px;
+            min-height: 24px;
+        }
+
+        /* ── Metadata link style ── */
+        .meta-link {
+            text-decoration: underline;
+        }
+
         .sidebar-notification {
             color: @accent_color;
             font-weight: 600;
@@ -1843,6 +1916,17 @@ fn install_css() {
         .attention-panel {
             border: 2px solid @accent_bg_color;
             background-color: alpha(@accent_bg_color, 0.08);
+        }
+
+        /* ── Vim copy-mode badge ── */
+        .vim-badge {
+            background-color: alpha(#33d17a, 0.85);
+            color: white;
+            font-size: 0.75em;
+            font-weight: 700;
+            border-radius: 4px;
+            padding: 2px 8px;
+            opacity: 0.9;
         }
 
         /* ── Search overlay ── */

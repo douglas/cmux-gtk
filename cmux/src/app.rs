@@ -77,6 +77,12 @@ impl AppState {
                 .map(|ws| ws.id.to_string())
                 .unwrap_or_default()
         };
+
+        // Resolve shell integration directory for auto-injection
+        let shell_integration_dir = shell_integration_dir();
+        let (zdotdir_var, bash_env_var, original_zdotdir) =
+            shell_injection_env_vars(&shell_integration_dir);
+
         let mut env_vars: Vec<(&str, &str)> = vec![
             ("CMUX_SOCKET", &socket_path),
             ("CMUX_PANEL_ID", &panel_id_str),
@@ -86,6 +92,21 @@ impl AppState {
         }
         if let Some(ref path) = scrollback_file {
             env_vars.push(("CMUX_RESTORE_SCROLLBACK_FILE", path));
+        }
+
+        // Auto-inject shell integration via ZDOTDIR (zsh) or BASH_ENV (bash)
+        let shell = std::env::var("SHELL").unwrap_or_default();
+        if shell.ends_with("/zsh") || shell.ends_with("/zsh5") {
+            if let Some(ref dir) = zdotdir_var {
+                env_vars.push(("ZDOTDIR", dir));
+            }
+            if let Some(ref val) = original_zdotdir {
+                env_vars.push(("CMUX_ZSH_ORIGINAL_ZDOTDIR", val));
+            }
+        } else if shell.ends_with("/bash") {
+            if let Some(ref path) = bash_env_var {
+                env_vars.push(("BASH_ENV", path));
+            }
         }
 
         if let Some(app) = self.ghostty_app.borrow().as_ref() {
@@ -212,6 +233,12 @@ pub enum UiEvent {
     },
     /// Open a URL in a new browser panel (routed from terminal hyperlinks).
     OpenUrlInBrowser { url: String },
+    /// Desktop notification triggered from terminal (OSC 9/777).
+    DesktopNotification {
+        surface: SendSurfacePtr,
+        title: String,
+        body: String,
+    },
     /// Create a new application window.
     CreateWindow,
 }
@@ -439,7 +466,17 @@ pub fn open_window(
 }
 
 /// Restore workspaces from a saved session. Returns window IDs for each restored window.
+///
+/// Session restore can be disabled by setting `CMUX_DISABLE_SESSION_RESTORE=1`.
 fn restore_session(state: &Rc<AppState>) -> Vec<Uuid> {
+    if std::env::var("CMUX_DISABLE_SESSION_RESTORE")
+        .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+        .unwrap_or(false)
+    {
+        tracing::info!("Session restore disabled via CMUX_DISABLE_SESSION_RESTORE");
+        return vec![];
+    }
+
     let snapshot = match session::store::load_session() {
         Ok(Some(snapshot)) => snapshot,
         Ok(None) => return vec![],
@@ -543,6 +580,82 @@ fn restore_session(state: &Rc<AppState>) -> Vec<Uuid> {
 
     drop(tab_manager);
     window_ids
+}
+
+/// Locate the shell-integration directory bundled with the cmux binary.
+///
+/// Search order:
+///   1. Sibling of the executable: `<exe_dir>/../shell-integration/`
+///   2. Cargo workspace source tree (development): `<exe_dir>/../../cmux/shell-integration/`
+///   3. XDG data: `~/.local/share/cmux/shell-integration/`
+fn shell_integration_dir() -> Option<String> {
+    let exe = std::env::current_exe().ok()?;
+    let exe_dir = exe.parent()?;
+
+    // 1. Installed layout: <prefix>/bin/cmux-app → <prefix>/share/cmux/shell-integration/
+    let installed = exe_dir
+        .parent()
+        .map(|prefix| prefix.join("share/cmux/shell-integration"));
+    if let Some(ref p) = installed {
+        if p.join(".zshenv").exists() {
+            return p.to_str().map(|s| s.to_string());
+        }
+    }
+
+    // 2. Development layout: target/debug/cmux-app → cmux/shell-integration/
+    // Walk up from exe_dir looking for the cmux/shell-integration directory
+    let mut ancestor = exe_dir.to_path_buf();
+    for _ in 0..5 {
+        let candidate = ancestor.join("cmux/shell-integration");
+        if candidate.join(".zshenv").exists() {
+            return candidate.to_str().map(|s| s.to_string());
+        }
+        if !ancestor.pop() {
+            break;
+        }
+    }
+
+    // 3. XDG data directory
+    let xdg = dirs::data_dir()
+        .unwrap_or_else(|| std::path::PathBuf::from("~/.local/share"))
+        .join("cmux/shell-integration");
+    if xdg.join(".zshenv").exists() {
+        return xdg.to_str().map(|s| s.to_string());
+    }
+
+    None
+}
+
+/// Compute the environment variables needed for shell integration auto-injection.
+///
+/// Returns (zdotdir, bash_env, original_zdotdir) where:
+///   - `zdotdir`: path to set as ZDOTDIR for zsh (our shell-integration dir)
+///   - `bash_env`: path to set as BASH_ENV for bash
+///   - `original_zdotdir`: value for CMUX_ZSH_ORIGINAL_ZDOTDIR (preserves user's ZDOTDIR)
+fn shell_injection_env_vars(
+    integration_dir: &Option<String>,
+) -> (Option<String>, Option<String>, Option<String>) {
+    let Some(dir) = integration_dir else {
+        return (None, None, None);
+    };
+
+    let zdotdir = Some(dir.clone());
+    let bash_env = {
+        let path = std::path::Path::new(dir).join("cmux-bash-integration.bash");
+        if path.exists() {
+            path.to_str().map(|s| s.to_string())
+        } else {
+            None
+        }
+    };
+
+    // Preserve the user's original ZDOTDIR so our .zshenv can restore it
+    let original_zdotdir = match std::env::var("ZDOTDIR") {
+        Ok(val) => Some(val),
+        Err(_) => Some("__cmux_unset__".to_string()),
+    };
+
+    (zdotdir, bash_env, original_zdotdir)
 }
 
 /// Write scrollback text to a temp file for session restore.
@@ -843,6 +956,39 @@ impl ghostty_gtk::callbacks::GhosttyCallbackHandler for CmuxCallbackHandler {
                 if let Some(url) = url {
                     self.shared
                         .send_ui_event(UiEvent::OpenUrlInBrowser { url });
+                }
+                true
+            }
+            ghostty_action_tag_e::GHOSTTY_ACTION_DESKTOP_NOTIFICATION => {
+                // OSC 9 / OSC 777 desktop notification from terminal output
+                let (title, body) = unsafe {
+                    let notif = &action.action.desktop_notification;
+                    let title = if notif.title.is_null() {
+                        String::new()
+                    } else {
+                        std::ffi::CStr::from_ptr(notif.title)
+                            .to_string_lossy()
+                            .to_string()
+                    };
+                    let body = if notif.body.is_null() {
+                        String::new()
+                    } else {
+                        std::ffi::CStr::from_ptr(notif.body)
+                            .to_string_lossy()
+                            .to_string()
+                    };
+                    (title, body)
+                };
+
+                if target.tag == ghostty_target_tag_e::GHOSTTY_TARGET_SURFACE {
+                    let surface_ptr = unsafe { target.target.surface };
+                    if !surface_ptr.is_null() {
+                        self.shared.send_ui_event(UiEvent::DesktopNotification {
+                            surface: SendSurfacePtr(surface_ptr),
+                            title,
+                            body,
+                        });
+                    }
                 }
                 true
             }

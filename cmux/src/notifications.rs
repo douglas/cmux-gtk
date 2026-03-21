@@ -117,10 +117,11 @@ impl NotificationStore {
     }
 }
 
-/// Send a desktop notification using gio::Notification.
+/// Send a desktop notification using gio::Notification, optionally playing a sound.
 fn send_desktop_notification(title: &str, body: &str) {
     let title = title.to_string();
     let body = body.to_string();
+    let settings = crate::settings::load();
 
     glib::MainContext::default().invoke(move || {
         let notification = gio::Notification::new(&title);
@@ -135,5 +136,88 @@ fn send_desktop_notification(title: &str, body: &str) {
                 "Desktop notification unavailable; body omitted"
             );
         }
+
+        // Play notification sound if enabled
+        if settings.notifications.sound_enabled {
+            play_notification_sound(&settings.notifications.sound_name);
+        }
+    });
+}
+
+/// Play a notification sound based on the configured sound name.
+fn play_notification_sound(sound: &crate::settings::NotificationSound) {
+    use crate::settings::NotificationSound;
+
+    match sound {
+        NotificationSound::Default => {
+            // Use the desktop bell (simplest, always available)
+            use gtk4::prelude::DisplayExt;
+            if let Some(display) = gdk4::Display::default() {
+                display.beep();
+            }
+        }
+        NotificationSound::None => {}
+        NotificationSound::Theme(name) => {
+            play_theme_sound(name);
+        }
+        NotificationSound::File(path) => {
+            play_sound_file(path);
+        }
+    }
+}
+
+/// Play a sound from the freedesktop sound theme using canberra-gtk-play or paplay.
+fn play_theme_sound(name: &str) {
+    // Sanitize the name: only allow alphanumeric, dashes, underscores
+    let safe_name: String = name
+        .chars()
+        .filter(|c| c.is_alphanumeric() || *c == '-' || *c == '_')
+        .take(64)
+        .collect();
+    if safe_name.is_empty() {
+        return;
+    }
+
+    // Try canberra-gtk-play first (standard on GNOME/GTK desktops)
+    std::thread::spawn(move || {
+        let result = std::process::Command::new("canberra-gtk-play")
+            .arg("-i")
+            .arg(&safe_name)
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status();
+
+        if result.is_err() || result.is_ok_and(|s| !s.success()) {
+            // Fallback: try paplay with the theme sound
+            // XDG sound themes store files under /usr/share/sounds/
+            let _ = std::process::Command::new("paplay")
+                .arg(format!(
+                    "/usr/share/sounds/freedesktop/stereo/{safe_name}.oga"
+                ))
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .status();
+        }
+    });
+}
+
+/// Play a custom sound file (WAV, OGG, OGA).
+fn play_sound_file(path: &str) {
+    let path = path.to_string();
+    std::thread::spawn(move || {
+        // Try paplay (PulseAudio), then pw-play (PipeWire), then aplay (ALSA)
+        let players = ["paplay", "pw-play", "aplay"];
+        for player in &players {
+            if std::process::Command::new(player)
+                .arg(&path)
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .status()
+                .is_ok_and(|s| s.success())
+            {
+                return;
+            }
+        }
+        tracing::warn!(path = %path, "No audio player found for notification sound");
     });
 }

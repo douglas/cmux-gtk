@@ -389,6 +389,23 @@ fn build_tab_button(
     }
     tab.add_controller(right_click);
 
+    // Middle-click to close tab
+    let middle_click = gtk4::GestureClick::new();
+    middle_click.set_button(2);
+    {
+        let state = Rc::clone(state);
+        middle_click.connect_pressed(move |gesture, _n, _x, _y| {
+            gesture.set_state(gtk4::EventSequenceState::Claimed);
+            let mut tm = lock_or_recover(&state.shared.tab_manager);
+            if let Some(ws) = tm.find_workspace_with_panel_mut(panel_id) {
+                ws.remove_panel(panel_id);
+            }
+            drop(tm);
+            state.shared.notify_ui_refresh();
+        });
+    }
+    tab.add_controller(middle_click);
+
     // Click to select tab — skip if the click lands on the close button
     let click = gtk4::GestureClick::new();
     click.set_button(1);

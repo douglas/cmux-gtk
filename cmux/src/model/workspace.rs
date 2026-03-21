@@ -34,6 +34,12 @@ pub struct Workspace {
     /// Status entries (agent metadata, key-value pairs).
     pub status_entries: Vec<StatusEntry>,
 
+    /// Rich metadata entries (key-value with priority, URL, format).
+    pub metadata_entries: Vec<MetadataEntry>,
+
+    /// Freeform metadata blocks (markdown content).
+    pub metadata_blocks: Vec<MetadataBlock>,
+
     /// Log entries from agents/tools.
     pub log_entries: Vec<LogEntry>,
 
@@ -66,7 +72,38 @@ pub struct StatusEntry {
     pub value: String,
     pub icon: Option<String>,
     pub color: Option<String>,
+    pub url: Option<String>,
     pub timestamp: f64,
+}
+
+/// Rich metadata entry with priority ordering and format options.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MetadataEntry {
+    pub key: String,
+    pub value: String,
+    pub icon: Option<String>,
+    pub color: Option<String>,
+    pub url: Option<String>,
+    pub priority: i32,
+    pub format: MetadataFormat,
+    pub timestamp: f64,
+}
+
+/// Freeform metadata block (markdown content).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MetadataBlock {
+    pub key: String,
+    pub content: String,
+    pub priority: i32,
+    pub timestamp: f64,
+}
+
+/// Format for metadata entry values.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum MetadataFormat {
+    Plain,
+    Markdown,
 }
 
 /// Log entry from agents/tools.
@@ -120,6 +157,8 @@ impl Workspace {
             layout: LayoutNode::single_pane(panel_id),
             panels,
             status_entries: Vec::new(),
+            metadata_entries: Vec::new(),
+            metadata_blocks: Vec::new(),
             log_entries: Vec::new(),
             progress: None,
             git_branch: None,
@@ -348,11 +387,30 @@ impl Workspace {
     const MAX_STATUS_VALUE_LEN: usize = 4096;
 
     /// Update the status entry for a key, creating it if it doesn't exist.
-    pub fn set_status(&mut self, key: &str, value: &str, icon: Option<&str>, color: Option<&str>) {
+    pub fn set_status(
+        &mut self,
+        key: &str,
+        value: &str,
+        icon: Option<&str>,
+        color: Option<&str>,
+    ) {
+        self.set_status_with_url(key, value, icon, color, None);
+    }
+
+    /// Update the status entry for a key with an optional URL.
+    pub fn set_status_with_url(
+        &mut self,
+        key: &str,
+        value: &str,
+        icon: Option<&str>,
+        color: Option<&str>,
+        url: Option<&str>,
+    ) {
         let key = truncate_str(key, Self::MAX_STATUS_KEY_LEN);
         let value = truncate_str(value, Self::MAX_STATUS_VALUE_LEN);
         let icon = icon.map(|s| truncate_str(s, 256));
         let color = color.map(|s| truncate_str(s, 64));
+        let url = url.map(|s| truncate_str(s, 2048));
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default()
@@ -362,6 +420,7 @@ impl Workspace {
             entry.value = value.to_string();
             entry.icon = icon.map(|s| s.to_string());
             entry.color = color.map(|s| s.to_string());
+            entry.url = url.map(|s| s.to_string());
             entry.timestamp = now;
         } else {
             if self.status_entries.len() >= Self::MAX_STATUS_ENTRIES {
@@ -384,9 +443,120 @@ impl Workspace {
                 value: value.to_string(),
                 icon: icon.map(|s| s.to_string()),
                 color: color.map(|s| s.to_string()),
+                url: url.map(|s| s.to_string()),
                 timestamp: now,
             });
         }
+    }
+
+    const MAX_METADATA_ENTRIES: usize = 100;
+    const MAX_METADATA_BLOCKS: usize = 50;
+    const MAX_BLOCK_CONTENT_LEN: usize = 32768;
+
+    /// Set or update a rich metadata entry (with priority, URL, format).
+    pub fn set_metadata(
+        &mut self,
+        key: &str,
+        value: &str,
+        icon: Option<&str>,
+        color: Option<&str>,
+        url: Option<&str>,
+        priority: i32,
+        format: MetadataFormat,
+    ) {
+        let key = truncate_str(key, Self::MAX_STATUS_KEY_LEN);
+        let value = truncate_str(value, Self::MAX_STATUS_VALUE_LEN);
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs_f64();
+
+        if let Some(entry) = self.metadata_entries.iter_mut().find(|e| e.key == key) {
+            entry.value = value.to_string();
+            entry.icon = icon.map(|s| s.to_string());
+            entry.color = color.map(|s| s.to_string());
+            entry.url = url.map(|s| s.to_string());
+            entry.priority = priority;
+            entry.format = format;
+            entry.timestamp = now;
+        } else {
+            if self.metadata_entries.len() >= Self::MAX_METADATA_ENTRIES {
+                // Evict lowest priority (then oldest)
+                if let Some(idx) = self
+                    .metadata_entries
+                    .iter()
+                    .enumerate()
+                    .min_by(|a, b| {
+                        a.1.priority
+                            .cmp(&b.1.priority)
+                            .then(a.1.timestamp.partial_cmp(&b.1.timestamp)
+                                .unwrap_or(std::cmp::Ordering::Equal))
+                    })
+                    .map(|(i, _)| i)
+                {
+                    self.metadata_entries.remove(idx);
+                }
+            }
+            self.metadata_entries.push(MetadataEntry {
+                key: key.to_string(),
+                value: value.to_string(),
+                icon: icon.map(|s| s.to_string()),
+                color: color.map(|s| s.to_string()),
+                url: url.map(|s| s.to_string()),
+                priority,
+                format,
+                timestamp: now,
+            });
+        }
+    }
+
+    /// Remove a metadata entry by key.
+    pub fn clear_metadata(&mut self, key: &str) {
+        self.metadata_entries.retain(|e| e.key != key);
+    }
+
+    /// Set or update a freeform metadata block.
+    pub fn set_metadata_block(&mut self, key: &str, content: &str, priority: i32) {
+        let key = truncate_str(key, Self::MAX_STATUS_KEY_LEN);
+        let content = truncate_str(content, Self::MAX_BLOCK_CONTENT_LEN);
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs_f64();
+
+        if let Some(block) = self.metadata_blocks.iter_mut().find(|b| b.key == key) {
+            block.content = content.to_string();
+            block.priority = priority;
+            block.timestamp = now;
+        } else {
+            if self.metadata_blocks.len() >= Self::MAX_METADATA_BLOCKS {
+                if let Some(idx) = self
+                    .metadata_blocks
+                    .iter()
+                    .enumerate()
+                    .min_by(|a, b| {
+                        a.1.priority
+                            .cmp(&b.1.priority)
+                            .then(a.1.timestamp.partial_cmp(&b.1.timestamp)
+                                .unwrap_or(std::cmp::Ordering::Equal))
+                    })
+                    .map(|(i, _)| i)
+                {
+                    self.metadata_blocks.remove(idx);
+                }
+            }
+            self.metadata_blocks.push(MetadataBlock {
+                key: key.to_string(),
+                content: content.to_string(),
+                priority,
+                timestamp: now,
+            });
+        }
+    }
+
+    /// Remove a metadata block by key.
+    pub fn clear_metadata_block(&mut self, key: &str) {
+        self.metadata_blocks.retain(|b| b.key != key);
     }
 
     const MAX_LOG_ENTRIES: usize = 1000;

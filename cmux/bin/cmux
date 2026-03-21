@@ -1,0 +1,196 @@
+#!/usr/bin/env bash
+# cmux — CLI for interacting with a running cmux-gtk instance via Unix socket.
+#
+# Usage:
+#   cmux <command> [args...]
+#   cmux list                   List workspaces
+#   cmux new [dir]              Create workspace
+#   cmux select <id|index>      Select workspace
+#   cmux send <text>            Send text to focused terminal
+#   cmux tree                   Full state tree
+#   cmux help                   Show help
+#
+# Environment:
+#   CMUX_SOCKET   Override socket path (auto-detected if unset)
+
+set -euo pipefail
+
+# ── Socket path discovery ─────────────────────────────────────────────
+_cmux_socket_path() {
+  if [[ -n "${CMUX_SOCKET:-}" ]]; then
+    echo "$CMUX_SOCKET"
+    return
+  fi
+  # Mirror the Rust socket_path() logic
+  if [[ -n "${XDG_RUNTIME_DIR:-}" && -d "$XDG_RUNTIME_DIR" ]]; then
+    local sock="$XDG_RUNTIME_DIR/cmux.sock"
+    if [[ -S "$sock" ]]; then
+      echo "$sock"
+      return
+    fi
+  fi
+  local sock="/tmp/cmux-$(id -u).sock"
+  if [[ -S "$sock" ]]; then
+    echo "$sock"
+    return
+  fi
+  echo "error: cmux socket not found. Is cmux-app running?" >&2
+  exit 1
+}
+
+# ── Socket send ───────────────────────────────────────────────────────
+_cmux_send() {
+  local sock
+  sock=$(_cmux_socket_path)
+  local msg="$1"
+
+  if command -v ncat >/dev/null 2>&1; then
+    echo "$msg" | ncat -U "$sock" 2>/dev/null
+  elif command -v socat >/dev/null 2>&1; then
+    echo "$msg" | socat - UNIX-CONNECT:"$sock" 2>/dev/null
+  elif command -v nc >/dev/null 2>&1; then
+    echo "$msg" | nc -U "$sock" -w 2 2>/dev/null
+  else
+    echo "error: no socket client found. Install ncat, socat, or nc." >&2
+    exit 1
+  fi
+}
+
+# ── JSON send (V2 protocol) ──────────────────────────────────────────
+_cmux_json() {
+  local method="$1"
+  shift
+  local params="${1:-{}}"
+  _cmux_send "{\"id\":\"cli\",\"method\":\"$method\",\"params\":$params}"
+}
+
+# ── Main ──────────────────────────────────────────────────────────────
+if [[ $# -eq 0 ]]; then
+  echo "Usage: cmux <command> [args...]"
+  echo "Run 'cmux help' for available commands."
+  exit 0
+fi
+
+command="$1"
+shift
+
+case "$command" in
+  # ── Meta ──
+  help)
+    _cmux_send "help"
+    ;;
+  ping)
+    _cmux_send "ping"
+    ;;
+  tree)
+    _cmux_json "system.tree"
+    ;;
+  capabilities)
+    _cmux_json "system.capabilities"
+    ;;
+  identify)
+    _cmux_json "system.identify"
+    ;;
+
+  # ── Windows ──
+  windows)
+    _cmux_send "list_windows"
+    ;;
+  new-window)
+    _cmux_send "new_window"
+    ;;
+
+  # ── Workspaces ──
+  list|ls)
+    _cmux_send "list"
+    ;;
+  new)
+    _cmux_send "new ${*}"
+    ;;
+  select|sel)
+    _cmux_send "select ${1:-}"
+    ;;
+  current)
+    _cmux_send "current"
+    ;;
+  close)
+    _cmux_send "close_workspace ${*}"
+    ;;
+  next)
+    _cmux_send "next"
+    ;;
+  prev)
+    _cmux_send "prev"
+    ;;
+  last)
+    _cmux_send "last"
+    ;;
+  rename)
+    _cmux_send "rename \"${*}\""
+    ;;
+
+  # ── Surfaces ──
+  surfaces)
+    _cmux_send "list_surfaces"
+    ;;
+  send)
+    _cmux_send "send ${*}"
+    ;;
+  send-key)
+    _cmux_send "send_key ${1:-}"
+    ;;
+  split)
+    _cmux_send "split ${*}"
+    ;;
+  read|read-screen)
+    _cmux_send "read_screen ${*}"
+    ;;
+
+  # ── Status ──
+  status)
+    if [[ $# -ge 2 ]]; then
+      _cmux_send "set_status ${*}"
+    else
+      _cmux_send "list_status"
+    fi
+    ;;
+  progress)
+    if [[ $# -ge 1 ]]; then
+      _cmux_send "set_progress ${*}"
+    else
+      _cmux_send "clear_progress"
+    fi
+    ;;
+  log)
+    _cmux_send "log \"${*}\""
+    ;;
+
+  # ── Notifications ──
+  notify)
+    _cmux_send "notify \"${1:-}\" \"${2:-}\""
+    ;;
+  notifications)
+    _cmux_send "list_notifications"
+    ;;
+
+  # ── Browser ──
+  browser)
+    _cmux_send "open_browser ${*}"
+    ;;
+  navigate|nav)
+    _cmux_send "navigate ${1:-}"
+    ;;
+
+  # ── Settings ──
+  settings)
+    _cmux_send "settings"
+    ;;
+  markdown|md)
+    _cmux_send "markdown \"${1:-}\""
+    ;;
+
+  # ── Pass-through: any unrecognized command is sent as V1 text ──
+  *)
+    _cmux_send "$command ${*}"
+    ;;
+esac

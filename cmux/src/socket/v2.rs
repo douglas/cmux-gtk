@@ -107,12 +107,31 @@ pub fn dispatch(json_line: &str, state: &Arc<SharedState>) -> Response {
         "workspace.clear_progress" => handle_workspace_clear_progress(id, &req.params, state),
         "workspace.clear_log" => handle_workspace_clear_log(id, &req.params, state),
         "workspace.list_log" => handle_workspace_list_log(id, &req.params, state),
+        "workspace.report_meta" => handle_workspace_report_meta(id, &req.params, state),
+        "workspace.clear_meta" => handle_workspace_clear_meta(id, &req.params, state),
+        "workspace.list_meta" => handle_workspace_list_meta(id, &req.params, state),
+        "workspace.report_meta_block" => {
+            handle_workspace_report_meta_block(id, &req.params, state)
+        }
+        "workspace.clear_meta_block" => {
+            handle_workspace_clear_meta_block(id, &req.params, state)
+        }
+        "workspace.list_meta_blocks" => {
+            handle_workspace_list_meta_blocks(id, &req.params, state)
+        }
 
         // Workspace query commands
         "workspace.current" => handle_workspace_current(id, state),
         "workspace.rename" => handle_workspace_rename(id, &req.params, state),
         "workspace.action" => handle_workspace_action(id, &req.params, state),
         "workspace.report_pr" => handle_workspace_report_pr(id, &req.params, state),
+        "workspace.move_to_window" => {
+            handle_workspace_move_to_window(id, &req.params, state)
+        }
+
+        // App commands
+        "app.focus_override.set" => handle_app_focus_override(id, &req.params, state),
+        "app.simulate_active" => handle_app_simulate_active(id, &req.params, state),
 
         // Pane commands
         "pane.new" => handle_pane_new(id, &req.params, state),
@@ -231,8 +250,17 @@ fn handle_capabilities(id: Value) -> Response {
         "workspace.list_status",
         "workspace.clear_log",
         "workspace.list_log",
+        "workspace.report_meta",
+        "workspace.clear_meta",
+        "workspace.list_meta",
+        "workspace.report_meta_block",
+        "workspace.clear_meta_block",
+        "workspace.list_meta_blocks",
         "workspace.action",
         "workspace.report_pr",
+        "workspace.move_to_window",
+        "app.focus_override.set",
+        "app.simulate_active",
         "pane.new",
         "pane.list",
         "pane.focus",
@@ -514,6 +542,7 @@ fn handle_workspace_set_status(id: Value, params: &Value, state: &Arc<SharedStat
     let value = params.get("value").and_then(|v| v.as_str());
     let icon = params.get("icon").and_then(|v| v.as_str());
     let color = params.get("color").and_then(|v| v.as_str());
+    let url = params.get("url").and_then(|v| v.as_str());
 
     let (Some(key), Some(value)) = (key, value) else {
         return Response::error(id, "invalid_params", "Provide 'key' and 'value'");
@@ -528,7 +557,7 @@ fn handle_workspace_set_status(id: Value, params: &Value, state: &Arc<SharedStat
         };
 
         if let Some(ws) = ws {
-            ws.set_status(key, value, icon, color);
+            ws.set_status_with_url(key, value, icon, color, url);
             true
         } else {
             false
@@ -714,6 +743,7 @@ fn handle_workspace_list_status(
                     "value": e.value,
                     "icon": e.icon,
                     "color": e.color,
+                    "url": e.url,
                     "timestamp": e.timestamp,
                 })
             })
@@ -803,6 +833,244 @@ fn handle_workspace_list_log(
             })
             .collect();
         Response::success(id, serde_json::json!({"entries": entries}))
+    } else {
+        Response::error(id, "not_found", "Workspace not found")
+    }
+}
+
+// -----------------------------------------------------------------------
+// Metadata entry handlers
+// -----------------------------------------------------------------------
+
+fn handle_workspace_report_meta(
+    id: Value,
+    params: &Value,
+    state: &Arc<SharedState>,
+) -> Response {
+    let ws_id = match parse_workspace_param(params) {
+        Ok(v) => v,
+        Err(()) => return Response::error(id, "invalid_params", "Invalid workspace UUID"),
+    };
+    let key = params.get("key").and_then(|v| v.as_str());
+    let value = params.get("value").and_then(|v| v.as_str());
+    let (Some(key), Some(value)) = (key, value) else {
+        return Response::error(id, "invalid_params", "Provide 'key' and 'value'");
+    };
+
+    let icon = params.get("icon").and_then(|v| v.as_str());
+    let color = params.get("color").and_then(|v| v.as_str());
+    let url = params.get("url").and_then(|v| v.as_str());
+    let priority = params
+        .get("priority")
+        .and_then(|v| v.as_i64())
+        .unwrap_or(0) as i32;
+    let format = match params.get("format").and_then(|v| v.as_str()) {
+        Some("markdown") => crate::model::workspace::MetadataFormat::Markdown,
+        _ => crate::model::workspace::MetadataFormat::Plain,
+    };
+
+    let updated = {
+        let mut tm = lock_or_recover(&state.tab_manager);
+        let ws = if let Some(wid) = ws_id {
+            tm.workspace_mut(wid)
+        } else {
+            tm.selected_mut()
+        };
+        if let Some(ws) = ws {
+            ws.set_metadata(key, value, icon, color, url, priority, format);
+            true
+        } else {
+            false
+        }
+    };
+
+    if updated {
+        state.notify_ui_refresh();
+        Response::success(id, serde_json::json!({"ok": true}))
+    } else {
+        Response::error(id, "not_found", "Workspace not found")
+    }
+}
+
+fn handle_workspace_clear_meta(
+    id: Value,
+    params: &Value,
+    state: &Arc<SharedState>,
+) -> Response {
+    let ws_id = match parse_workspace_param(params) {
+        Ok(v) => v,
+        Err(()) => return Response::error(id, "invalid_params", "Invalid workspace UUID"),
+    };
+    let key = params.get("key").and_then(|v| v.as_str());
+
+    let mut tm = lock_or_recover(&state.tab_manager);
+    let ws = if let Some(wid) = ws_id {
+        tm.workspace_mut(wid)
+    } else {
+        tm.selected_mut()
+    };
+    if let Some(ws) = ws {
+        if let Some(key) = key {
+            ws.clear_metadata(key);
+        } else {
+            ws.metadata_entries.clear();
+        }
+        drop(tm);
+        state.notify_ui_refresh();
+        Response::success(id, serde_json::json!({"ok": true}))
+    } else {
+        Response::error(id, "not_found", "Workspace not found")
+    }
+}
+
+fn handle_workspace_list_meta(
+    id: Value,
+    params: &Value,
+    state: &Arc<SharedState>,
+) -> Response {
+    let ws_id = match parse_workspace_param(params) {
+        Ok(v) => v,
+        Err(()) => return Response::error(id, "invalid_params", "Invalid workspace UUID"),
+    };
+    let tm = lock_or_recover(&state.tab_manager);
+    let ws = if let Some(wid) = ws_id {
+        tm.iter().find(|ws| ws.id == wid)
+    } else {
+        tm.selected()
+    };
+    if let Some(ws) = ws {
+        let mut entries: Vec<&crate::model::workspace::MetadataEntry> =
+            ws.metadata_entries.iter().collect();
+        entries.sort_by(|a, b| b.priority.cmp(&a.priority).then(
+            a.timestamp.partial_cmp(&b.timestamp).unwrap_or(std::cmp::Ordering::Equal),
+        ));
+        let entries: Vec<Value> = entries
+            .iter()
+            .map(|e| {
+                serde_json::json!({
+                    "key": e.key,
+                    "value": e.value,
+                    "icon": e.icon,
+                    "color": e.color,
+                    "url": e.url,
+                    "priority": e.priority,
+                    "format": e.format,
+                    "timestamp": e.timestamp,
+                })
+            })
+            .collect();
+        Response::success(id, serde_json::json!({"entries": entries}))
+    } else {
+        Response::error(id, "not_found", "Workspace not found")
+    }
+}
+
+fn handle_workspace_report_meta_block(
+    id: Value,
+    params: &Value,
+    state: &Arc<SharedState>,
+) -> Response {
+    let ws_id = match parse_workspace_param(params) {
+        Ok(v) => v,
+        Err(()) => return Response::error(id, "invalid_params", "Invalid workspace UUID"),
+    };
+    let key = params.get("key").and_then(|v| v.as_str());
+    let content = params.get("content").and_then(|v| v.as_str());
+    let (Some(key), Some(content)) = (key, content) else {
+        return Response::error(id, "invalid_params", "Provide 'key' and 'content'");
+    };
+    let priority = params
+        .get("priority")
+        .and_then(|v| v.as_i64())
+        .unwrap_or(0) as i32;
+
+    let updated = {
+        let mut tm = lock_or_recover(&state.tab_manager);
+        let ws = if let Some(wid) = ws_id {
+            tm.workspace_mut(wid)
+        } else {
+            tm.selected_mut()
+        };
+        if let Some(ws) = ws {
+            ws.set_metadata_block(key, content, priority);
+            true
+        } else {
+            false
+        }
+    };
+
+    if updated {
+        state.notify_ui_refresh();
+        Response::success(id, serde_json::json!({"ok": true}))
+    } else {
+        Response::error(id, "not_found", "Workspace not found")
+    }
+}
+
+fn handle_workspace_clear_meta_block(
+    id: Value,
+    params: &Value,
+    state: &Arc<SharedState>,
+) -> Response {
+    let ws_id = match parse_workspace_param(params) {
+        Ok(v) => v,
+        Err(()) => return Response::error(id, "invalid_params", "Invalid workspace UUID"),
+    };
+    let key = params.get("key").and_then(|v| v.as_str());
+
+    let mut tm = lock_or_recover(&state.tab_manager);
+    let ws = if let Some(wid) = ws_id {
+        tm.workspace_mut(wid)
+    } else {
+        tm.selected_mut()
+    };
+    if let Some(ws) = ws {
+        if let Some(key) = key {
+            ws.clear_metadata_block(key);
+        } else {
+            ws.metadata_blocks.clear();
+        }
+        drop(tm);
+        state.notify_ui_refresh();
+        Response::success(id, serde_json::json!({"ok": true}))
+    } else {
+        Response::error(id, "not_found", "Workspace not found")
+    }
+}
+
+fn handle_workspace_list_meta_blocks(
+    id: Value,
+    params: &Value,
+    state: &Arc<SharedState>,
+) -> Response {
+    let ws_id = match parse_workspace_param(params) {
+        Ok(v) => v,
+        Err(()) => return Response::error(id, "invalid_params", "Invalid workspace UUID"),
+    };
+    let tm = lock_or_recover(&state.tab_manager);
+    let ws = if let Some(wid) = ws_id {
+        tm.iter().find(|ws| ws.id == wid)
+    } else {
+        tm.selected()
+    };
+    if let Some(ws) = ws {
+        let mut blocks: Vec<&crate::model::workspace::MetadataBlock> =
+            ws.metadata_blocks.iter().collect();
+        blocks.sort_by(|a, b| b.priority.cmp(&a.priority).then(
+            a.timestamp.partial_cmp(&b.timestamp).unwrap_or(std::cmp::Ordering::Equal),
+        ));
+        let blocks: Vec<Value> = blocks
+            .iter()
+            .map(|b| {
+                serde_json::json!({
+                    "key": b.key,
+                    "content": b.content,
+                    "priority": b.priority,
+                    "timestamp": b.timestamp,
+                })
+            })
+            .collect();
+        Response::success(id, serde_json::json!({"blocks": blocks}))
     } else {
         Response::error(id, "not_found", "Workspace not found")
     }
@@ -1955,6 +2223,76 @@ fn handle_workspace_report_pr(id: Value, params: &Value, state: &Arc<SharedState
     drop(tm);
     state.notify_ui_refresh();
     Response::success(id, serde_json::json!({"updated": true}))
+}
+
+// -----------------------------------------------------------------------
+// workspace.move_to_window
+// -----------------------------------------------------------------------
+
+fn handle_workspace_move_to_window(
+    id: Value,
+    params: &Value,
+    state: &Arc<SharedState>,
+) -> Response {
+    let ws_id = match parse_workspace_param(params) {
+        Ok(v) => v,
+        Err(()) => return Response::error(id, "invalid_params", "Invalid workspace UUID"),
+    };
+    let target_window = params
+        .get("window")
+        .and_then(|v| v.as_str())
+        .and_then(|s| uuid::Uuid::parse_str(s).ok());
+
+    let Some(target_window) = target_window else {
+        return Response::error(id, "invalid_params", "Provide 'window' (UUID)");
+    };
+
+    let mut tm = lock_or_recover(&state.tab_manager);
+    let ws = if let Some(wid) = ws_id {
+        tm.workspace_mut(wid)
+    } else {
+        tm.selected_mut()
+    };
+
+    if let Some(ws) = ws {
+        ws.window_id = Some(target_window);
+        drop(tm);
+        state.notify_ui_refresh();
+        Response::success(id, serde_json::json!({"ok": true}))
+    } else {
+        Response::error(id, "not_found", "Workspace not found")
+    }
+}
+
+// -----------------------------------------------------------------------
+// app.focus_override.set
+// -----------------------------------------------------------------------
+
+fn handle_app_focus_override(
+    id: Value,
+    params: &Value,
+    _state: &Arc<SharedState>,
+) -> Response {
+    let _active = params
+        .get("active")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+    // Focus override is a macOS-specific feature (NSApp.isActive override).
+    // On Linux/GTK this is a no-op but we accept the command for protocol parity.
+    Response::success(id, serde_json::json!({"ok": true}))
+}
+
+// -----------------------------------------------------------------------
+// app.simulate_active
+// -----------------------------------------------------------------------
+
+fn handle_app_simulate_active(
+    id: Value,
+    _params: &Value,
+    _state: &Arc<SharedState>,
+) -> Response {
+    // Simulate app activation — on Linux/GTK this is a no-op for protocol parity.
+    Response::success(id, serde_json::json!({"ok": true}))
 }
 
 // -----------------------------------------------------------------------

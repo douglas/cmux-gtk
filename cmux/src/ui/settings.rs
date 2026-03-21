@@ -420,6 +420,7 @@ pub fn show_settings(parent: &adw::ApplicationWindow) {
         let engine_row = engine_row.clone();
         let home_row = home_row.clone();
         let shortcuts_state = shortcuts_state.clone();
+        let saved_sound_name = current_settings.notifications.sound_name.clone();
         window.connect_close_request(move |_| {
             let theme = match theme_row.selected() {
                 1 => ThemeMode::Light,
@@ -458,6 +459,7 @@ pub fn show_settings(parent: &adw::ApplicationWindow) {
                 ),
                 notifications: settings::NotificationSettings {
                     sound_enabled: sound_row.is_active(),
+                    sound_name: saved_sound_name.clone(),
                     custom_command,
                     reorder_on_notification: reorder_notif_row.is_active(),
                 },
@@ -471,6 +473,8 @@ pub fn show_settings(parent: &adw::ApplicationWindow) {
                     show_progress: progress_row.is_active(),
                     show_status_pills: pills_row.is_active(),
                     focus_style: SidebarFocusStyle::from_index(focus_style_row.selected()),
+                    width: current_settings.sidebar.width,
+                    tint_color: current_settings.sidebar.tint_color.clone(),
                 },
                 browser: BrowserSettings {
                     search_engine: SearchEngine::from_index(engine_row.selected()),

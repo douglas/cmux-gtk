@@ -155,10 +155,31 @@ impl NewWorkspacePlacement {
 pub struct NotificationSettings {
     /// Play a sound on notification.
     pub sound_enabled: bool,
+    /// Sound name from the freedesktop sound theme (e.g. "bell", "message-new-instant").
+    /// "default" uses the desktop bell. "none" disables sound. Custom file paths
+    /// (ending in .wav, .ogg, .oga) are played directly.
+    pub sound_name: NotificationSound,
     /// Custom command to run on notification (optional).
     pub custom_command: Option<String>,
     /// Auto-reorder workspaces with new notifications toward the top.
     pub reorder_on_notification: bool,
+}
+
+/// Notification sound selection.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum NotificationSound {
+    /// Desktop bell (gdk4::Display::beep).
+    #[default]
+    Default,
+    /// No sound at all.
+    None,
+    /// Freedesktop sound theme name (e.g. "message-new-instant", "bell", "dialog-information").
+    #[serde(rename = "theme")]
+    Theme(String),
+    /// Custom file path (.wav, .ogg, .oga).
+    #[serde(rename = "file")]
+    File(String),
 }
 
 /// Socket access level.
@@ -301,6 +322,11 @@ pub struct SidebarDisplaySettings {
     pub show_progress: bool,
     pub show_status_pills: bool,
     pub focus_style: SidebarFocusStyle,
+    /// Sidebar width in pixels (0 = use default from libadwaita).
+    pub width: u32,
+    /// Sidebar tint color (CSS color string, e.g. "#1e1e2e" or "rgba(30,30,46,0.9)").
+    /// Empty string means no custom tint.
+    pub tint_color: String,
 }
 
 impl Default for SidebarDisplaySettings {
@@ -314,6 +340,8 @@ impl Default for SidebarDisplaySettings {
             show_progress: true,
             show_status_pills: true,
             focus_style: SidebarFocusStyle::default(),
+            width: 0,
+            tint_color: String::new(),
         }
     }
 }
