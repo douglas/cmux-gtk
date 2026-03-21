@@ -550,6 +550,33 @@ impl GhosttyGlSurface {
             });
         }
         self.add_controller(focus);
+
+        // File drag-and-drop — paste shell-escaped paths into the terminal
+        let drop_target =
+            gtk4::DropTarget::new(gdk4::FileList::static_type(), gdk4::DragAction::COPY);
+        {
+            let surface_widget = self.clone();
+            drop_target.connect_drop(move |_target, value, _x, _y| {
+                let Ok(file_list) = value.get::<gdk4::FileList>() else {
+                    return false;
+                };
+                let files = file_list.files();
+                if files.is_empty() {
+                    return false;
+                }
+                let paths: Vec<String> = files
+                    .iter()
+                    .filter_map(|f| f.path())
+                    .map(|p| shell_escape(&p.to_string_lossy()))
+                    .collect();
+                if !paths.is_empty() {
+                    let text = paths.join(" ");
+                    surface_widget.send_text(&text);
+                }
+                true
+            });
+        }
+        self.add_controller(drop_target);
     }
 
     fn on_key_event(
