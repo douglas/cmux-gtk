@@ -279,13 +279,10 @@ pub fn create_window(
 /// solves it with a two-phase approach: orphan all surfaces first, then
 /// rebuild in an idle callback once GTK has fully processed the unparent.
 pub fn rebuild_content(content_box: &gtk4::Box, state: &Rc<AppState>) {
-    // Phase 1: Remove all children so GTK can fully orphan the surfaces.
-    while let Some(child) = content_box.first_child() {
-        content_box.remove(&child);
-    }
-
-    // Explicitly unparent cached GL surfaces — they may have been nested
-    // inside intermediate containers (Paned, Box) that were just removed.
+    // Unparent cached GL surfaces first — they may be nested inside
+    // intermediate containers (Paned, Box) that we're about to remove.
+    // Doing this before removing content_box children avoids double-
+    // unrealize cascades on the GL surfaces.
     for surface in state.terminal_cache.borrow().values() {
         if let Some(parent) = surface.parent() {
             if let Ok(parent_box) = parent.downcast::<gtk4::Box>() {
@@ -294,62 +291,56 @@ pub fn rebuild_content(content_box: &gtk4::Box, state: &Rc<AppState>) {
         }
     }
 
-    // Phase 2: Schedule the actual rebuild on the next idle tick, giving GTK
-    // time to fully process the unparent cascade before re-adding surfaces.
-    let content_box = content_box.clone();
-    let state = state.clone();
-    glib::idle_add_local_once(move || {
-        // Guard: clear any children that may have been added by a racing
-        // rebuild callback (multiple refreshes can queue before idle fires).
-        while let Some(child) = content_box.first_child() {
-            content_box.remove(&child);
-        }
+    // Remove all children from the content box.
+    while let Some(child) = content_box.first_child() {
+        content_box.remove(&child);
+    }
 
-        // Clone workspace data out of the lock so we don't hold it during
-        // GTK widget construction (build_layout callbacks may re-acquire it).
-        let workspace_data = {
-            let tab_manager = lock_or_recover(&state.shared.tab_manager);
-            tab_manager.selected().map(|ws| {
-                (
-                    ws.id,
-                    ws.layout.clone(),
-                    ws.panels.clone(),
-                    ws.attention_panel_id,
-                    ws.zoomed_panel_id,
-                    ws.focused_panel_id,
-                )
-            })
-        };
+    // Rebuild synchronously to avoid a blank-frame flash.
+    // Clone workspace data out of the lock so we don't hold it during
+    // GTK widget construction (build_layout callbacks may re-acquire it).
+    let workspace_data = {
+        let tab_manager = lock_or_recover(&state.shared.tab_manager);
+        tab_manager.selected().map(|ws| {
+            (
+                ws.id,
+                ws.layout.clone(),
+                ws.panels.clone(),
+                ws.attention_panel_id,
+                ws.zoomed_panel_id,
+                ws.focused_panel_id,
+            )
+        })
+    };
 
-        if let Some((id, layout, panels, attention_panel_id, zoomed_panel_id, focused_panel_id)) =
-            workspace_data
-        {
-            let effective_attention = if crate::settings::load().pane_attention_ring {
-                attention_panel_id
-            } else {
-                None
-            };
-            let widget = if let Some(zoomed_id) = zoomed_panel_id {
-                split_view::build_zoomed(zoomed_id, &panels, &state)
-            } else {
-                split_view::build_layout(
-                    id,
-                    &layout,
-                    &panels,
-                    effective_attention,
-                    focused_panel_id,
-                    &state,
-                )
-            };
-            content_box.append(&widget);
-        } else if super::welcome::should_show_welcome() {
-            content_box.append(&super::welcome::build_welcome());
+    if let Some((id, layout, panels, attention_panel_id, zoomed_panel_id, focused_panel_id)) =
+        workspace_data
+    {
+        let effective_attention = if crate::settings::load().pane_attention_ring {
+            attention_panel_id
         } else {
-            let label = gtk4::Label::new(Some("No workspace selected"));
-            label.add_css_class("dim-label");
-            content_box.append(&label);
-        }
-    });
+            None
+        };
+        let widget = if let Some(zoomed_id) = zoomed_panel_id {
+            split_view::build_zoomed(zoomed_id, &panels, &state)
+        } else {
+            split_view::build_layout(
+                id,
+                &layout,
+                &panels,
+                effective_attention,
+                focused_panel_id,
+                &state,
+            )
+        };
+        content_box.append(&widget);
+    } else if super::welcome::should_show_welcome() {
+        content_box.append(&super::welcome::build_welcome());
+    } else {
+        let label = gtk4::Label::new(Some("No workspace selected"));
+        label.add_css_class("dim-label");
+        content_box.append(&label);
+    }
 }
 
 fn refresh_ui(list_box: &gtk4::ListBox, content_box: &gtk4::Box, state: &Rc<AppState>) {

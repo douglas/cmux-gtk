@@ -555,6 +555,8 @@ pub struct ghostty_surface_config_s {
     pub initial_input: *const c_char,
     pub wait_after_command: bool,
     pub context: ghostty_surface_context_e,
+    pub initial_width: u32,
+    pub initial_height: u32,
 }
 
 #[repr(C)]

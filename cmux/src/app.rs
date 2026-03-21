@@ -59,6 +59,11 @@ impl AppState {
         gl_surface.set_hexpand(true);
         gl_surface.set_vexpand(true);
 
+        // Match the grace-period background to the terminal theme color
+        if let Some(ref bg) = crate::settings::omarchy_colors().background {
+            gl_surface.set_initial_bg(bg);
+        }
+
         // Check if this panel has pending scrollback to restore
         let scrollback_file = {
             let mut tm = lock_or_recover(&self.shared.tab_manager);

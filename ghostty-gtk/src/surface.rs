@@ -45,10 +45,15 @@ fn cstring_input(text: &str, context: &'static str) -> Option<std::ffi::CString>
 mod gl_raw {
     pub type GLint = i32;
     pub type GLsizei = i32;
+    pub type GLfloat = f32;
+    pub type GLbitfield = u32;
+    pub const GL_COLOR_BUFFER_BIT: GLbitfield = 0x00004000;
 
     #[link(name = "GL")]
     extern "C" {
         pub fn glViewport(x: GLint, y: GLint, width: GLsizei, height: GLsizei);
+        pub fn glClearColor(red: GLfloat, green: GLfloat, blue: GLfloat, alpha: GLfloat);
+        pub fn glClear(mask: GLbitfield);
     }
 }
 
@@ -76,6 +81,13 @@ mod imp {
         pub(super) focus_restore_armed: Cell<bool>,
         pub(super) focus_disarm_source: RefCell<Option<glib::SourceId>>,
         pub(super) resize_focus_restore_source: RefCell<Option<glib::SourceId>>,
+        /// Grace period after surface creation during which the render
+        /// callback paints the initial background color instead of
+        /// drawing terminal content, hiding the mispositioned prompt
+        /// until Ctrl+L corrects it.
+        pub(super) created_at: Cell<Option<std::time::Instant>>,
+        /// Background color (r, g, b) to paint during the grace period.
+        pub(super) initial_bg: Cell<(f32, f32, f32)>,
     }
 
     #[glib::object_subclass]
@@ -138,6 +150,7 @@ mod imp {
     impl WidgetImpl for GhosttyGlSurface {
         fn realize(&self) {
             self.parent_realize();
+            tracing::debug!("GLArea realize");
             let widget = self.obj();
             widget.make_current();
             if widget.error().is_some() {
@@ -156,6 +169,7 @@ mod imp {
         }
 
         fn unrealize(&self) {
+            tracing::debug!("GLArea unrealize");
             // Tear down renderer GL state BEFORE the context is destroyed.
             // The context must still be current for cleanup to work.
             let surface = self.surface.get();
@@ -201,16 +215,21 @@ mod imp {
             if !surface.is_null() {
                 #[cfg(feature = "link-ghostty")]
                 unsafe {
-                    // Set the viewport so ghostty's renderer knows the surface
-                    // dimensions. GtkGLArea does NOT set glViewport before its
-                    // render signal.
                     let widget = self.obj();
                     let scale = widget.scale_factor();
                     let w = widget.width() * scale;
                     let h = widget.height() * scale;
                     gl_raw::glViewport(0, 0, w, h);
 
-                    ghostty_surface_draw(surface);
+                    // During the creation grace period, show the terminal
+                    // background color instead of the mispositioned prompt.
+                    if self.created_at.get().is_some() {
+                        let (r, g, b) = self.initial_bg.get();
+                        gl_raw::glClearColor(r, g, b, 1.0);
+                        gl_raw::glClear(gl_raw::GL_COLOR_BUFFER_BIT);
+                    } else {
+                        ghostty_surface_draw(surface);
+                    }
                 }
             }
             glib::Propagation::Stop
@@ -222,8 +241,8 @@ mod imp {
                 #[cfg(feature = "link-ghostty")]
                 unsafe {
                     // GTK4's GLArea resize signal passes physical pixels
-                    // (logical_width * scale_factor). Pass them directly to
-                    // ghostty — do not multiply by scale again.
+                    // (logical_width * scale_factor). Pass them directly
+                    // to ghostty — do not multiply by scale again.
                     let scale = self.obj().scale_factor() as f64;
                     ghostty_surface_set_content_scale(surface, scale, scale);
                     ghostty_surface_set_size(surface, width as u32, height as u32);
@@ -246,6 +265,14 @@ impl GhosttyGlSurface {
     /// Create a new terminal surface widget.
     pub fn new() -> Self {
         glib::Object::builder().build()
+    }
+
+    /// Set the background color shown during the initial grace period.
+    /// `hex` should be a CSS hex color like `#1a1a2e`.
+    pub fn set_initial_bg(&self, hex: &str) {
+        if let Some((r, g, b)) = parse_hex_color(hex) {
+            self.imp().initial_bg.set((r, g, b));
+        }
     }
 
     /// Initialize the ghostty surface with the given app.
@@ -275,6 +302,10 @@ impl GhosttyGlSurface {
         imp.app.set(app);
         self.setup_event_controllers();
 
+        // Create the surface on the first resize — that's when GTK has
+        // allocated real pixel dimensions. We pass those as
+        // initial_width/initial_height so the PTY starts at the correct size.
+        let created = Rc::new(Cell::new(false));
         let widget = self.clone();
         let wd = working_directory.map(|s| s.to_string());
         let cmd = command.map(|s| s.to_string());
@@ -282,21 +313,13 @@ impl GhosttyGlSurface {
             .iter()
             .map(|(k, v)| (k.to_string(), v.to_string()))
             .collect();
-
-        self.connect_realize(move |_w| {
-            widget.create_surface(app, wd.as_deref(), cmd.as_deref(), &env);
-            widget.grab_focus();
+        self.connect_resize(move |_w, width, height| {
+            if !created.get() && width > 0 && height > 0 {
+                created.set(true);
+                widget.create_surface(app, wd.as_deref(), cmd.as_deref(), &env);
+                widget.grab_focus();
+            }
         });
-
-        // GTK4: if the widget is already realized, connect_realize won't fire.
-        if self.is_realized() {
-            let env: Vec<(String, String)> = env_vars
-                .iter()
-                .map(|(k, v)| (k.to_string(), v.to_string()))
-                .collect();
-            self.create_surface(app, working_directory, command, &env);
-            self.grab_focus();
-        }
     }
 
     fn create_surface(
@@ -321,6 +344,7 @@ impl GhosttyGlSurface {
             // stack slots aggressively and uninitialized fields (env_vars,
             // env_var_count, initial_input, etc.) can contain garbage → SIGSEGV.
             let mut config: ghostty_surface_config_s = unsafe { std::mem::zeroed() };
+            config.scale_factor = self.scale_factor() as f64;
             let callback_userdata = Box::new(crate::callbacks::SurfaceUserdata::new(self));
 
             config.platform_tag = ghostty_platform_e::GHOSTTY_PLATFORM_LINUX;
@@ -362,6 +386,16 @@ impl GhosttyGlSurface {
                 config.env_var_count = env_vars_c.len();
             }
 
+            // Pass initial pixel dimensions so the PTY starts with the
+            // correct size instead of the 800×600 default.
+            let scale = self.scale_factor() as f64;
+            let w = self.width();
+            let h = self.height();
+            if w > 0 && h > 0 {
+                config.initial_width = (w as f64 * scale) as u32;
+                config.initial_height = (h as f64 * scale) as u32;
+            }
+
             let surface = unsafe { ghostty_surface_new(app, &config) };
             if surface.is_null() {
                 tracing::error!("ghostty_surface_new returned null");
@@ -370,6 +404,35 @@ impl GhosttyGlSurface {
 
             *self.imp().callback_userdata.borrow_mut() = Some(callback_userdata);
             self.imp().surface.set(surface);
+
+            // Start grace period: the render callback will paint black
+            // (terminal bg) instead of calling ghostty_surface_draw,
+            // hiding the mispositioned prompt.
+            self.imp().created_at.set(Some(std::time::Instant::now()));
+
+            // Freeze after the first black frame so the GL area stays
+            // dark without continuous repaints.
+            self.set_auto_render(false);
+
+            // After the shell has started, send Ctrl+L to clear and
+            // redraw the prompt at the top. Then resume rendering.
+            let widget = self.clone();
+            glib::timeout_add_local_once(
+                std::time::Duration::from_millis(150),
+                move || {
+                    widget.send_text("\x0c");
+                    let widget2 = widget.clone();
+                    glib::timeout_add_local_once(
+                        std::time::Duration::from_millis(50),
+                        move || {
+                            widget2.imp().created_at.set(None);
+                            widget2.set_auto_render(true);
+                            widget2.queue_draw();
+                        },
+                    );
+                },
+            );
+
             self.flush_pending_text();
         }
     }
@@ -1318,6 +1381,26 @@ fn shell_escape(s: &str) -> String {
 struct SendPtr(*mut c_void);
 
 unsafe impl Send for SendPtr {}
+
+/// Parse a CSS hex color (#RGB or #RRGGBB) into (r, g, b) floats in [0, 1].
+fn parse_hex_color(hex: &str) -> Option<(f32, f32, f32)> {
+    let hex = hex.strip_prefix('#')?;
+    match hex.len() {
+        6 => {
+            let r = u8::from_str_radix(&hex[0..2], 16).ok()?;
+            let g = u8::from_str_radix(&hex[2..4], 16).ok()?;
+            let b = u8::from_str_radix(&hex[4..6], 16).ok()?;
+            Some((r as f32 / 255.0, g as f32 / 255.0, b as f32 / 255.0))
+        }
+        3 => {
+            let r = u8::from_str_radix(&hex[0..1], 16).ok()?;
+            let g = u8::from_str_radix(&hex[1..2], 16).ok()?;
+            let b = u8::from_str_radix(&hex[2..3], 16).ok()?;
+            Some((r as f32 / 15.0, g as f32 / 15.0, b as f32 / 15.0))
+        }
+        _ => None,
+    }
+}
 
 #[cfg(test)]
 mod tests {
