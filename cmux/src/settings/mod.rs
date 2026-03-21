@@ -325,8 +325,13 @@ pub struct SidebarDisplaySettings {
     /// Sidebar width in pixels (0 = use default from libadwaita).
     pub width: u32,
     /// Sidebar tint color (CSS color string, e.g. "#1e1e2e" or "rgba(30,30,46,0.9)").
-    /// Empty string means no custom tint.
+    /// Empty string means no custom tint. Used as fallback when light/dark variants
+    /// are not set.
     pub tint_color: String,
+    /// Sidebar tint color for light mode. Overrides `tint_color` when in light mode.
+    pub tint_color_light: String,
+    /// Sidebar tint color for dark mode. Overrides `tint_color` when in dark mode.
+    pub tint_color_dark: String,
 }
 
 impl Default for SidebarDisplaySettings {
@@ -342,6 +347,25 @@ impl Default for SidebarDisplaySettings {
             focus_style: SidebarFocusStyle::default(),
             width: 0,
             tint_color: String::new(),
+            tint_color_light: String::new(),
+            tint_color_dark: String::new(),
+        }
+    }
+}
+
+impl SidebarDisplaySettings {
+    /// Resolve the effective tint color based on the current theme appearance.
+    /// Prefers light/dark variant; falls back to the general `tint_color`.
+    pub fn effective_tint_color(&self, is_dark: bool) -> &str {
+        let variant = if is_dark {
+            &self.tint_color_dark
+        } else {
+            &self.tint_color_light
+        };
+        if variant.is_empty() {
+            &self.tint_color
+        } else {
+            variant
         }
     }
 }

@@ -5,8 +5,8 @@ use libadwaita as adw;
 use libadwaita::prelude::*;
 
 use crate::settings::{
-    self, AppSettings, BrowserSettings, NewWorkspacePlacement, SearchEngine,
-    SidebarDisplaySettings, SidebarFocusStyle, SocketAccess, ThemeMode,
+    self, AppSettings, BrowserSettings, NewWorkspacePlacement, NotificationSound,
+    SearchEngine, SidebarDisplaySettings, SidebarFocusStyle, SocketAccess, ThemeMode,
 };
 
 /// Create and show the settings preferences window.
@@ -155,6 +155,42 @@ pub fn show_settings(parent: &adw::ApplicationWindow) {
     sound_row.set_subtitle("Play a sound when a notification arrives");
     sound_row.set_active(current_settings.notifications.sound_enabled);
     notif_group.add(&sound_row);
+
+    // Sound preset dropdown
+    let sound_preset_labels = [
+        "Desktop Bell",
+        "Message",
+        "Bell",
+        "Dialog Information",
+        "Dialog Warning",
+        "Complete",
+        "Trash Empty",
+        "Phone Incoming",
+        "None",
+        "Custom File...",
+    ];
+    let sound_preset_row = adw::ComboRow::new();
+    sound_preset_row.set_title("Sound Preset");
+    sound_preset_row.set_subtitle("Which sound to play for notifications");
+    let sound_preset_list =
+        gtk4::StringList::new(&sound_preset_labels);
+    sound_preset_row.set_model(Some(&sound_preset_list));
+    sound_preset_row.set_selected(match &current_settings.notifications.sound_name {
+        NotificationSound::Default => 0,
+        NotificationSound::Theme(name) => match name.as_str() {
+            "message-new-instant" => 1,
+            "bell" => 2,
+            "dialog-information" => 3,
+            "dialog-warning" => 4,
+            "complete" => 5,
+            "trash-empty" => 6,
+            "phone-incoming-call" => 7,
+            _ => 1,
+        },
+        NotificationSound::None => 8,
+        NotificationSound::File(_) => 9,
+    });
+    notif_group.add(&sound_preset_row);
 
     let reorder_notif_row = adw::SwitchRow::new();
     reorder_notif_row.set_title("Auto-Reorder on Notification");
@@ -420,7 +456,7 @@ pub fn show_settings(parent: &adw::ApplicationWindow) {
         let engine_row = engine_row.clone();
         let home_row = home_row.clone();
         let shortcuts_state = shortcuts_state.clone();
-        let saved_sound_name = current_settings.notifications.sound_name.clone();
+        let sound_preset_row = sound_preset_row.clone();
         window.connect_close_request(move |_| {
             let theme = match theme_row.selected() {
                 1 => ThemeMode::Light,
@@ -459,7 +495,19 @@ pub fn show_settings(parent: &adw::ApplicationWindow) {
                 ),
                 notifications: settings::NotificationSettings {
                     sound_enabled: sound_row.is_active(),
-                    sound_name: saved_sound_name.clone(),
+                    sound_name: match sound_preset_row.selected() {
+                        0 => NotificationSound::Default,
+                        1 => NotificationSound::Theme("message-new-instant".into()),
+                        2 => NotificationSound::Theme("bell".into()),
+                        3 => NotificationSound::Theme("dialog-information".into()),
+                        4 => NotificationSound::Theme("dialog-warning".into()),
+                        5 => NotificationSound::Theme("complete".into()),
+                        6 => NotificationSound::Theme("trash-empty".into()),
+                        7 => NotificationSound::Theme("phone-incoming-call".into()),
+                        8 => NotificationSound::None,
+                        // Custom file — preserve existing path
+                        _ => current_settings.notifications.sound_name.clone(),
+                    },
                     custom_command,
                     reorder_on_notification: reorder_notif_row.is_active(),
                 },
@@ -475,6 +523,8 @@ pub fn show_settings(parent: &adw::ApplicationWindow) {
                     focus_style: SidebarFocusStyle::from_index(focus_style_row.selected()),
                     width: current_settings.sidebar.width,
                     tint_color: current_settings.sidebar.tint_color.clone(),
+                    tint_color_light: current_settings.sidebar.tint_color_light.clone(),
+                    tint_color_dark: current_settings.sidebar.tint_color_dark.clone(),
                 },
                 browser: BrowserSettings {
                     search_engine: SearchEngine::from_index(engine_row.selected()),
