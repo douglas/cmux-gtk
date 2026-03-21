@@ -38,7 +38,8 @@ cargo build --release # Release build
 - **Browser history** — frecency-scored history with omnibar autocomplete
 - **Link routing** — configurable URL patterns for system vs cmux browser
 - **Keyboard copy mode** — Ghostty vi-style navigation with vim badge indicator
-- **Ghostty config** — reads `~/.config/ghostty/config` for themes, fonts, colors, background opacity, unfocused split opacity, and split divider color
+- **Ghostty config** — reads `~/.config/ghostty/config` for themes, fonts, colors, background opacity, unfocused split opacity, and split divider color; live reload via Ctrl+Shift+,
+- **File drag-and-drop** — drop files from file manager onto terminal to paste shell-escaped paths
 - **Omarchy themes** — colors.toml parsing with SIGUSR2 live reload
 - **Multi-window** — workspaces assignable across windows
 - **Welcome screen** — first-launch getting-started tips
@@ -112,7 +113,9 @@ To build with ghostty:
 | Ctrl+Shift+R | Rename workspace |
 | Ctrl+Shift+V | Enter copy mode |
 | Ctrl+O | Open folder as workspace |
+| Ctrl+Shift+U | Jump to latest unread |
 | Ctrl+, | Settings |
+| Ctrl+Shift+, | Reload ghostty config |
 | Ctrl+1-9 | Jump to workspace |
 
 ## Environment Variables
