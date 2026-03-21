@@ -29,5 +29,6 @@ tracing-subscriber = { workspace = true }
 anyhow = { workspace = true }
 thiserror = { workspace = true }
 libc = "0.2"
+base64 = "0.22"
 webkit6 = { workspace = true }
 pulldown-cmark = { workspace = true }

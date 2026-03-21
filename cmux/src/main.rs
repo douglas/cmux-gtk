@@ -3,6 +3,7 @@ mod browser_history;
 mod browser_profiles;
 mod ghostty_config;
 mod model;
+mod remote;
 mod notifications;
 mod port_scanner;
 mod session;
