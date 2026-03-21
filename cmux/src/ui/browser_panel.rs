@@ -227,6 +227,31 @@ pub fn get_favicon(panel_id: uuid::Uuid) -> Option<gdk4::Texture> {
     FAVICON_CACHE.with(|c| c.borrow().get(&panel_id).cloned())
 }
 
+/// Collect back/forward history URLs for all browser panels (for session snapshots).
+pub fn collect_webview_histories()
+    -> HashMap<uuid::Uuid, (Vec<String>, Vec<String>)>
+{
+    WEBVIEW_REGISTRY.with(|r| {
+        r.borrow()
+            .iter()
+            .filter_map(|(&id, wv)| {
+                let bfl = wv.back_forward_list()?;
+                let back: Vec<String> = bfl
+                    .back_list()
+                    .iter()
+                    .filter_map(|item| item.uri().map(|u| u.to_string()))
+                    .collect();
+                let forward: Vec<String> = bfl
+                    .forward_list()
+                    .iter()
+                    .filter_map(|item| item.uri().map(|u| u.to_string()))
+                    .collect();
+                Some((id, (back, forward)))
+            })
+            .collect()
+    })
+}
+
 /// Collect current URLs for all browser panels (for session snapshots).
 pub fn collect_webview_urls() -> HashMap<uuid::Uuid, String> {
     WEBVIEW_REGISTRY.with(|r| {

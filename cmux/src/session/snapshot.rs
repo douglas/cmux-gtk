@@ -110,6 +110,12 @@ pub struct SessionBrowserPanelSnapshot {
     pub should_render_web_view: bool,
     pub page_zoom: f64,
     pub developer_tools_visible: bool,
+    /// Back-navigation history URLs (most recent first).
+    #[serde(default)]
+    pub back_history: Vec<String>,
+    /// Forward-navigation history URLs (most recent first).
+    #[serde(default)]
+    pub forward_history: Vec<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -225,6 +231,8 @@ impl SessionPanelSnapshot {
                     should_render_web_view: true,
                     page_zoom: 1.0,
                     developer_tools_visible: false,
+                    back_history: Vec::new(),
+                    forward_history: Vec::new(),
                 })
             } else {
                 None

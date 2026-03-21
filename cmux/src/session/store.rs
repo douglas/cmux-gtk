@@ -173,6 +173,8 @@ pub fn create_snapshot(state: &crate::app::AppState) -> AppSessionSnapshot {
         crate::ui::browser_panel::collect_webview_zoom_levels();
     let browser_url_map: std::collections::HashMap<uuid::Uuid, String> =
         crate::ui::browser_panel::collect_webview_urls();
+    let browser_history_map: std::collections::HashMap<uuid::Uuid, (Vec<String>, Vec<String>)> =
+        crate::ui::browser_panel::collect_webview_histories();
 
     let tm = lock_or_recover(&state.shared.tab_manager);
     let now = std::time::SystemTime::now()
@@ -196,6 +198,10 @@ pub fn create_snapshot(state: &crate::app::AppState) -> AppSessionSnapshot {
                     }
                     if let Some(url) = browser_url_map.get(&panel.id) {
                         browser.url_string = Some(url.clone());
+                    }
+                    if let Some((back, forward)) = browser_history_map.get(&panel.id) {
+                        browser.back_history = back.clone();
+                        browser.forward_history = forward.clone();
                     }
                 }
                 snapshot
