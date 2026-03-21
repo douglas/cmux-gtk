@@ -334,6 +334,8 @@ pub fn rebuild_content(content_box: &gtk4::Box, state: &Rc<AppState>) {
                 )
             };
             content_box.append(&widget);
+        } else if super::welcome::should_show_welcome() {
+            content_box.append(&super::welcome::build_welcome());
         } else {
             let label = gtk4::Label::new(Some("No workspace selected"));
             label.add_css_class("dim-label");

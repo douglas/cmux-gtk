@@ -25,6 +25,14 @@ else
   unset ZDOTDIR
 fi
 
+# Prepend cmux bin directory to PATH if it exists
+_cmux_bin_dir="${_cmux_integration_dir}/../bin"
+if [[ -d "$_cmux_bin_dir" ]]; then
+  _cmux_bin_dir="${_cmux_bin_dir:A}"  # Resolve to absolute path
+  [[ ":$PATH:" != *":${_cmux_bin_dir}:"* ]] && export PATH="${_cmux_bin_dir}:$PATH"
+fi
+unset _cmux_bin_dir
+
 # Source the cmux integration
 if [[ -f "${_cmux_integration_dir}/cmux-zsh-integration.zsh" ]]; then
   source "${_cmux_integration_dir}/cmux-zsh-integration.zsh"

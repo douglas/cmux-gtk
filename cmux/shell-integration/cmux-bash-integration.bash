@@ -93,11 +93,13 @@ _cmux_git_read_branch_from_head() {
   return 0
 }
 
-# ── Git branch ───────────────────────────────────────────────────────
+# ── Git branch (fast path + fallback, async with throttle) ───────────
 _cmux_git_branch=""
 _cmux_git_head_path=""
+_cmux_git_last_report=0
 
-_cmux_update_git_branch() {
+# Core git branch detection — runs synchronously (used by async wrapper).
+_cmux_update_git_branch_sync() {
   # Try fast path first
   if [[ -z "$_cmux_git_head_path" ]] || [[ ! -f "$_cmux_git_head_path" ]]; then
     _cmux_git_head_path=$(_cmux_git_resolve_head_path 2>/dev/null)
@@ -119,12 +121,26 @@ _cmux_update_git_branch() {
       dirty="*"
     fi
     _cmux_git_branch="$branch"
-    _cmux_send_bg "report_git_branch ${branch}${dirty} $(_cmux_flags)"
+    _cmux_send "report_git_branch ${branch}${dirty} $(_cmux_flags)" \
+      >/dev/null 2>&1
   elif [[ -n "$_cmux_git_branch" ]]; then
     _cmux_git_branch=""
     _cmux_git_head_path=""
-    _cmux_send_bg "clear_git_branch $(_cmux_flags)"
+    _cmux_send "clear_git_branch $(_cmux_flags)" >/dev/null 2>&1
   fi
+}
+
+# Async wrapper — runs in background, throttled to max once per 3 seconds.
+_cmux_update_git_branch() {
+  local now
+  now=$(date +%s)
+  if (( now - _cmux_git_last_report < 3 )); then
+    return
+  fi
+  _cmux_git_last_report=$now
+
+  _cmux_update_git_branch_sync &
+  disown 2>/dev/null
 }
 
 # ── Async git HEAD watcher ────────────────────────────────────────────
@@ -231,7 +247,7 @@ _cmux_report_running() {
 
 # ── Semantic prompt markers (OSC 133) ─────────────────────────────────
 _cmux_osc133_prompt_start() {
-  printf '\e]133;A\a'
+  printf '\e]133;A;redraw=last;cl=line\a'
 }
 
 _cmux_osc133_command_start() {
@@ -242,10 +258,38 @@ _cmux_osc133_command_end() {
   printf '\e]133;D;%s\a' "$1"
 }
 
-# ── Process cleanup on exit ──────────────────────────────────────────
+# ── Process tree cleanup ─────────────────────────────────────────────
+# Recursively collect all descendant PIDs of a given PID.
+_cmux_child_pids() {
+  local parent="$1"
+  local children
+  children=$(pgrep -P "$parent" 2>/dev/null) || return
+  local pid
+  for pid in $children; do
+    echo "$pid"
+    _cmux_child_pids "$pid"
+  done
+}
+
+# Kill a process and all its descendants (leaf-first).
+_cmux_kill_process_tree() {
+  local pid="$1"
+  local -a descendants
+  mapfile -t descendants < <(_cmux_child_pids "$pid")
+  # Kill children first (reverse order for leaf-first)
+  local i
+  for (( i=${#descendants[@]}-1; i>=0; i-- )); do
+    kill "${descendants[$i]}" 2>/dev/null
+  done
+  kill "$pid" 2>/dev/null
+}
+
 _cmux_cleanup() {
   _cmux_stop_git_watcher
-  [[ -n "$_cmux_pr_poll_pid" ]] && kill "$_cmux_pr_poll_pid" 2>/dev/null
+  if [[ -n "$_cmux_pr_poll_pid" ]]; then
+    _cmux_kill_process_tree "$_cmux_pr_poll_pid"
+    _cmux_pr_poll_pid=""
+  fi
 }
 trap '_cmux_cleanup' EXIT
 

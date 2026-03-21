@@ -101,12 +101,14 @@ _cmux_git_read_branch_from_head() {
   return 0
 }
 
-# ── Git branch (fast path + fallback) ────────────────────────────────
+# ── Git branch (fast path + fallback, async with throttle) ───────────
 _cmux_git_branch=""
 _cmux_git_dirty=""
 _cmux_git_head_path=""
+_cmux_git_last_report=0
 
-_cmux_update_git_branch() {
+# Core git branch detection — runs synchronously (used by async wrapper).
+_cmux_update_git_branch_sync() {
   # Try fast path first (no fork)
   if [[ -z "$_cmux_git_head_path" ]] || [[ ! -f "$_cmux_git_head_path" ]]; then
     _cmux_git_head_path=$(_cmux_git_resolve_head_path 2>/dev/null)
@@ -131,14 +133,30 @@ _cmux_update_git_branch() {
     else
       _cmux_git_dirty="*"
     fi
-    _cmux_send_fire_forget \
-      "report_git_branch ${branch}${_cmux_git_dirty} $(_cmux_flags)"
+    _cmux_send "report_git_branch ${branch}${_cmux_git_dirty} $(_cmux_flags)" \
+      >/dev/null 2>&1
   elif [[ -n "$_cmux_git_branch" ]]; then
     _cmux_git_branch=""
     _cmux_git_dirty=""
     _cmux_git_head_path=""
-    _cmux_send_fire_forget "clear_git_branch $(_cmux_flags)"
+    _cmux_send "clear_git_branch $(_cmux_flags)" >/dev/null 2>&1
   fi
+}
+
+# Async wrapper — runs in background, throttled to max once per 3 seconds.
+# The fast path (reading .git/HEAD directly) is cheap enough to run inline,
+# but the dirty check (git diff-index) can block on large repos, so we
+# background the entire update when throttle allows.
+_cmux_update_git_branch() {
+  local now=$EPOCHSECONDS
+  [[ -z "$now" ]] && now=$(date +%s)
+  if (( now - _cmux_git_last_report < 3 )); then
+    return
+  fi
+  _cmux_git_last_report=$now
+
+  # Run in background subshell so precmd doesn't block
+  _cmux_update_git_branch_sync &!
 }
 
 # Invalidate cached HEAD path when CWD changes
@@ -275,7 +293,7 @@ _cmux_report_running() {
 
 # ── Semantic prompt markers (OSC 133) ─────────────────────────────────
 _cmux_osc133_prompt_start() {
-  printf '\e]133;A\a'
+  printf '\e]133;A;redraw=last;cl=line\a'
 }
 
 _cmux_osc133_command_start() {
@@ -284,6 +302,25 @@ _cmux_osc133_command_start() {
 
 _cmux_osc133_command_end() {
   printf '\e]133;D;%s\a' "$1"
+}
+
+# ── Prompt wrap guard ────────────────────────────────────────────────
+# If a command ran for ≥2 seconds and the prompt would wrap, print a
+# spacer line so that resize-triggered prompt redraw doesn't overwrite
+# command output.
+_cmux_cmd_start_time=0
+
+_cmux_prompt_wrap_guard() {
+  local now=$EPOCHSECONDS
+  [[ -z "$now" ]] && now=$(date +%s)
+  local elapsed=$(( now - _cmux_cmd_start_time ))
+  if (( elapsed >= 2 )); then
+    # Check if the prompt wraps (wider than terminal)
+    local prompt_len=${#${(%%)PS1}}
+    if (( prompt_len >= COLUMNS )); then
+      print ""
+    fi
+  fi
 }
 
 # ── WINCH signal guard ───────────────────────────────────────────────
@@ -296,10 +333,38 @@ TRAPWINCH() {
 }
 
 # ── Process tree cleanup ─────────────────────────────────────────────
+# Recursively collect all descendant PIDs of a given PID.
+_cmux_child_pids() {
+  local parent="$1"
+  local children
+  children=$(pgrep -P "$parent" 2>/dev/null) || return
+  local pid
+  for pid in ${=children}; do
+    echo "$pid"
+    _cmux_child_pids "$pid"
+  done
+}
+
+# Kill a process and all its descendants (leaf-first).
+_cmux_kill_process_tree() {
+  local pid="$1"
+  local descendants
+  descendants=($(_cmux_child_pids "$pid"))
+  # Kill children first (reverse order for leaf-first)
+  local i
+  for (( i=${#descendants[@]}; i>=1; i-- )); do
+    kill "${descendants[$i]}" 2>/dev/null
+  done
+  kill "$pid" 2>/dev/null
+}
+
 # Kill background child processes (git watcher, PR poll) on shell exit.
 _cmux_cleanup() {
   _cmux_stop_git_watcher
-  [[ -n "$_cmux_pr_poll_pid" ]] && kill "$_cmux_pr_poll_pid" 2>/dev/null
+  if [[ -n "$_cmux_pr_poll_pid" ]]; then
+    _cmux_kill_process_tree "$_cmux_pr_poll_pid"
+    _cmux_pr_poll_pid=""
+  fi
 }
 add-zsh-hook zshexit _cmux_cleanup
 
@@ -321,11 +386,18 @@ _cmux_precmd() {
   _cmux_update_git_branch
   _cmux_report_prompt
 
+  # Guard against prompt-wrap overwriting output after long commands
+  _cmux_prompt_wrap_guard
+
   # Semantic: mark start of prompt
   _cmux_osc133_prompt_start
 }
 
 _cmux_preexec() {
+  # Record command start time for wrap guard
+  _cmux_cmd_start_time=$EPOCHSECONDS
+  [[ -z "$_cmux_cmd_start_time" ]] && _cmux_cmd_start_time=$(date +%s)
+
   # Semantic: mark start of command output
   _cmux_osc133_command_start
 

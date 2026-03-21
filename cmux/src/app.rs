@@ -451,10 +451,11 @@ pub fn open_window(
     state.shared.install_ui_event_sender(window_id, ui_event_tx);
 
     // If no workspaces are assigned to this window, create a default one
+    // (unless this is first launch — the welcome screen handles that)
     {
         let mut tm = lock_or_recover(&state.shared.tab_manager);
         let has_workspaces = tm.iter().any(|ws| ws.window_id == Some(window_id));
-        if !has_workspaces {
+        if !has_workspaces && !crate::ui::welcome::should_show_welcome() {
             let mut ws = crate::model::Workspace::new();
             ws.window_id = Some(window_id);
             tm.add_workspace(ws);
