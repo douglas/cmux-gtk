@@ -290,6 +290,19 @@ pub fn show_settings(parent: &adw::ApplicationWindow, on_close: impl Fn() + 'sta
     suggestions_row.set_active(current_settings.browser.search_suggestions);
     browser_group.add(&suggestions_row);
 
+    let theme_labels: Vec<&str> = crate::settings::BrowserThemeMode::ALL
+        .iter()
+        .map(|m| m.label())
+        .collect();
+    let browser_theme_row = adw::ComboRow::new();
+    browser_theme_row.set_title("Browser Theme");
+    browser_theme_row.set_subtitle("Override color scheme for web pages");
+    browser_theme_row
+        .set_model(Some(&gtk4::StringList::new(&theme_labels)));
+    browser_theme_row
+        .set_selected(current_settings.browser.browser_theme.to_index());
+    browser_group.add(&browser_theme_row);
+
     browser_page.add(&browser_group);
     window.add(&browser_page);
 
@@ -546,6 +559,7 @@ pub fn show_settings(parent: &adw::ApplicationWindow, on_close: impl Fn() + 'sta
         let engine_row = engine_row.clone();
         let home_row = home_row.clone();
         let suggestions_row = suggestions_row.clone();
+        let browser_theme_row = browser_theme_row.clone();
         let shortcuts_state = shortcuts_state.clone();
         let sound_preset_row = sound_preset_row.clone();
         window.connect_close_request(move |_| {
@@ -626,6 +640,9 @@ pub fn show_settings(parent: &adw::ApplicationWindow, on_close: impl Fn() + 'sta
                     home_url,
                     search_suggestions: suggestions_row.is_active(),
                     http_allowlist: current_settings.browser.http_allowlist.clone(),
+                    browser_theme: crate::settings::BrowserThemeMode::from_index(
+                        browser_theme_row.selected(),
+                    ),
                 },
                 pane_attention_ring: attention_ring_row.is_active(),
                 pane_flash_enabled: flash_row.is_active(),

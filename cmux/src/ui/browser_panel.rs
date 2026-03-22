@@ -841,6 +841,7 @@ pub fn create_browser_widget(
     initial_url: Option<&str>,
     is_attention_source: bool,
     initial_zoom: Option<f64>,
+    shared: Option<std::sync::Arc<crate::app::SharedState>>,
 ) -> gtk4::Widget {
     let profile_name = browser_profiles::default_profile_name();
     create_browser_widget_with_profile(
@@ -849,6 +850,7 @@ pub fn create_browser_widget(
         is_attention_source,
         initial_zoom,
         &profile_name,
+        shared,
     )
 }
 
@@ -859,6 +861,7 @@ pub fn create_browser_widget_with_profile(
     is_attention_source: bool,
     initial_zoom: Option<f64>,
     profile_name: &str,
+    shared: Option<std::sync::Arc<crate::app::SharedState>>,
 ) -> gtk4::Widget {
     let browser_settings = settings::load().browser;
 
@@ -941,6 +944,19 @@ pub fn create_browser_widget_with_profile(
     zoom_in_btn.add_css_class("flat");
     nav_bar.append(&zoom_in_btn);
 
+    // ── Browser theme mode toggle ──
+    let theme_btn = gtk4::Button::new();
+    let initial_theme = browser_settings.browser_theme;
+    let theme_icon = match initial_theme {
+        settings::BrowserThemeMode::System => "weather-clear-symbolic",
+        settings::BrowserThemeMode::Light => "display-brightness-symbolic",
+        settings::BrowserThemeMode::Dark => "weather-clear-night-symbolic",
+    };
+    theme_btn.set_icon_name(theme_icon);
+    theme_btn.set_tooltip_text(Some(&format!("Browser Theme: {}", initial_theme.label())));
+    theme_btn.add_css_class("flat");
+    nav_bar.append(&theme_btn);
+
     let devtools_btn = gtk4::ToggleButton::new();
     devtools_btn.set_icon_name("utilities-terminal-symbolic");
     devtools_btn.set_tooltip_text(Some("Developer Tools"));
@@ -1003,9 +1019,14 @@ pub fn create_browser_widget_with_profile(
     // Register in the thread-local WebView registry for socket command access
     WEBVIEW_REGISTRY.with(|r| r.borrow_mut().insert(panel_id, web_view.clone()));
 
-    // Enable developer extras for inspector
+    // Enable developer extras for inspector + set user agent
     if let Some(ws) = webkit6::prelude::WebViewExt::settings(&web_view) {
         ws.set_enable_developer_extras(true);
+        // Force a Safari-compatible UA to avoid bot detection / degraded content
+        ws.set_user_agent(Some(
+            "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/605.1.15 \
+             (KHTML, like Gecko) Version/17.0 Safari/605.1.15",
+        ));
     }
 
     // Apply dark mode stylesheet if system is dark
@@ -1201,9 +1222,13 @@ pub fn create_browser_widget_with_profile(
     container.append(&download_bar);
     container.append(&console_pane);
 
-    // ── Download policy: convert non-displayable responses to downloads ──
+    // ── Navigation + download policy ──
     {
-        web_view.connect_decide_policy(|_wv, decision, decision_type| {
+        let wv_policy = web_view.clone();
+        let shared_for_policy = shared.clone();
+        let settings_for_policy = browser_settings.clone();
+        web_view.connect_decide_policy(move |_wv, decision, decision_type| {
+            // Response policy: convert non-displayable responses to downloads
             if decision_type == webkit6::PolicyDecisionType::Response {
                 if let Some(response_decision) =
                     decision.downcast_ref::<webkit6::ResponsePolicyDecision>()
@@ -1213,7 +1238,98 @@ pub fn create_browser_widget_with_profile(
                         return true;
                     }
                 }
+                return false;
             }
+
+            // Navigation action policy
+            if decision_type == webkit6::PolicyDecisionType::NavigationAction {
+                if let Some(nav_decision) =
+                    decision.downcast_ref::<webkit6::NavigationPolicyDecision>()
+                {
+                    if let Some(nav_action) = nav_decision.navigation_action() {
+                        if let Some(request) = nav_action.request() {
+                            if let Some(uri) = request.uri() {
+                                let url = uri.to_string();
+
+                                // Deep link / custom scheme handling (Gap 4):
+                                // hand off non-web schemes to xdg-open
+                                if let Some(scheme) = url.split("://").next().map(|s| s.to_lowercase()) {
+                                    if !matches!(
+                                        scheme.as_str(),
+                                        "http" | "https" | "about" | "data"
+                                            | "blob" | "javascript"
+                                    ) {
+                                        decision.ignore();
+                                        let _ = std::process::Command::new("xdg-open")
+                                            .arg(&url)
+                                            .spawn();
+                                        return true;
+                                    }
+                                }
+
+                                // Insecure HTTP interstitial (Gap 2):
+                                // block http:// unless host is in allowlist
+                                if url.starts_with("http://") {
+                                    let host = extract_host(&url);
+                                    if !host.is_empty() {
+                                        let is_allowed = matches!(
+                                            host.as_str(),
+                                            "localhost"
+                                                | "127.0.0.1"
+                                                | "::1"
+                                                | "0.0.0.0"
+                                        ) || settings_for_policy
+                                            .http_allowlist
+                                            .iter()
+                                            .any(|pat| {
+                                                if let Some(suffix) =
+                                                    pat.strip_prefix("*.")
+                                                {
+                                                    host.ends_with(suffix)
+                                                        || host == suffix
+                                                } else {
+                                                    host == *pat
+                                                }
+                                            });
+                                        if !is_allowed {
+                                            decision.ignore();
+                                            let html =
+                                                insecure_http_interstitial(&url);
+                                            wv_policy
+                                                .load_html(&html, Some(&url));
+                                            return true;
+                                        }
+                                    }
+                                }
+
+                                // Ctrl+click or middle-click → new tab (Gap 1)
+                                let mouse_button = nav_action.mouse_button();
+                                let modifiers = nav_action.modifiers();
+                                let ctrl_mask =
+                                    gdk4::ModifierType::CONTROL_MASK.bits();
+                                let is_ctrl_click =
+                                    (modifiers & ctrl_mask) != 0
+                                        && mouse_button == 1;
+                                let is_middle_click = mouse_button == 2;
+
+                                if is_ctrl_click || is_middle_click {
+                                    if let Some(ref shared) = shared_for_policy {
+                                        decision.ignore();
+                                        shared.send_ui_event(
+                                            crate::app::UiEvent::BrowserOpenInNewTab {
+                                                source_panel_id: panel_id,
+                                                url,
+                                            },
+                                        );
+                                        return true;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
             false
         });
     }
@@ -1269,14 +1385,26 @@ pub fn create_browser_widget_with_profile(
         });
     }
 
-    // ── Popup handling: window.open() / target="_blank" → load in same WebView ──
+    // ── Popup handling: window.open() / target="_blank" → open in new tab ──
     {
         let wv = web_view.clone();
+        let shared_for_create = shared.clone();
         web_view.connect_create(move |_wv, nav_action| {
-            // Instead of creating a new window, load the URL in the current WebView.
             if let Some(request) = nav_action.request() {
                 if let Some(uri) = request.uri() {
-                    wv.load_uri(&uri);
+                    let url = uri.to_string();
+                    if let Some(ref shared) = shared_for_create {
+                        // Open in a new browser tab within the same pane
+                        shared.send_ui_event(
+                            crate::app::UiEvent::BrowserOpenInNewTab {
+                                source_panel_id: panel_id,
+                                url,
+                            },
+                        );
+                    } else {
+                        // Fallback: load in same WebView if no shared state
+                        wv.load_uri(&uri);
+                    }
                 }
             }
             None::<gtk4::Widget>
@@ -1364,6 +1492,10 @@ pub fn create_browser_widget_with_profile(
                     let url = wv.uri().map(|u| u.to_string()).unwrap_or_default();
                     let title = wv.title().map(|t| t.to_string()).unwrap_or_default();
                     browser_history::record_visit(&url, &title);
+                    // Inject browser theme mode override
+                    let theme = settings::load().browser.browser_theme;
+                    let js = theme.theme_injection_js();
+                    wv.evaluate_javascript(js, None, None, gio::Cancellable::NONE, |_| {});
                 }
                 _ => {}
             }
@@ -1565,6 +1697,36 @@ pub fn create_browser_widget_with_profile(
         });
     }
 
+    // ── Browser theme toggle handler ──
+    {
+        let wv = web_view.clone();
+        let btn = theme_btn.clone();
+        theme_btn.connect_clicked(move |_| {
+            // Cycle: System → Light → Dark → System
+            let current = settings::load().browser.browser_theme;
+            let next = match current {
+                settings::BrowserThemeMode::System => settings::BrowserThemeMode::Light,
+                settings::BrowserThemeMode::Light => settings::BrowserThemeMode::Dark,
+                settings::BrowserThemeMode::Dark => settings::BrowserThemeMode::System,
+            };
+            // Save
+            let mut s = settings::load();
+            s.browser.browser_theme = next;
+            let _ = settings::save(&s);
+            // Update button
+            let icon = match next {
+                settings::BrowserThemeMode::System => "weather-clear-symbolic",
+                settings::BrowserThemeMode::Light => "display-brightness-symbolic",
+                settings::BrowserThemeMode::Dark => "weather-clear-night-symbolic",
+            };
+            btn.set_icon_name(icon);
+            btn.set_tooltip_text(Some(&format!("Browser Theme: {}", next.label())));
+            // Apply to current page
+            let js = next.theme_injection_js();
+            wv.evaluate_javascript(js, None, None, gio::Cancellable::NONE, |_| {});
+        });
+    }
+
     // ── Load initial URL ──
     let url = initial_url.map(|u| normalize_url(u, browser_settings.search_engine));
     if let Some(ref url) = url {
@@ -1640,4 +1802,64 @@ fn normalize_url(input: &str, engine: settings::SearchEngine) -> String {
         return format!("https://{trimmed}");
     }
     engine.search_url(trimmed)
+}
+
+/// Extract the host portion from a URL (e.g. "http://example.com:8080/path" → "example.com").
+fn extract_host(url: &str) -> String {
+    let after_scheme = url
+        .find("://")
+        .map(|i| &url[i + 3..])
+        .unwrap_or(url);
+    // Strip userinfo@ if present
+    let after_user = after_scheme
+        .find('@')
+        .map(|i| &after_scheme[i + 1..])
+        .unwrap_or(after_scheme);
+    // Take up to the first / or : (port)
+    let end = after_user
+        .find(&['/', ':', '?', '#'][..])
+        .unwrap_or(after_user.len());
+    after_user[..end].to_lowercase()
+}
+
+/// Generate an HTML interstitial warning page for insecure HTTP navigation.
+fn insecure_http_interstitial(url: &str) -> String {
+    let escaped = url
+        .replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;");
+    format!(
+        r#"<!DOCTYPE html>
+<html><head><meta charset="utf-8">
+<style>
+  body {{ font-family: system-ui, sans-serif; padding: 40px; text-align: center;
+         color: #333; background: #fff; }}
+  @media (prefers-color-scheme: dark) {{
+    body {{ color: #ddd; background: #1e1e2e; }}
+    .url {{ color: #f38ba8; }}
+    button {{ background: #45475a; color: #cdd6f4; border-color: #585b70; }}
+    button:hover {{ background: #585b70; }}
+  }}
+  h2 {{ margin-bottom: 8px; }}
+  .icon {{ font-size: 48px; margin-bottom: 16px; }}
+  .url {{ word-break: break-all; color: #d32; font-family: monospace; font-size: 14px; }}
+  .actions {{ margin-top: 24px; }}
+  button {{ padding: 8px 20px; margin: 0 8px; border-radius: 6px; cursor: pointer;
+            font-size: 14px; border: 1px solid #ccc; background: #f5f5f5; }}
+  button:hover {{ background: #e0e0e0; }}
+  button.proceed {{ background: #e74c3c; color: white; border-color: #c0392b; }}
+  button.proceed:hover {{ background: #c0392b; }}
+</style></head><body>
+<div class="icon">&#9888;&#65039;</div>
+<h2>Insecure Connection</h2>
+<p>This page is being served over an unencrypted HTTP connection:</p>
+<p class="url">{escaped}</p>
+<p>Your data may be visible to others on the network.</p>
+<div class="actions">
+  <button onclick="history.back()">Go Back</button>
+  <button class="proceed" onclick="location.href='{escaped}'">Proceed Anyway</button>
+</div>
+</body></html>"#
+    )
 }

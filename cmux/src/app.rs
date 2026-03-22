@@ -242,6 +242,11 @@ pub enum UiEvent {
         panel_id: Uuid,
     },
     ReopenClosedBrowser,
+    /// Open a URL in a new browser tab within the same pane as the source panel.
+    BrowserOpenInNewTab {
+        source_panel_id: Uuid,
+        url: String,
+    },
     OpenMarkdownFile,
     BrowserAction {
         panel_id: Uuid,

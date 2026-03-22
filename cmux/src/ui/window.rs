@@ -627,6 +627,27 @@ fn bind_shared_state_updates(
                             );
                         }
                     }
+                    UiEvent::BrowserOpenInNewTab {
+                        source_panel_id,
+                        url,
+                    } => {
+                        // Open URL in a new browser tab in the same pane as
+                        // source_panel_id (window.open / Ctrl+click / middle-click).
+                        let mut tm = lock_or_recover(&state.shared.tab_manager);
+                        if let Some(ws) = tm.selected_mut() {
+                            let mut panel =
+                                crate::model::panel::Panel::new_browser();
+                            panel.browser_url = Some(url.clone());
+                            panel.directory = Some(url);
+                            let new_panel_id = panel.id;
+                            ws.panels.insert(new_panel_id, panel);
+                            ws.layout
+                                .add_panel_to_pane(source_panel_id, new_panel_id);
+                            ws.focused_panel_id = Some(new_panel_id);
+                        }
+                        drop(tm);
+                        needs_refresh = true;
+                    }
                     UiEvent::ReopenClosedBrowser => {
                         if let Some(url) = state.shared.pop_closed_browser_url() {
                             let mut tm = lock_or_recover(&state.shared.tab_manager);
@@ -1072,6 +1093,31 @@ fn setup_shortcuts(
                 } else {
                     search_bar.set_visible(true);
                     search_entry.grab_focus();
+                }
+                glib::Propagation::Stop
+            }
+            // Ctrl+E: Use selection for Find — reads primary selection into find bar
+            (gdk4::Key::e, true, false) => {
+                // On Linux, the primary clipboard holds the current selection
+                let search_bar_c = search_bar.clone();
+                let search_entry_c = search_entry.clone();
+                if let Some(display) = gdk4::Display::default() {
+                    let primary = display.primary_clipboard();
+                    primary.read_text_async(
+                        gio::Cancellable::NONE,
+                        move |result| {
+                            if let Ok(Some(text)) = result {
+                                let text = text.to_string();
+                                if !text.is_empty() {
+                                    if !search_bar_c.is_visible() {
+                                        search_bar_c.set_visible(true);
+                                    }
+                                    search_entry_c.set_text(&text);
+                                    search_entry_c.grab_focus();
+                                }
+                            }
+                        },
+                    );
                 }
                 glib::Propagation::Stop
             }

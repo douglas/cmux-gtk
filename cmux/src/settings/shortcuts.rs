@@ -126,6 +126,10 @@ impl Default for ShortcutConfig {
             Keybinding::ctrl_shift("G"),
         );
         bindings.insert(
+            "find.use_selection".into(),
+            Keybinding::ctrl("e"),
+        );
+        bindings.insert(
             "notifications.toggle".into(),
             Keybinding::ctrl_shift("I"),
         );

@@ -206,6 +206,8 @@ pub struct BrowserSettings {
     /// Hosts allowed to load over insecure HTTP without warning.
     #[serde(default)]
     pub http_allowlist: Vec<String>,
+    /// Browser color scheme override (separate from app theme).
+    pub browser_theme: BrowserThemeMode,
 }
 
 impl Default for BrowserSettings {
@@ -215,6 +217,84 @@ impl Default for BrowserSettings {
             home_url: "https://duckduckgo.com".to_string(),
             search_suggestions: true,
             http_allowlist: Vec::new(),
+            browser_theme: BrowserThemeMode::System,
+        }
+    }
+}
+
+/// Browser-specific color scheme override.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum BrowserThemeMode {
+    #[default]
+    System,
+    Light,
+    Dark,
+}
+
+impl BrowserThemeMode {
+    pub const ALL: &[Self] = &[Self::System, Self::Light, Self::Dark];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::System => "System",
+            Self::Light => "Light",
+            Self::Dark => "Dark",
+        }
+    }
+
+    pub fn from_index(i: u32) -> Self {
+        match i {
+            1 => Self::Light,
+            2 => Self::Dark,
+            _ => Self::System,
+        }
+    }
+
+    pub fn to_index(self) -> u32 {
+        match self {
+            Self::System => 0,
+            Self::Light => 1,
+            Self::Dark => 2,
+        }
+    }
+
+    /// Returns the JavaScript to inject for forcing browser color scheme.
+    pub fn theme_injection_js(self) -> &'static str {
+        match self {
+            Self::System => r#"
+                (function() {
+                    var meta = document.getElementById('cmux-browser-theme-meta');
+                    if (meta) meta.remove();
+                    document.documentElement.removeAttribute('data-cmux-browser-theme');
+                })();
+            "#,
+            Self::Light => r#"
+                (function() {
+                    var meta = document.getElementById('cmux-browser-theme-meta');
+                    if (!meta) {
+                        meta = document.createElement('meta');
+                        meta.id = 'cmux-browser-theme-meta';
+                        meta.name = 'color-scheme';
+                        document.head.appendChild(meta);
+                    }
+                    meta.content = 'light';
+                    document.documentElement.setAttribute('data-cmux-browser-theme', 'light');
+                })();
+            "#,
+            Self::Dark => r#"
+                (function() {
+                    var meta = document.getElementById('cmux-browser-theme-meta');
+                    if (!meta) {
+                        meta = document.createElement('meta');
+                        meta.id = 'cmux-browser-theme-meta';
+                        meta.name = 'color-scheme';
+                        document.head.appendChild(meta);
+                    }
+                    meta.content = 'dark';
+                    document.documentElement.setAttribute('data-cmux-browser-theme', 'dark');
+                })();
+            "#,
         }
     }
 }

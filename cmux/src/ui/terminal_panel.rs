@@ -60,7 +60,7 @@ pub fn create_panel_widget(
         PanelType::Terminal => {
             create_terminal_widget(panel, is_attention_source, is_focused, state)
         }
-        PanelType::Browser => create_browser_widget(panel, is_attention_source),
+        PanelType::Browser => create_browser_widget(panel, is_attention_source, state),
         PanelType::Markdown => create_markdown_widget(panel, is_attention_source),
     }
 }
@@ -251,12 +251,17 @@ fn create_terminal_widget(
 }
 
 /// Create a browser panel with WebKitWebView.
-fn create_browser_widget(panel: &Panel, is_attention_source: bool) -> gtk4::Widget {
+fn create_browser_widget(
+    panel: &Panel,
+    is_attention_source: bool,
+    state: &std::rc::Rc<crate::app::AppState>,
+) -> gtk4::Widget {
     super::browser_panel::create_browser_widget(
         panel.id,
         panel.directory.as_deref(), // Reuse directory field as initial URL for browser panels
         is_attention_source,
         panel.pending_zoom,
+        Some(state.shared.clone()),
     )
 }
 
