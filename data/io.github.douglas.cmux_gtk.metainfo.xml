@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>io.github.douglas.cmux_gtk</id>
+  <metadata_license>MIT</metadata_license>
+  <project_license>MIT</project_license>
+  <name>cmux</name>
+  <summary>Terminal multiplexer for AI coding agents</summary>
+  <description>
+    <p>
+      cmux-gtk is a GTK4/libadwaita terminal multiplexer built with Rust and
+      Ghostty. It combines terminal workspaces, an integrated WebKit browser
+      with 100+ automation commands, and a rich socket API for AI agent control.
+    </p>
+    <p>Features include:</p>
+    <ul>
+      <li>Split panes with directional focus and zoom</li>
+      <li>Integrated browser with Playwright-style automation API</li>
+      <li>Shell integration for CWD, git branch, PR status, and port detection</li>
+      <li>Remote SSH workspaces with auto-bootstrap and SOCKS5 proxy</li>
+      <li>Session persistence (scrollback, geometry, browser history)</li>
+      <li>Command palette with 50+ commands and fuzzy search</li>
+      <li>V1 text and V2 JSON-RPC socket protocols (210+ methods)</li>
+    </ul>
+  </description>
+  <url type="homepage">https://github.com/douglas/cmux-gtk</url>
+  <url type="bugtracker">https://github.com/douglas/cmux-gtk/issues</url>
+  <developer id="io.github.douglas">
+    <name>Douglas</name>
+  </developer>
+  <releases>
+    <release version="0.62.0-alpha.1" date="2026-03-22">
+      <description>
+        <p>First public release — full feature parity with macOS cmux 0.62.0.</p>
+      </description>
+    </release>
+  </releases>
+  <content_rating type="oars-1.1" />
+  <requires>
+    <display_length compare="ge">800</display_length>
+  </requires>
+  <recommends>
+    <control>keyboard</control>
+    <control>pointing</control>
+  </recommends>
+</component>

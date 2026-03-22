@@ -257,17 +257,17 @@ fn create_browser_widget(
     state: &std::rc::Rc<crate::app::AppState>,
 ) -> gtk4::Widget {
     // Reuse cached browser widget if available (survives layout rebuilds).
-    if let Some(widget) = state.browser_cache.borrow().get(&panel.id) {
-        return widget.clone();
+    if let Some(widget) = state.get_cached_browser(panel.id) {
+        return widget;
     }
     let widget = super::browser_panel::create_browser_widget(
         panel.id,
-        panel.directory.as_deref(), // Reuse directory field as initial URL for browser panels
+        panel.directory.as_deref(),
         is_attention_source,
         panel.pending_zoom,
         Some(state.shared.clone()),
     );
-    state.browser_cache.borrow_mut().insert(panel.id, widget.clone());
+    state.cache_browser(panel.id, widget.clone());
     widget
 }
 

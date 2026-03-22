@@ -202,6 +202,16 @@ impl AppState {
             .borrow_mut()
             .retain(|panel_id, _| live_panels.contains(panel_id));
     }
+
+    /// Look up a cached browser widget by panel ID.
+    pub fn get_cached_browser(&self, id: Uuid) -> Option<gtk4::Widget> {
+        self.browser_cache.borrow().get(&id).cloned()
+    }
+
+    /// Store a browser widget in the cache.
+    pub fn cache_browser(&self, id: Uuid, widget: gtk4::Widget) {
+        self.browser_cache.borrow_mut().insert(id, widget);
+    }
 }
 
 /// Messages from background tasks that require a UI refresh.
