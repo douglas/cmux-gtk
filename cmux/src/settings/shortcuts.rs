@@ -65,22 +65,13 @@ impl Default for ShortcutConfig {
         let mut bindings = HashMap::new();
 
         // Workspace management
-        bindings.insert(
-            "workspace.new".into(),
-            Keybinding::ctrl_shift("T"),
-        );
-        bindings.insert(
-            "workspace.close".into(),
-            Keybinding::ctrl_shift("W"),
-        );
+        bindings.insert("workspace.new".into(), Keybinding::ctrl_shift("T"));
+        bindings.insert("workspace.close".into(), Keybinding::ctrl_shift("W"));
         bindings.insert(
             "workspace.latest_unread".into(),
             Keybinding::ctrl_shift("U"),
         );
-        bindings.insert(
-            "workspace.rename".into(),
-            Keybinding::ctrl_shift("R"),
-        );
+        bindings.insert("workspace.rename".into(), Keybinding::ctrl_shift("R"));
         bindings.insert(
             "workspace.move_up".into(),
             Keybinding::ctrl_shift("Page_Up"),
@@ -91,18 +82,9 @@ impl Default for ShortcutConfig {
         );
 
         // Pane management
-        bindings.insert(
-            "pane.close".into(),
-            Keybinding::ctrl_shift("Q"),
-        );
-        bindings.insert(
-            "pane.split_horizontal".into(),
-            Keybinding::ctrl_shift("D"),
-        );
-        bindings.insert(
-            "pane.split_vertical".into(),
-            Keybinding::ctrl_shift("E"),
-        );
+        bindings.insert("pane.close".into(), Keybinding::ctrl_shift("Q"));
+        bindings.insert("pane.split_horizontal".into(), Keybinding::ctrl_shift("D"));
+        bindings.insert("pane.split_vertical".into(), Keybinding::ctrl_shift("E"));
         bindings.insert(
             "pane.focus_prev".into(),
             Keybinding::ctrl_shift("bracketleft"),
@@ -151,50 +133,20 @@ impl Default for ShortcutConfig {
         );
 
         // UI toggles
-        bindings.insert(
-            "find".into(),
-            Keybinding::ctrl("f"),
-        );
-        bindings.insert(
-            "find.next".into(),
-            Keybinding::ctrl("g"),
-        );
-        bindings.insert(
-            "find.previous".into(),
-            Keybinding::ctrl_shift("G"),
-        );
-        bindings.insert(
-            "find.use_selection".into(),
-            Keybinding::ctrl("e"),
-        );
-        bindings.insert(
-            "notifications.toggle".into(),
-            Keybinding::ctrl_shift("I"),
-        );
-        bindings.insert(
-            "settings".into(),
-            Keybinding::ctrl("comma"),
-        );
+        bindings.insert("find".into(), Keybinding::ctrl("f"));
+        bindings.insert("find.next".into(), Keybinding::ctrl("g"));
+        bindings.insert("find.previous".into(), Keybinding::ctrl_shift("G"));
+        bindings.insert("find.use_selection".into(), Keybinding::ctrl("e"));
+        bindings.insert("notifications.toggle".into(), Keybinding::ctrl_shift("I"));
+        bindings.insert("settings".into(), Keybinding::ctrl("comma"));
 
         // Terminal font size
-        bindings.insert(
-            "font.increase".into(),
-            Keybinding::ctrl("equal"),
-        );
-        bindings.insert(
-            "font.decrease".into(),
-            Keybinding::ctrl("minus"),
-        );
-        bindings.insert(
-            "font.reset".into(),
-            Keybinding::ctrl("0"),
-        );
+        bindings.insert("font.increase".into(), Keybinding::ctrl("equal"));
+        bindings.insert("font.decrease".into(), Keybinding::ctrl("minus"));
+        bindings.insert("font.reset".into(), Keybinding::ctrl("0"));
 
         // Clear scrollback
-        bindings.insert(
-            "surface.clear".into(),
-            Keybinding::ctrl("k"),
-        );
+        bindings.insert("surface.clear".into(), Keybinding::ctrl("k"));
 
         // Browser-specific splits
         bindings.insert(
@@ -239,10 +191,7 @@ impl Default for ShortcutConfig {
         );
 
         // Reload ghostty configuration
-        bindings.insert(
-            "config.reload".into(),
-            Keybinding::ctrl_shift("comma"),
-        );
+        bindings.insert("config.reload".into(), Keybinding::ctrl_shift("comma"));
 
         Self { bindings }
     }
@@ -252,21 +201,6 @@ impl ShortcutConfig {
     /// Get the keybinding for an action.
     pub fn get(&self, action: &str) -> Option<&Keybinding> {
         self.bindings.get(action)
-    }
-
-    /// Check if a key event matches any shortcut. Returns the action name.
-    pub fn match_event(&self, key_name: &str, ctrl: bool, shift: bool, alt: bool) -> Option<&str> {
-        self.bindings.iter().find_map(|(action, binding)| {
-            if binding.key == key_name
-                && binding.ctrl == ctrl
-                && binding.shift == shift
-                && binding.alt == alt
-            {
-                Some(action.as_str())
-            } else {
-                None
-            }
-        })
     }
 }
 
@@ -288,7 +222,6 @@ pub fn save(config: &ShortcutConfig) -> Result<(), std::io::Error> {
     std::fs::create_dir_all(&dir)?;
 
     let path = dir.join("shortcuts.json");
-    let json = serde_json::to_string_pretty(config)
-        .map_err(|e| std::io::Error::other(e))?;
+    let json = serde_json::to_string_pretty(config).map_err(std::io::Error::other)?;
     std::fs::write(path, json)
 }

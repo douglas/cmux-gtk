@@ -116,11 +116,11 @@ fn truncate_scrollback(text: &str) -> String {
     // Check if we're splitting inside an ANSI CSI sequence (ESC [ ... letter).
     // Scan backward from safe_start looking for an ESC that hasn't been terminated.
     let bytes = truncated.as_bytes();
-    let mut i = safe_start;
     // Look back up to 32 bytes for an unterminated ESC[
     let lookback = safe_start.saturating_sub(32);
     let mut in_escape = false;
     let mut escape_start = 0;
+    #[allow(clippy::needless_range_loop)] // pos used as both index and value
     for pos in lookback..safe_start {
         if bytes[pos] == 0x1b {
             in_escape = true;
@@ -136,19 +136,20 @@ fn truncate_scrollback(text: &str) -> String {
         }
     }
 
-    if in_escape {
+    let i = if in_escape {
         // We're inside an unterminated CSI — skip past the escape start
-        i = escape_start;
+        let mut pos = escape_start;
         // Find the start of the previous line to avoid partial line
-        while i > lookback && bytes[i] != b'\n' {
-            i -= 1;
+        while pos > lookback && bytes[pos] != b'\n' {
+            pos -= 1;
         }
-        if bytes.get(i) == Some(&b'\n') {
-            i += 1;
+        if bytes.get(pos) == Some(&b'\n') {
+            pos += 1;
         }
+        pos
     } else {
-        i = safe_start;
-    }
+        safe_start
+    };
 
     truncated[i..].to_string()
 }
@@ -227,8 +228,10 @@ pub fn create_snapshot(state: &crate::app::AppState) -> AppSessionSnapshot {
 
     // Group workspaces by window_id
     let window_sizes = lock_or_recover(&state.shared.window_sizes);
-    let mut window_map: std::collections::BTreeMap<Option<uuid::Uuid>, Vec<SessionWorkspaceSnapshot>> =
-        std::collections::BTreeMap::new();
+    let mut window_map: std::collections::BTreeMap<
+        Option<uuid::Uuid>,
+        Vec<SessionWorkspaceSnapshot>,
+    > = std::collections::BTreeMap::new();
     for ws in tm.iter() {
         window_map
             .entry(ws.window_id)

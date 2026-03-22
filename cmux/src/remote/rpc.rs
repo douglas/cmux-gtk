@@ -73,10 +73,14 @@ impl RemoteRpcClient {
         let mut cmd = Command::new("ssh");
         cmd.args(["-T", "-S", "none"])
             .args([
-                "-o", "ConnectTimeout=6",
-                "-o", "ServerAliveInterval=20",
-                "-o", "ServerAliveCountMax=2",
-                "-o", "StrictHostKeyChecking=accept-new",
+                "-o",
+                "ConnectTimeout=6",
+                "-o",
+                "ServerAliveInterval=20",
+                "-o",
+                "ServerAliveCountMax=2",
+                "-o",
+                "StrictHostKeyChecking=accept-new",
             ])
             .args(ssh_args)
             .arg(format!("sh -c 'exec {} serve --stdio'", remote_daemon_path))
@@ -84,7 +88,9 @@ impl RemoteRpcClient {
             .stdout(Stdio::piped())
             .stderr(Stdio::null());
 
-        let mut child = cmd.spawn().map_err(|e| format!("Failed to spawn SSH: {}", e))?;
+        let mut child = cmd
+            .spawn()
+            .map_err(|e| format!("Failed to spawn SSH: {}", e))?;
 
         let stdin = child.stdin.take().ok_or("No stdin on SSH process")?;
         let stdout = child.stdout.take().ok_or("No stdout on SSH process")?;
@@ -124,7 +130,7 @@ impl RemoteRpcClient {
                 // Check if this is a response (has "id") or a push event
                 if let Some(id) = msg.get("id").and_then(|v| v.as_u64()) {
                     // Response to a pending call
-                    let sender = pending_clone.lock().unwrap().remove(&id);
+                    let sender = pending_clone.lock().expect("mutex poisoned").remove(&id);
                     if let Some(tx) = sender {
                         let result = if msg.get("ok").and_then(|v| v.as_bool()).unwrap_or(false) {
                             Ok(msg.get("result").cloned().unwrap_or(Value::Null))
@@ -149,24 +155,23 @@ impl RemoteRpcClient {
                     // Push event
                     if method == "proxy.stream.push" {
                         if let Some(params) = msg.get("params") {
-                            let stream_id =
-                                params.get("stream_id").and_then(|v| v.as_u64()).unwrap_or(0);
-                            let event_type = params
-                                .get("event")
-                                .and_then(|v| v.as_str())
-                                .unwrap_or("");
+                            let stream_id = params
+                                .get("stream_id")
+                                .and_then(|v| v.as_u64())
+                                .unwrap_or(0);
+                            let event_type =
+                                params.get("event").and_then(|v| v.as_str()).unwrap_or("");
 
-                            let data = params
-                                .get("data_base64")
-                                .and_then(|v| v.as_str())
-                                .and_then(|s| {
-                                    base64::engine::general_purpose::STANDARD.decode(s).ok()
-                                });
+                            let data =
+                                params
+                                    .get("data_base64")
+                                    .and_then(|v| v.as_str())
+                                    .and_then(|s| {
+                                        base64::engine::general_purpose::STANDARD.decode(s).ok()
+                                    });
 
                             let event = match event_type {
-                                "proxy.stream.data" => {
-                                    StreamEvent::Data(data.unwrap_or_default())
-                                }
+                                "proxy.stream.data" => StreamEvent::Data(data.unwrap_or_default()),
                                 "proxy.stream.eof" => StreamEvent::Eof(data),
                                 "proxy.stream.error" => StreamEvent::Error(
                                     params
@@ -178,7 +183,7 @@ impl RemoteRpcClient {
                                 _ => continue,
                             };
 
-                            let subs = subs_clone.lock().unwrap();
+                            let subs = subs_clone.lock().expect("mutex poisoned");
                             if let Some(tx) = subs.get(&stream_id) {
                                 let _ = tx.send(event);
                             }
@@ -221,13 +226,13 @@ impl RemoteRpcClient {
         });
 
         let (tx, rx) = std::sync::mpsc::channel();
-        self.pending.lock().unwrap().insert(id, tx);
+        self.pending.lock().expect("mutex poisoned").insert(id, tx);
 
         {
-            let mut stdin = self.stdin.lock().unwrap();
-            let line = serde_json::to_string(&request).unwrap();
+            let mut stdin = self.stdin.lock().expect("mutex poisoned");
+            let line = serde_json::to_string(&request).expect("RPC request JSON");
             if let Err(e) = writeln!(stdin, "{}", line) {
-                self.pending.lock().unwrap().remove(&id);
+                self.pending.lock().expect("mutex poisoned").remove(&id);
                 return Err(format!("Failed to write RPC request: {}", e));
             }
             let _ = stdin.flush();
@@ -237,7 +242,7 @@ impl RemoteRpcClient {
             Ok(Ok(result)) => Ok(result),
             Ok(Err(rpc_err)) => Err(format!("RPC error: {}", rpc_err)),
             Err(_) => {
-                self.pending.lock().unwrap().remove(&id);
+                self.pending.lock().expect("mutex poisoned").remove(&id);
                 Err("RPC call timed out".to_string())
             }
         }
@@ -273,9 +278,7 @@ impl RemoteRpcClient {
             .to_string();
 
         if !capabilities.contains(&"proxy.stream.push".to_string()) {
-            return Err(
-                "Remote daemon missing required capability: proxy.stream.push".to_string(),
-            );
+            return Err("Remote daemon missing required capability: proxy.stream.push".to_string());
         }
 
         Ok(HelloResponse {
@@ -310,11 +313,11 @@ impl RemoteRpcClient {
 
     /// Close a proxy stream.
     pub fn proxy_close(&self, stream_id: u64) -> Result<(), String> {
-        let _ = self.call(
-            "proxy.close",
-            serde_json::json!({"stream_id": stream_id}),
-        );
-        self.stream_subs.lock().unwrap().remove(&stream_id);
+        let _ = self.call("proxy.close", serde_json::json!({"stream_id": stream_id}));
+        self.stream_subs
+            .lock()
+            .expect("mutex poisoned")
+            .remove(&stream_id);
         Ok(())
     }
 
@@ -328,7 +331,10 @@ impl RemoteRpcClient {
         )?;
 
         let (tx, rx) = mpsc::channel();
-        self.stream_subs.lock().unwrap().insert(stream_id, tx);
+        self.stream_subs
+            .lock()
+            .expect("mutex poisoned")
+            .insert(stream_id, tx);
         Ok(rx)
     }
 

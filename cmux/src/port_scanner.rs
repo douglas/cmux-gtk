@@ -47,12 +47,9 @@ fn scan_and_update(shared: &Arc<SharedState>) -> Result<bool, Box<dyn std::error
         let tm = lock_or_recover(&shared.tab_manager);
         tm.iter()
             .flat_map(|ws| {
-                ws.panels.values().filter_map(|panel| {
-                    panel
-                        .directory
-                        .as_ref()
-                        .map(|dir| (panel.id, dir.clone()))
-                })
+                ws.panels
+                    .values()
+                    .filter_map(|panel| panel.directory.as_ref().map(|dir| (panel.id, dir.clone())))
             })
             .collect()
     };

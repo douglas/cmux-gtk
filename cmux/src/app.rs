@@ -7,8 +7,8 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
 
 use ghostty_sys::*;
-use gtk4::prelude::*;
 use gtk4::gio;
+use gtk4::prelude::*;
 use libadwaita as adw;
 use tokio::sync::mpsc::UnboundedSender;
 
@@ -126,12 +126,7 @@ impl AppState {
         }
 
         if let Some(app) = self.ghostty_app.borrow().as_ref() {
-            gl_surface.initialize_with_env(
-                app.raw(),
-                working_directory,
-                command,
-                &env_vars,
-            );
+            gl_surface.initialize_with_env(app.raw(), working_directory, command, &env_vars);
         }
 
         self.terminal_cache
@@ -157,11 +152,7 @@ impl AppState {
                 }
                 (panel.directory.clone(), panel.command.clone())
             };
-            self.terminal_surface_for(
-                panel_id,
-                working_directory.as_deref(),
-                command.as_deref(),
-            )
+            self.terminal_surface_for(panel_id, working_directory.as_deref(), command.as_deref())
         };
 
         surface.send_text(text)
@@ -218,13 +209,18 @@ impl AppState {
 #[derive(Debug)]
 pub enum UiEvent {
     Refresh,
-    SendInput { panel_id: Uuid, text: String },
-    SearchTotal { total: isize },
-    SearchSelected { selected: isize },
+    SendInput {
+        panel_id: Uuid,
+        text: String,
+    },
+    SearchTotal,
+    SearchSelected,
     StartSearch,
     EndSearch,
     OpenSettings,
-    TriggerFlash { panel_id: Uuid },
+    TriggerFlash {
+        panel_id: Uuid,
+    },
     SendKey {
         panel_id: Uuid,
         keyval: u32,
@@ -269,7 +265,9 @@ pub enum UiEvent {
         action: crate::ui::browser_panel::BrowserActionKind,
     },
     /// Open a URL in a new browser panel (routed from terminal hyperlinks).
-    OpenUrlInBrowser { url: String },
+    OpenUrlInBrowser {
+        url: String,
+    },
     /// Desktop notification triggered from terminal (OSC 9/777).
     DesktopNotification {
         surface: SendSurfacePtr,
@@ -289,7 +287,9 @@ unsafe impl Send for SendSurfacePtr {}
 unsafe impl Sync for SendSurfacePtr {}
 impl std::fmt::Debug for SendSurfacePtr {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_tuple("SendSurfacePtr").field(&(self.0 as *const ())).finish()
+        f.debug_tuple("SendSurfacePtr")
+            .field(&(self.0 as *const ()))
+            .finish()
     }
 }
 
@@ -328,16 +328,17 @@ impl SharedState {
 
     /// List all registered window IDs.
     pub fn window_ids(&self) -> Vec<Uuid> {
-        lock_or_recover(&self.ui_event_txs).keys().copied().collect()
+        lock_or_recover(&self.ui_event_txs)
+            .keys()
+            .copied()
+            .collect()
     }
 
     /// Send a UI event to the first registered window (primary).
     /// Most events (socket commands, notifications) target the active window.
     pub fn send_ui_event(&self, event: UiEvent) -> bool {
         let txs = lock_or_recover(&self.ui_event_txs);
-        txs.values()
-            .next()
-            .is_some_and(|tx| tx.send(event).is_ok())
+        txs.values().next().is_some_and(|tx| tx.send(event).is_ok())
     }
 
     /// Send a UI event to a specific window.
@@ -465,8 +466,7 @@ fn activate(app: &adw::Application, state: &Rc<AppState>) {
                             let w = win.width();
                             let h = win.height();
                             if w > 0 && h > 0 {
-                                lock_or_recover(&state.shared.window_sizes)
-                                    .insert(wid, (w, h));
+                                lock_or_recover(&state.shared.window_sizes).insert(wid, (w, h));
                             }
                         }
                     }
@@ -484,11 +484,7 @@ fn activate(app: &adw::Application, state: &Rc<AppState>) {
 }
 
 /// Open a new window with its own event channel and workspace set.
-pub fn open_window(
-    app: &adw::Application,
-    state: &Rc<AppState>,
-    window_id: Uuid,
-) {
+pub fn open_window(app: &adw::Application, state: &Rc<AppState>, window_id: Uuid) {
     let (ui_event_tx, ui_event_rx) = tokio::sync::mpsc::unbounded_channel();
     state.shared.install_ui_event_sender(window_id, ui_event_tx);
 
@@ -941,7 +937,7 @@ struct CmuxCallbackHandler {
 
 impl ghostty_gtk::callbacks::GhosttyCallbackHandler for CmuxCallbackHandler {
     fn on_wakeup(&self) {
-        let is_null = GHOSTTY_APP_PTR.lock().ok().map_or(true, |p| p.is_null());
+        let is_null = GHOSTTY_APP_PTR.lock().ok().is_none_or(|p| p.is_null());
         if is_null {
             return;
         }
@@ -994,7 +990,10 @@ impl ghostty_gtk::callbacks::GhosttyCallbackHandler for CmuxCallbackHandler {
                             if cstr.is_null() {
                                 None
                             } else {
-                                std::ffi::CStr::from_ptr(cstr).to_str().ok().map(String::from)
+                                std::ffi::CStr::from_ptr(cstr)
+                                    .to_str()
+                                    .ok()
+                                    .map(String::from)
                             }
                         };
                         if let Some(title) = title {
@@ -1016,7 +1015,10 @@ impl ghostty_gtk::callbacks::GhosttyCallbackHandler for CmuxCallbackHandler {
                             if cstr.is_null() {
                                 None
                             } else {
-                                std::ffi::CStr::from_ptr(cstr).to_str().ok().map(String::from)
+                                std::ffi::CStr::from_ptr(cstr)
+                                    .to_str()
+                                    .ok()
+                                    .map(String::from)
                             }
                         };
                         if let Some(pwd) = pwd {
@@ -1038,14 +1040,11 @@ impl ghostty_gtk::callbacks::GhosttyCallbackHandler for CmuxCallbackHandler {
                 true
             }
             ghostty_action_tag_e::GHOSTTY_ACTION_SEARCH_TOTAL => {
-                let total = unsafe { action.action.search_total.total };
-                self.shared.send_ui_event(UiEvent::SearchTotal { total });
+                self.shared.send_ui_event(UiEvent::SearchTotal);
                 true
             }
             ghostty_action_tag_e::GHOSTTY_ACTION_SEARCH_SELECTED => {
-                let selected = unsafe { action.action.search_selected.selected };
-                self.shared
-                    .send_ui_event(UiEvent::SearchSelected { selected });
+                self.shared.send_ui_event(UiEvent::SearchSelected);
                 true
             }
             ghostty_action_tag_e::GHOSTTY_ACTION_RING_BELL => {
@@ -1069,8 +1068,7 @@ impl ghostty_gtk::callbacks::GhosttyCallbackHandler for CmuxCallbackHandler {
                     }
                 };
                 if let Some(url) = url {
-                    self.shared
-                        .send_ui_event(UiEvent::OpenUrlInBrowser { url });
+                    self.shared.send_ui_event(UiEvent::OpenUrlInBrowser { url });
                 }
                 true
             }

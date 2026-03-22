@@ -26,9 +26,7 @@ impl std::fmt::Debug for BrowserActionKind {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::Navigate { url } => f.debug_struct("Navigate").field("url", url).finish(),
-            Self::Eval { script, .. } => {
-                f.debug_struct("Eval").field("script", script).finish()
-            }
+            Self::Eval { script, .. } => f.debug_struct("Eval").field("script", script).finish(),
             Self::GetUrl { .. } => write!(f, "GetUrl"),
             Self::GetText { .. } => write!(f, "GetText"),
             Self::GoBack => write!(f, "GoBack"),
@@ -37,18 +35,21 @@ impl std::fmt::Debug for BrowserActionKind {
             Self::SetZoom { zoom } => f.debug_struct("SetZoom").field("zoom", zoom).finish(),
             Self::ZoomIn => write!(f, "ZoomIn"),
             Self::ZoomOut => write!(f, "ZoomOut"),
-            Self::WaitForSelector { selector, .. } => {
-                f.debug_struct("WaitForSelector").field("selector", selector).finish()
-            }
+            Self::WaitForSelector { selector, .. } => f
+                .debug_struct("WaitForSelector")
+                .field("selector", selector)
+                .finish(),
             Self::WaitForNavigation { .. } => write!(f, "WaitForNavigation"),
             Self::WaitForLoadState { .. } => write!(f, "WaitForLoadState"),
-            Self::WaitForFunction { expression, .. } => {
-                f.debug_struct("WaitForFunction").field("expression", expression).finish()
-            }
+            Self::WaitForFunction { expression, .. } => f
+                .debug_struct("WaitForFunction")
+                .field("expression", expression)
+                .finish(),
             Self::GetConsoleMessages { .. } => write!(f, "GetConsoleMessages"),
-            Self::SetDialogHandler { action, .. } => {
-                f.debug_struct("SetDialogHandler").field("action", action).finish()
-            }
+            Self::SetDialogHandler { action, .. } => f
+                .debug_struct("SetDialogHandler")
+                .field("action", action)
+                .finish(),
             Self::InjectScript { .. } => write!(f, "InjectScript"),
             Self::InjectStyle { .. } => write!(f, "InjectStyle"),
             Self::RemoveInjected => write!(f, "RemoveInjected"),
@@ -58,7 +59,9 @@ impl std::fmt::Debug for BrowserActionKind {
 
 pub enum BrowserActionKind {
     // Phase 1: existing commands
-    Navigate { url: String },
+    Navigate {
+        url: String,
+    },
     Eval {
         script: String,
         reply: tokio::sync::oneshot::Sender<Result<Value, String>>,
@@ -72,7 +75,9 @@ pub enum BrowserActionKind {
     GoBack,
     GoForward,
     Reload,
-    SetZoom { zoom: f64 },
+    SetZoom {
+        zoom: f64,
+    },
     ZoomIn,
     ZoomOut,
 
@@ -106,8 +111,12 @@ pub enum BrowserActionKind {
     },
 
     // Phase 5: Script & style injection
-    InjectScript { script: String },
-    InjectStyle { css: String },
+    InjectScript {
+        script: String,
+    },
+    InjectStyle {
+        css: String,
+    },
     RemoveInjected,
 }
 
@@ -160,13 +169,15 @@ struct ElementRef {
     selector: String,
 }
 
+#[allow(dead_code)] // fields populated by dialog signal handlers
 struct DialogHandler {
-    action: String,         // "accept" or "dismiss"
+    action: String, // "accept" or "dismiss"
     prompt_text: Option<String>,
 }
 
 /// Shared persistent NetworkSession — cookies and storage persist across panels and restarts.
 /// Data stored at `~/.local/share/cmux/webkit/`.
+#[allow(dead_code)] // available for WebView creation
 fn shared_network_session() -> webkit6::NetworkSession {
     thread_local! {
         static SESSION: RefCell<Option<webkit6::NetworkSession>> = const { RefCell::new(None) };
@@ -238,9 +249,7 @@ pub fn get_favicon(panel_id: uuid::Uuid) -> Option<gdk4::Texture> {
 }
 
 /// Collect back/forward history URLs for all browser panels (for session snapshots).
-pub fn collect_webview_histories()
-    -> HashMap<uuid::Uuid, (Vec<String>, Vec<String>)>
-{
+pub fn collect_webview_histories() -> HashMap<uuid::Uuid, (Vec<String>, Vec<String>)> {
     WEBVIEW_REGISTRY.with(|r| {
         r.borrow()
             .iter()
@@ -304,11 +313,7 @@ pub fn release_ref(ref_id: &str) -> bool {
 /// Otherwise return it as-is.
 pub fn resolve_selector(selector: &str) -> Option<String> {
     if selector.starts_with("@e") {
-        ELEMENT_REFS.with(|refs| {
-            refs.borrow()
-                .get(selector)
-                .map(|r| r.selector.clone())
-        })
+        ELEMENT_REFS.with(|refs| refs.borrow().get(selector).map(|r| r.selector.clone()))
     } else {
         Some(selector.to_string())
     }
@@ -327,12 +332,7 @@ pub fn clear_refs_for_panel(panel_id: uuid::Uuid) {
 
 /// Reverse-lookup the panel_id for a WebView in the registry.
 fn panel_id_for_webview(wv: &webkit6::WebView) -> Option<uuid::Uuid> {
-    WEBVIEW_REGISTRY.with(|r| {
-        r.borrow()
-            .iter()
-            .find(|(_, v)| *v == wv)
-            .map(|(&id, _)| id)
-    })
+    WEBVIEW_REGISTRY.with(|r| r.borrow().iter().find(|(_, v)| *v == wv).map(|(&id, _)| id))
 }
 
 /// Pick a unique download path in `dir`, appending " (1)", " (2)", etc. if needed.
@@ -433,9 +433,7 @@ fn poll_js_until_truthy(
 
 fn wire_download_handling(session: &webkit6::NetworkSession) {
     session.connect_download_started(|_session, download| {
-        let panel_id = download
-            .web_view()
-            .and_then(|wv| panel_id_for_webview(&wv));
+        let panel_id = download.web_view().and_then(|wv| panel_id_for_webview(&wv));
 
         if let Some(pid) = panel_id {
             update_download_bar(pid, "Starting download…", 0.0, false);
@@ -497,9 +495,7 @@ fn wire_download_handling(session: &webkit6::NetworkSession) {
             download.connect_finished(move |dl| {
                 let dest_path = dl.destination().map(|d| {
                     let s = d.to_string();
-                    s.strip_prefix("file://")
-                        .unwrap_or(&s)
-                        .to_string()
+                    s.strip_prefix("file://").unwrap_or(&s).to_string()
                 });
                 let filename = dest_path
                     .as_deref()
@@ -517,16 +513,13 @@ fn wire_download_handling(session: &webkit6::NetworkSession) {
                 }
 
                 // Auto-hide after 8 seconds
-                glib::timeout_add_local_once(
-                    std::time::Duration::from_secs(8),
-                    move || {
-                        DOWNLOAD_BARS.with(|bars| {
-                            if let Some(bar) = bars.borrow().get(&pid) {
-                                bar.container.set_visible(false);
-                            }
-                        });
-                    },
-                );
+                glib::timeout_add_local_once(std::time::Duration::from_secs(8), move || {
+                    DOWNLOAD_BARS.with(|bars| {
+                        if let Some(bar) = bars.borrow().get(&pid) {
+                            bar.container.set_visible(false);
+                        }
+                    });
+                });
             });
         }
 
@@ -534,12 +527,7 @@ fn wire_download_handling(session: &webkit6::NetworkSession) {
         if let Some(pid) = panel_id {
             download.connect_failed(move |_dl, error| {
                 let msg = error.message();
-                update_download_bar(
-                    pid,
-                    &format!("Download failed: {msg}"),
-                    0.0,
-                    false,
-                );
+                update_download_bar(pid, &format!("Download failed: {msg}"), 0.0, false);
             });
         }
     });
@@ -577,8 +565,7 @@ pub fn execute_action(panel_id: uuid::Uuid, action: BrowserActionKind) {
             }
         }
         BrowserActionKind::GetUrl { reply } => {
-            let result = get_webview(panel_id)
-                .and_then(|wv| wv.uri().map(|u| u.to_string()));
+            let result = get_webview(panel_id).and_then(|wv| wv.uri().map(|u| u.to_string()));
             match result {
                 Some(url) => {
                     let _ = reply.send(Ok(serde_json::json!({"url": url})));
@@ -649,14 +636,15 @@ pub fn execute_action(panel_id: uuid::Uuid, action: BrowserActionKind) {
                 r#"(function(){{ return document.querySelector({sel_js}) ? 'found' : ''; }})()"#,
             );
             poll_js_until_truthy(
-                panel_id, &poll_js, timeout_ms, "selector",
-                serde_json::json!({"found": true}), reply,
+                panel_id,
+                &poll_js,
+                timeout_ms,
+                "selector",
+                serde_json::json!({"found": true}),
+                reply,
             );
         }
-        BrowserActionKind::WaitForNavigation {
-            timeout_ms,
-            reply,
-        } => {
+        BrowserActionKind::WaitForNavigation { timeout_ms, reply } => {
             if let Some(wv) = get_webview(panel_id) {
                 let reply = Rc::new(Cell::new(Some(reply)));
                 let reply_timeout = reply.clone();
@@ -695,14 +683,17 @@ pub fn execute_action(panel_id: uuid::Uuid, action: BrowserActionKind) {
                 let _ = reply.send(Err("Browser panel not found".to_string()));
             }
         }
-        BrowserActionKind::WaitForLoadState {
-            timeout_ms,
-            reply,
-        } => {
-            let poll_js = r#"(function(){ return document.readyState === 'complete' ? 'complete' : ''; })()"#.to_string();
+        BrowserActionKind::WaitForLoadState { timeout_ms, reply } => {
+            let poll_js =
+                r#"(function(){ return document.readyState === 'complete' ? 'complete' : ''; })()"#
+                    .to_string();
             poll_js_until_truthy(
-                panel_id, &poll_js, timeout_ms, "load state",
-                serde_json::json!({"state": "complete"}), reply,
+                panel_id,
+                &poll_js,
+                timeout_ms,
+                "load state",
+                serde_json::json!({"state": "complete"}),
+                reply,
             );
         }
         BrowserActionKind::WaitForFunction {
@@ -710,24 +701,25 @@ pub fn execute_action(panel_id: uuid::Uuid, action: BrowserActionKind) {
             timeout_ms,
             reply,
         } => {
-            let poll_js = format!(
-                r#"(function(){{ return ({expression}) ? 'truthy' : ''; }})()"#,
-            );
+            let poll_js = format!(r#"(function(){{ return ({expression}) ? 'truthy' : ''; }})()"#,);
             poll_js_until_truthy(
-                panel_id, &poll_js, timeout_ms, "function",
-                serde_json::json!({"result": true}), reply,
+                panel_id,
+                &poll_js,
+                timeout_ms,
+                "function",
+                serde_json::json!({"result": true}),
+                reply,
             );
         }
         BrowserActionKind::GetConsoleMessages { reply } => {
-            let messages = CONSOLE_BUFFERS.with(|bufs| {
-                bufs.borrow()
-                    .get(&panel_id)
-                    .cloned()
-                    .unwrap_or_default()
-            });
+            let messages = CONSOLE_BUFFERS
+                .with(|bufs| bufs.borrow().get(&panel_id).cloned().unwrap_or_default());
             let _ = reply.send(Ok(serde_json::json!({"messages": messages})));
         }
-        BrowserActionKind::SetDialogHandler { action, prompt_text } => {
+        BrowserActionKind::SetDialogHandler {
+            action,
+            prompt_text,
+        } => {
             DIALOG_HANDLERS.with(|handlers| {
                 handlers.borrow_mut().insert(
                     panel_id,
@@ -869,10 +861,8 @@ pub fn create_browser_widget_with_profile(
         None
     };
 
-    let (omnibar_box, url_entry) = super::omnibar::build_omnibar(
-        initial_url,
-        browser_settings.search_engine,
-    );
+    let (omnibar_box, url_entry) =
+        super::omnibar::build_omnibar(initial_url, browser_settings.search_engine);
     nav_bar.append(&omnibar_box);
 
     let find_toggle_btn = gtk4::ToggleButton::new();
@@ -1116,9 +1106,7 @@ pub fn create_browser_widget_with_profile(
     dl_open_btn.set_tooltip_text(Some("Open downloaded file"));
     {
         dl_open_btn.connect_clicked(move |_| {
-            let path = DOWNLOAD_PATHS.with(|paths| {
-                paths.borrow().get(&panel_id).cloned()
-            });
+            let path = DOWNLOAD_PATHS.with(|paths| paths.borrow().get(&panel_id).cloned());
             if let Some(path) = path {
                 let _ = gio::AppInfo::launch_default_for_uri(
                     &format!("file://{path}"),
@@ -1134,9 +1122,7 @@ pub fn create_browser_widget_with_profile(
     dl_show_folder_btn.set_tooltip_text(Some("Show in file manager"));
     {
         dl_show_folder_btn.connect_clicked(move |_| {
-            let path = DOWNLOAD_PATHS.with(|paths| {
-                paths.borrow().get(&panel_id).cloned()
-            });
+            let path = DOWNLOAD_PATHS.with(|paths| paths.borrow().get(&panel_id).cloned());
             if let Some(path) = path {
                 if let Some(parent) = Path::new(&path).parent() {
                     let _ = gio::AppInfo::launch_default_for_uri(
@@ -1379,18 +1365,15 @@ pub fn create_browser_widget_with_profile(
                     let action_group = gio::SimpleActionGroup::new();
 
                     // "Open Link in New Tab"
-                    let new_tab_action =
-                        gio::SimpleAction::new("open-link-new-tab", None);
+                    let new_tab_action = gio::SimpleAction::new("open-link-new-tab", None);
                     let url_for_tab = link_url.clone();
                     let shared_for_tab = shared_for_ctx.clone();
                     new_tab_action.connect_activate(move |_, _| {
                         if let Some(ref shared) = shared_for_tab {
-                            shared.send_ui_event(
-                                crate::app::UiEvent::BrowserOpenInNewTab {
-                                    source_panel_id: panel_id,
-                                    url: url_for_tab.clone(),
-                                },
-                            );
+                            shared.send_ui_event(crate::app::UiEvent::BrowserOpenInNewTab {
+                                source_panel_id: panel_id,
+                                url: url_for_tab.clone(),
+                            });
                         }
                     });
                     action_group.add_action(&new_tab_action);
@@ -1401,8 +1384,7 @@ pub fn create_browser_widget_with_profile(
                     ));
 
                     // "Open in Default Browser"
-                    let ext_action =
-                        gio::SimpleAction::new("open-link-default-browser", None);
+                    let ext_action = gio::SimpleAction::new("open-link-default-browser", None);
                     let url_for_ext = link_url;
                     ext_action.connect_activate(move |_, _| {
                         let _ = gio::AppInfo::launch_default_for_uri(
@@ -1421,12 +1403,10 @@ pub fn create_browser_widget_with_profile(
                 }
             } else {
                 // Non-link context: add "Copy Page URL"
-                let page_url =
-                    wv.uri().map(|u| u.to_string()).unwrap_or_default();
+                let page_url = wv.uri().map(|u| u.to_string()).unwrap_or_default();
                 if !page_url.is_empty() && page_url != "about:blank" {
                     let action_group = gio::SimpleActionGroup::new();
-                    let copy_url_action =
-                        gio::SimpleAction::new("copy-page-url", None);
+                    let copy_url_action = gio::SimpleAction::new("copy-page-url", None);
                     let url = page_url.clone();
                     copy_url_action.connect_activate(move |_, _| {
                         if let Some(display) = gdk4::Display::default() {
@@ -1470,12 +1450,10 @@ pub fn create_browser_widget_with_profile(
             if let Some(url) = url.as_deref() {
                 tracing::debug!(%url, "connect_create: intercepted popup → new tab");
                 if let Some(ref shared) = shared_for_create {
-                    shared.send_ui_event(
-                        crate::app::UiEvent::BrowserOpenInNewTab {
-                            source_panel_id: panel_id,
-                            url: url.to_string(),
-                        },
-                    );
+                    shared.send_ui_event(crate::app::UiEvent::BrowserOpenInNewTab {
+                        source_panel_id: panel_id,
+                        url: url.to_string(),
+                    });
                 }
             }
 
@@ -1490,10 +1468,7 @@ pub fn create_browser_widget_with_profile(
             // Block ALL navigations in the temp view so it can't open
             // the system browser via default decide_policy behavior.
             tmp.connect_decide_policy(|_wv, decision, decision_type| {
-                tracing::debug!(
-                    ?decision_type,
-                    "TEMP WebView decide_policy → ignoring"
-                );
+                tracing::debug!(?decision_type, "TEMP WebView decide_policy → ignoring");
                 decision.ignore();
                 true
             });
@@ -1650,8 +1625,8 @@ pub fn create_browser_widget_with_profile(
                     fc.search_finish();
                     match_label.set_text("");
                 } else {
-                    let opts = webkit6::FindOptions::CASE_INSENSITIVE
-                        | webkit6::FindOptions::WRAP_AROUND;
+                    let opts =
+                        webkit6::FindOptions::CASE_INSENSITIVE | webkit6::FindOptions::WRAP_AROUND;
                     fc.search(&text, opts.bits(), 0);
                 }
             }
@@ -1847,8 +1822,9 @@ pub(crate) fn apply_dark_mode(web_view: &webkit6::WebView) {
     // React to theme changes at runtime
     let wv = web_view.clone();
     style_manager.connect_dark_notify(move |sm: &libadwaita::StyleManager| {
-        let ucm = wv.user_content_manager().unwrap();
-        ucm.remove_all_style_sheets();
+        if let Some(ucm) = wv.user_content_manager() {
+            ucm.remove_all_style_sheets();
+        }
         if sm.is_dark() {
             inject_dark_stylesheet(&wv);
         }
@@ -1902,10 +1878,7 @@ fn normalize_url(input: &str, engine: settings::SearchEngine) -> String {
 
 /// Extract the host portion from a URL (e.g. "http://example.com:8080/path" → "example.com").
 fn extract_host(url: &str) -> String {
-    let after_scheme = url
-        .find("://")
-        .map(|i| &url[i + 3..])
-        .unwrap_or(url);
+    let after_scheme = url.find("://").map(|i| &url[i + 3..]).unwrap_or(url);
     // Strip userinfo@ if present
     let after_user = after_scheme
         .find('@')

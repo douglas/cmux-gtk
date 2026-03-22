@@ -244,11 +244,12 @@ impl SessionPanelSnapshot {
                 None
             },
             markdown: if panel.panel_type == crate::model::PanelType::Markdown {
-                panel.markdown_file.as_ref().map(|f| {
-                    SessionMarkdownPanelSnapshot {
+                panel
+                    .markdown_file
+                    .as_ref()
+                    .map(|f| SessionMarkdownPanelSnapshot {
                         file_path: f.clone(),
-                    }
-                })
+                    })
             } else {
                 None
             },

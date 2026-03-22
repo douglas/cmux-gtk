@@ -54,9 +54,7 @@ pub async fn run_socket_server(state: Arc<SharedState>) -> anyhow::Result<()> {
     let server_pid = std::process::id();
     tracing::info!("Socket control mode: {:?}", control_mode);
     if control_mode == auth::SocketControlMode::CmuxOnly {
-        tracing::info!(
-            "CmuxOnly mode: same-UID + descendant-PID check via /proc enabled"
-        );
+        tracing::info!("CmuxOnly mode: same-UID + descendant-PID check via /proc enabled");
     }
 
     let path = socket_path();
@@ -219,11 +217,10 @@ async fn handle_client(
         let trimmed_owned = trimmed.to_string();
         if super::v1::is_v1(&trimmed_owned) {
             // V1 text protocol — parse and translate to V2 internally
-            let response_str =
-                tokio::task::spawn_blocking(move || {
-                    super::v1::dispatch(&trimmed_owned, &state_clone)
-                })
-                .await?;
+            let response_str = tokio::task::spawn_blocking(move || {
+                super::v1::dispatch(&trimmed_owned, &state_clone)
+            })
+            .await?;
             writer.write_all(response_str.as_bytes()).await?;
         } else {
             // V2 JSON protocol

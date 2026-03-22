@@ -66,7 +66,10 @@ pub fn dispatch(line: &str, state: &Arc<SharedState>) -> String {
             if let Some(ws) = workspace_id {
                 p["workspace"] = json!(ws);
             }
-            ("workspace.report_git_branch", json!({"branch": "", "workspace": ws_or_null(workspace_id)}))
+            (
+                "workspace.report_git_branch",
+                json!({"branch": "", "workspace": ws_or_null(workspace_id)}),
+            )
         }
         "report_pr" => {
             let status = args.first().map(|s| s.as_str()).unwrap_or("");
@@ -227,9 +230,7 @@ pub fn dispatch(line: &str, state: &Arc<SharedState>) -> String {
         }
 
         // ── Workspace commands ───────────────────────────────────────
-        "list_workspaces" | "workspace_list" | "list" => {
-            ("workspace.list", json!({}))
-        }
+        "list_workspaces" | "workspace_list" | "list" => ("workspace.list", json!({})),
         "new_workspace" | "workspace_new" | "new" => {
             let mut p = json!({});
             if let Some(dir) = args.first() {
@@ -253,9 +254,7 @@ pub fn dispatch(line: &str, state: &Arc<SharedState>) -> String {
                 ("workspace.select", json!({"workspace": target}))
             }
         }
-        "current_workspace" | "workspace_current" | "current" => {
-            ("workspace.current", json!({}))
-        }
+        "current_workspace" | "workspace_current" | "current" => ("workspace.current", json!({})),
         "close_workspace" | "workspace_close" => {
             let mut p = json!({});
             if let Some(ws) = args.first().or(workspace_id) {
@@ -263,15 +262,9 @@ pub fn dispatch(line: &str, state: &Arc<SharedState>) -> String {
             }
             ("workspace.close", p)
         }
-        "next_workspace" | "workspace_next" | "next" => {
-            ("workspace.next", json!({}))
-        }
-        "previous_workspace" | "workspace_previous" | "prev" => {
-            ("workspace.previous", json!({}))
-        }
-        "last_workspace" | "workspace_last" | "last" => {
-            ("workspace.last", json!({}))
-        }
+        "next_workspace" | "workspace_next" | "next" => ("workspace.next", json!({})),
+        "previous_workspace" | "workspace_previous" | "prev" => ("workspace.previous", json!({})),
+        "last_workspace" | "workspace_last" | "last" => ("workspace.last", json!({})),
         "latest_unread" => ("workspace.latest_unread", json!({})),
         "rename_workspace" | "workspace_rename" | "rename" => {
             let name = args.first().map(|s| s.as_str()).unwrap_or("");
@@ -282,7 +275,8 @@ pub fn dispatch(line: &str, state: &Arc<SharedState>) -> String {
             ("workspace.rename", p)
         }
         "reorder_workspace" | "workspace_reorder" => {
-            let idx = args.first()
+            let idx = args
+                .first()
                 .and_then(|s| s.parse::<usize>().ok())
                 .unwrap_or(0);
             let mut p = json!({"index": idx});
@@ -345,7 +339,8 @@ pub fn dispatch(line: &str, state: &Arc<SharedState>) -> String {
             ("workspace.list_status", p)
         }
         "set_progress" => {
-            let value = args.first()
+            let value = args
+                .first()
                 .and_then(|s| s.parse::<f64>().ok())
                 .unwrap_or(0.0);
             let mut p = json!({"value": value});
@@ -401,12 +396,9 @@ pub fn dispatch(line: &str, state: &Arc<SharedState>) -> String {
             }
             ("surface.list", p)
         }
-        "current_surface" | "surface_current" => {
-            ("surface.current", json!({}))
-        }
+        "current_surface" | "surface_current" => ("surface.current", json!({})),
         "focus_surface" | "surface_focus" => {
-            let sid = args.first().or(panel_id)
-                .map(|s| s.as_str()).unwrap_or("");
+            let sid = args.first().or(panel_id).map(|s| s.as_str()).unwrap_or("");
             ("surface.focus", json!({"surface": sid}))
         }
         "send" => {
@@ -447,8 +439,7 @@ pub fn dispatch(line: &str, state: &Arc<SharedState>) -> String {
             ("pane.new", p)
         }
         "close_surface" | "surface_close" => {
-            let sid = args.first().or(panel_id)
-                .map(|s| s.as_str()).unwrap_or("");
+            let sid = args.first().or(panel_id).map(|s| s.as_str()).unwrap_or("");
             ("surface.close", json!({"surface": sid}))
         }
         "read_screen" | "read_text" => {
@@ -469,8 +460,7 @@ pub fn dispatch(line: &str, state: &Arc<SharedState>) -> String {
             ("surface.clear_history", p)
         }
         "surface_health" => {
-            let sid = args.first().or(panel_id)
-                .map(|s| s.as_str()).unwrap_or("");
+            let sid = args.first().or(panel_id).map(|s| s.as_str()).unwrap_or("");
             ("surface.health", json!({"surface": sid}))
         }
         "list_panes" | "pane_list" => {
@@ -494,7 +484,8 @@ pub fn dispatch(line: &str, state: &Arc<SharedState>) -> String {
             ("pane.swap", json!({"surface_a": a, "surface_b": b}))
         }
         "resize_pane" | "pane_resize" => {
-            let delta = args.first()
+            let delta = args
+                .first()
                 .and_then(|s| s.parse::<f64>().ok())
                 .unwrap_or(0.0);
             let mut p = json!({"delta": delta});
@@ -530,17 +521,23 @@ pub fn dispatch(line: &str, state: &Arc<SharedState>) -> String {
             let sid = args.first().map(|s| s.as_str()).unwrap_or("");
             let title = args.get(1).map(|s| s.as_str()).unwrap_or("");
             let body = args.get(2).map(|s| s.as_str()).unwrap_or("");
-            ("notification.create", json!({"surface": sid, "title": title, "body": body}))
+            (
+                "notification.create",
+                json!({"surface": sid, "title": title, "body": body}),
+            )
         }
         "notify_target" => {
             let ws_id_arg = args.first().map(|s| s.as_str()).unwrap_or("");
             let sid = args.get(1).map(|s| s.as_str()).unwrap_or("");
             let title = args.get(2).map(|s| s.as_str()).unwrap_or("");
             let body = args.get(3).map(|s| s.as_str()).unwrap_or("");
-            ("notification.create", json!({
-                "workspace": ws_id_arg, "surface": sid,
-                "title": title, "body": body
-            }))
+            (
+                "notification.create",
+                json!({
+                    "workspace": ws_id_arg, "surface": sid,
+                    "title": title, "body": body
+                }),
+            )
         }
         "list_notifications" => ("notification.list", json!({})),
         "clear_notifications" => ("notification.clear", json!({})),
@@ -648,9 +645,7 @@ pub fn dispatch(line: &str, state: &Arc<SharedState>) -> String {
             let pid = args.first().map(|s| s.as_str()).unwrap_or("");
             ("pane.surfaces", json!({"surface": pid}))
         }
-        "refresh_surfaces" => {
-            ("surface.refresh", json!({}))
-        }
+        "refresh_surfaces" => ("surface.refresh", json!({})),
 
         // ── Auth ─────────────────────────────────────────────────────
         "auth" => {
@@ -776,7 +771,6 @@ OTHER
   settings                          Open settings
   markdown <path>                   Open markdown file
 ";
-
 
 /// Parse "arg1 arg2 --flag=value --other=val" into (positional_args, flags).
 /// Supports quoted arguments: `"path with spaces"`.

@@ -16,16 +16,14 @@ use crate::app::{lock_or_recover, AppState};
 struct SurfaceMatch {
     workspace_title: String,
     panel_id: uuid::Uuid,
+    #[allow(dead_code)] // stored for future workspace-scoped search
     workspace_id: uuid::Uuid,
     /// Matching lines (up to 5 per surface).
     lines: Vec<String>,
 }
 
 /// Open the all-surfaces search dialog.
-pub fn show_all_surfaces_search(
-    parent: &adw::ApplicationWindow,
-    state: &Rc<AppState>,
-) {
+pub fn show_all_surfaces_search(parent: &adw::ApplicationWindow, state: &Rc<AppState>) {
     let dialog = gtk4::Window::builder()
         .title("Search All Terminals")
         .transient_for(parent)
@@ -92,18 +90,15 @@ pub fn show_all_surfaces_search(
             let debounce_gen = debounce_gen.clone();
             let dialog_weak = dialog_weak.clone();
 
-            glib::timeout_add_local_once(
-                std::time::Duration::from_millis(150),
-                move || {
-                    if debounce_gen.get() != gen {
-                        return;
-                    }
-                    if dialog_weak.upgrade().is_none() {
-                        return;
-                    }
-                    run_search(&query, &list_box, &status, &state);
-                },
-            );
+            glib::timeout_add_local_once(std::time::Duration::from_millis(150), move || {
+                if debounce_gen.get() != gen {
+                    return;
+                }
+                if dialog_weak.upgrade().is_none() {
+                    return;
+                }
+                run_search(&query, &list_box, &status, &state);
+            });
         });
     }
 
@@ -145,12 +140,7 @@ pub fn show_all_surfaces_search(
     entry.grab_focus();
 }
 
-fn run_search(
-    query: &str,
-    list_box: &gtk4::ListBox,
-    status: &gtk4::Label,
-    state: &Rc<AppState>,
-) {
+fn run_search(query: &str, list_box: &gtk4::ListBox, status: &gtk4::Label, state: &Rc<AppState>) {
     // Clear previous results
     while let Some(child) = list_box.first_child() {
         list_box.remove(&child);
@@ -172,7 +162,7 @@ fn run_search(
     let cache = state.terminal_cache.borrow();
 
     for ws in tm.iter() {
-        for (&panel_id, _panel) in &ws.panels {
+        for &panel_id in ws.panels.keys() {
             if let Some(surface) = cache.get(&panel_id) {
                 if let Some(text) = surface.read_screen_text() {
                     let matching_lines: Vec<String> = text

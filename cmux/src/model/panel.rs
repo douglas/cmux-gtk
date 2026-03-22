@@ -65,13 +65,6 @@ impl Panel {
         }
     }
 
-    /// Create a new terminal panel that runs a custom command.
-    pub fn new_terminal_with_command(command: &str) -> Self {
-        let mut panel = Self::new_terminal();
-        panel.command = Some(command.to_string());
-        panel
-    }
-
     /// Create a new browser panel.
     pub fn new_browser() -> Self {
         Self {
@@ -500,11 +493,13 @@ impl LayoutNode {
                 let in_first = first_ids.contains(&panel_id);
                 let in_second = second_ids.contains(&panel_id);
 
-                let matches_axis = match (orientation, direction) {
-                    (SplitOrientation::Horizontal, Direction::Left | Direction::Right) => true,
-                    (SplitOrientation::Vertical, Direction::Up | Direction::Down) => true,
-                    _ => false,
-                };
+                let matches_axis = matches!(
+                    (orientation, direction),
+                    (
+                        SplitOrientation::Horizontal,
+                        Direction::Left | Direction::Right
+                    ) | (SplitOrientation::Vertical, Direction::Up | Direction::Down)
+                );
 
                 if matches_axis {
                     let want_second = matches!(direction, Direction::Right | Direction::Down);
@@ -613,8 +608,12 @@ impl LayoutNode {
             }
             LayoutNode::Split { first, second, .. } => {
                 first.split_pane_with_panel(target_panel_id, panel_id, orientation, direction)
-                    || second
-                        .split_pane_with_panel(target_panel_id, panel_id, orientation, direction)
+                    || second.split_pane_with_panel(
+                        target_panel_id,
+                        panel_id,
+                        orientation,
+                        direction,
+                    )
             }
         }
     }

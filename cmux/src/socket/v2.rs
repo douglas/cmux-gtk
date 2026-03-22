@@ -112,27 +112,17 @@ pub fn dispatch(json_line: &str, state: &Arc<SharedState>) -> Response {
         "workspace.report_meta" => handle_workspace_report_meta(id, &req.params, state),
         "workspace.clear_meta" => handle_workspace_clear_meta(id, &req.params, state),
         "workspace.list_meta" => handle_workspace_list_meta(id, &req.params, state),
-        "workspace.report_meta_block" => {
-            handle_workspace_report_meta_block(id, &req.params, state)
-        }
-        "workspace.clear_meta_block" => {
-            handle_workspace_clear_meta_block(id, &req.params, state)
-        }
-        "workspace.list_meta_blocks" => {
-            handle_workspace_list_meta_blocks(id, &req.params, state)
-        }
+        "workspace.report_meta_block" => handle_workspace_report_meta_block(id, &req.params, state),
+        "workspace.clear_meta_block" => handle_workspace_clear_meta_block(id, &req.params, state),
+        "workspace.list_meta_blocks" => handle_workspace_list_meta_blocks(id, &req.params, state),
 
         // Workspace query commands
         "workspace.current" => handle_workspace_current(id, state),
         "workspace.rename" => handle_workspace_rename(id, &req.params, state),
         "workspace.action" => handle_workspace_action(id, &req.params, state),
         "workspace.report_pr" => handle_workspace_report_pr(id, &req.params, state),
-        "workspace.report_pr_checks" => {
-            handle_workspace_report_pr_checks(id, &req.params, state)
-        }
-        "workspace.move_to_window" => {
-            handle_workspace_move_to_window(id, &req.params, state)
-        }
+        "workspace.report_pr_checks" => handle_workspace_report_pr_checks(id, &req.params, state),
+        "workspace.move_to_window" => handle_workspace_move_to_window(id, &req.params, state),
 
         // App commands
         "app.focus_override.set" => handle_app_focus_override(id, &req.params, state),
@@ -420,17 +410,16 @@ fn create_workspace(
     )
 }
 
-fn handle_workspace_create_ssh(
-    id: Value,
-    params: &Value,
-    state: &Arc<SharedState>,
-) -> Response {
+fn handle_workspace_create_ssh(id: Value, params: &Value, state: &Arc<SharedState>) -> Response {
     let destination = match params.get("destination").and_then(|v| v.as_str()) {
         Some(d) => d,
         None => return Response::error(id, "invalid_params", "destination is required"),
     };
 
-    let port = params.get("port").and_then(|v| v.as_u64()).map(|p| p as u16);
+    let port = params
+        .get("port")
+        .and_then(|v| v.as_u64())
+        .map(|p| p as u16);
     let identity = params
         .get("identity")
         .and_then(|v| v.as_str())
@@ -458,7 +447,11 @@ fn handle_workspace_create_ssh(
     // Create workspace with SSH command and title
     let mut create_params = params.clone();
     create_params["command"] = serde_json::json!(ssh_cmd);
-    if create_params.get("title").and_then(|v| v.as_str()).is_none() {
+    if create_params
+        .get("title")
+        .and_then(|v| v.as_str())
+        .is_none()
+    {
         create_params["title"] = serde_json::json!(destination);
     }
 
@@ -484,11 +477,7 @@ fn handle_workspace_create_ssh(
     response
 }
 
-fn handle_workspace_remote_status(
-    id: Value,
-    params: &Value,
-    state: &Arc<SharedState>,
-) -> Response {
+fn handle_workspace_remote_status(id: Value, params: &Value, state: &Arc<SharedState>) -> Response {
     let ws_id = parse_workspace_param(params).ok().flatten();
 
     let tm = lock_or_recover(&state.tab_manager);
@@ -510,22 +499,23 @@ fn handle_workspace_remote_status(
         })
     });
 
-    let state_json = ws.remote_state.as_ref().map(|s| {
-        match s {
-            crate::remote::session::RemoteState::Disconnected => serde_json::json!("disconnected"),
-            crate::remote::session::RemoteState::Connecting => serde_json::json!("connecting"),
-            crate::remote::session::RemoteState::Connected { proxy_port, daemon_version } => {
-                serde_json::json!({
-                    "state": "connected",
-                    "proxy_port": proxy_port,
-                    "daemon_version": daemon_version,
-                })
-            }
-            crate::remote::session::RemoteState::Error(msg) => serde_json::json!({
-                "state": "error",
-                "message": msg,
-            }),
+    let state_json = ws.remote_state.as_ref().map(|s| match s {
+        crate::remote::session::RemoteState::Disconnected => serde_json::json!("disconnected"),
+        crate::remote::session::RemoteState::Connecting => serde_json::json!("connecting"),
+        crate::remote::session::RemoteState::Connected {
+            proxy_port,
+            daemon_version,
+        } => {
+            serde_json::json!({
+                "state": "connected",
+                "proxy_port": proxy_port,
+                "daemon_version": daemon_version,
+            })
         }
+        crate::remote::session::RemoteState::Error(msg) => serde_json::json!({
+            "state": "error",
+            "message": msg,
+        }),
     });
 
     Response::success(
@@ -846,11 +836,7 @@ fn handle_workspace_append_log(id: Value, params: &Value, state: &Arc<SharedStat
     }
 }
 
-fn handle_workspace_clear_status(
-    id: Value,
-    params: &Value,
-    state: &Arc<SharedState>,
-) -> Response {
+fn handle_workspace_clear_status(id: Value, params: &Value, state: &Arc<SharedState>) -> Response {
     let ws_id = match parse_workspace_param(params) {
         Ok(v) => v,
         Err(()) => return Response::error(id, "invalid_params", "Invalid workspace UUID"),
@@ -871,11 +857,7 @@ fn handle_workspace_clear_status(
     }
 }
 
-fn handle_workspace_list_status(
-    id: Value,
-    params: &Value,
-    state: &Arc<SharedState>,
-) -> Response {
+fn handle_workspace_list_status(id: Value, params: &Value, state: &Arc<SharedState>) -> Response {
     let ws_id = match parse_workspace_param(params) {
         Ok(v) => v,
         Err(()) => return Response::error(id, "invalid_params", "Invalid workspace UUID"),
@@ -932,11 +914,7 @@ fn handle_workspace_clear_progress(
     }
 }
 
-fn handle_workspace_clear_log(
-    id: Value,
-    params: &Value,
-    state: &Arc<SharedState>,
-) -> Response {
+fn handle_workspace_clear_log(id: Value, params: &Value, state: &Arc<SharedState>) -> Response {
     let ws_id = match parse_workspace_param(params) {
         Ok(v) => v,
         Err(()) => return Response::error(id, "invalid_params", "Invalid workspace UUID"),
@@ -957,11 +935,7 @@ fn handle_workspace_clear_log(
     }
 }
 
-fn handle_workspace_list_log(
-    id: Value,
-    params: &Value,
-    state: &Arc<SharedState>,
-) -> Response {
+fn handle_workspace_list_log(id: Value, params: &Value, state: &Arc<SharedState>) -> Response {
     let ws_id = match parse_workspace_param(params) {
         Ok(v) => v,
         Err(()) => return Response::error(id, "invalid_params", "Invalid workspace UUID"),
@@ -995,11 +969,7 @@ fn handle_workspace_list_log(
 // Metadata entry handlers
 // -----------------------------------------------------------------------
 
-fn handle_workspace_report_meta(
-    id: Value,
-    params: &Value,
-    state: &Arc<SharedState>,
-) -> Response {
+fn handle_workspace_report_meta(id: Value, params: &Value, state: &Arc<SharedState>) -> Response {
     let ws_id = match parse_workspace_param(params) {
         Ok(v) => v,
         Err(()) => return Response::error(id, "invalid_params", "Invalid workspace UUID"),
@@ -1013,10 +983,7 @@ fn handle_workspace_report_meta(
     let icon = params.get("icon").and_then(|v| v.as_str());
     let color = params.get("color").and_then(|v| v.as_str());
     let url = params.get("url").and_then(|v| v.as_str());
-    let priority = params
-        .get("priority")
-        .and_then(|v| v.as_i64())
-        .unwrap_or(0) as i32;
+    let priority = params.get("priority").and_then(|v| v.as_i64()).unwrap_or(0) as i32;
     let format = match params.get("format").and_then(|v| v.as_str()) {
         Some("markdown") => crate::model::workspace::MetadataFormat::Markdown,
         _ => crate::model::workspace::MetadataFormat::Plain,
@@ -1045,11 +1012,7 @@ fn handle_workspace_report_meta(
     }
 }
 
-fn handle_workspace_clear_meta(
-    id: Value,
-    params: &Value,
-    state: &Arc<SharedState>,
-) -> Response {
+fn handle_workspace_clear_meta(id: Value, params: &Value, state: &Arc<SharedState>) -> Response {
     let ws_id = match parse_workspace_param(params) {
         Ok(v) => v,
         Err(()) => return Response::error(id, "invalid_params", "Invalid workspace UUID"),
@@ -1076,11 +1039,7 @@ fn handle_workspace_clear_meta(
     }
 }
 
-fn handle_workspace_list_meta(
-    id: Value,
-    params: &Value,
-    state: &Arc<SharedState>,
-) -> Response {
+fn handle_workspace_list_meta(id: Value, params: &Value, state: &Arc<SharedState>) -> Response {
     let ws_id = match parse_workspace_param(params) {
         Ok(v) => v,
         Err(()) => return Response::error(id, "invalid_params", "Invalid workspace UUID"),
@@ -1094,9 +1053,13 @@ fn handle_workspace_list_meta(
     if let Some(ws) = ws {
         let mut entries: Vec<&crate::model::workspace::MetadataEntry> =
             ws.metadata_entries.iter().collect();
-        entries.sort_by(|a, b| b.priority.cmp(&a.priority).then(
-            a.timestamp.partial_cmp(&b.timestamp).unwrap_or(std::cmp::Ordering::Equal),
-        ));
+        entries.sort_by(|a, b| {
+            b.priority.cmp(&a.priority).then(
+                a.timestamp
+                    .partial_cmp(&b.timestamp)
+                    .unwrap_or(std::cmp::Ordering::Equal),
+            )
+        });
         let entries: Vec<Value> = entries
             .iter()
             .map(|e| {
@@ -1132,10 +1095,7 @@ fn handle_workspace_report_meta_block(
     let (Some(key), Some(content)) = (key, content) else {
         return Response::error(id, "invalid_params", "Provide 'key' and 'content'");
     };
-    let priority = params
-        .get("priority")
-        .and_then(|v| v.as_i64())
-        .unwrap_or(0) as i32;
+    let priority = params.get("priority").and_then(|v| v.as_i64()).unwrap_or(0) as i32;
 
     let updated = {
         let mut tm = lock_or_recover(&state.tab_manager);
@@ -1209,9 +1169,13 @@ fn handle_workspace_list_meta_blocks(
     if let Some(ws) = ws {
         let mut blocks: Vec<&crate::model::workspace::MetadataBlock> =
             ws.metadata_blocks.iter().collect();
-        blocks.sort_by(|a, b| b.priority.cmp(&a.priority).then(
-            a.timestamp.partial_cmp(&b.timestamp).unwrap_or(std::cmp::Ordering::Equal),
-        ));
+        blocks.sort_by(|a, b| {
+            b.priority.cmp(&a.priority).then(
+                a.timestamp
+                    .partial_cmp(&b.timestamp)
+                    .unwrap_or(std::cmp::Ordering::Equal),
+            )
+        });
         let blocks: Vec<Value> = blocks
             .iter()
             .map(|b| {
@@ -1386,7 +1350,9 @@ fn handle_notification_create(id: Value, params: &Value, state: &Arc<SharedState
             return Response::error(id, "not_found", "No workspace selected");
         };
 
-        let workspace = tm.workspace_mut(target_workspace_id).unwrap();
+        let workspace = tm
+            .workspace_mut(target_workspace_id)
+            .expect("workspace validated above");
         let resolved_panel_id = panel_id.filter(|id| workspace.panels.contains_key(id));
         workspace.record_notification(title, body, resolved_panel_id);
         (target_workspace_id, resolved_panel_id)
@@ -1407,10 +1373,7 @@ fn handle_notification_create(id: Value, params: &Value, state: &Arc<SharedState
         let mut tm = lock_or_recover(&state.tab_manager);
         if let Some(ws_idx) = tm.workspace_index(target_workspace_id) {
             // Find the first non-pinned index (skip pinned workspaces at top)
-            let first_unpinned = tm
-                .iter()
-                .position(|ws| !ws.is_pinned)
-                .unwrap_or(0);
+            let first_unpinned = tm.iter().position(|ws| !ws.is_pinned).unwrap_or(0);
             if ws_idx > first_unpinned {
                 tm.move_workspace(ws_idx, first_unpinned);
             }
@@ -1534,9 +1497,7 @@ fn handle_workspace_rename(id: Value, params: &Value, state: &Arc<SharedState>) 
         };
 
         if let Some(ws) = ws {
-            ws.custom_title = Some(
-                crate::model::workspace::truncate_str(title, 1024).to_string(),
-            );
+            ws.custom_title = Some(crate::model::workspace::truncate_str(title, 1024).to_string());
             true
         } else {
             false
@@ -1836,8 +1797,14 @@ fn handle_pane_last(id: Value, params: &Value, state: &Arc<SharedState>) -> Resp
 // -----------------------------------------------------------------------
 
 fn handle_pane_swap(id: Value, params: &Value, state: &Arc<SharedState>) -> Response {
-    let a_str = params.get("a").or_else(|| params.get("panel_a")).and_then(|v| v.as_str());
-    let b_str = params.get("b").or_else(|| params.get("panel_b")).and_then(|v| v.as_str());
+    let a_str = params
+        .get("a")
+        .or_else(|| params.get("panel_a"))
+        .and_then(|v| v.as_str());
+    let b_str = params
+        .get("b")
+        .or_else(|| params.get("panel_b"))
+        .and_then(|v| v.as_str());
 
     let (Some(a_str), Some(b_str)) = (a_str, b_str) else {
         return Response::error(id, "invalid_params", "Provide 'a' and 'b' panel UUIDs");
@@ -1879,7 +1846,11 @@ fn handle_pane_resize(id: Value, params: &Value, state: &Arc<SharedState>) -> Re
     let amount = params.get("amount").and_then(|v| v.as_f64());
 
     let Some(amount) = amount else {
-        return Response::error(id, "invalid_params", "Provide 'amount' (e.g. 0.05 or -0.05)");
+        return Response::error(
+            id,
+            "invalid_params",
+            "Provide 'amount' (e.g. 0.05 or -0.05)",
+        );
     };
 
     let mut tm = lock_or_recover(&state.tab_manager);
@@ -2208,11 +2179,7 @@ fn handle_workspace_report_pwd(id: Value, params: &Value, state: &Arc<SharedStat
 // workspace.report_ports / workspace.clear_ports
 // -----------------------------------------------------------------------
 
-fn handle_workspace_report_ports(
-    id: Value,
-    params: &Value,
-    state: &Arc<SharedState>,
-) -> Response {
+fn handle_workspace_report_ports(id: Value, params: &Value, state: &Arc<SharedState>) -> Response {
     let ports: Vec<u16> = match params.get("ports").and_then(|v| v.as_array()) {
         Some(arr) => arr
             .iter()
@@ -2250,11 +2217,7 @@ fn handle_workspace_report_ports(
     Response::success(id, serde_json::json!({"ok": true}))
 }
 
-fn handle_workspace_clear_ports(
-    id: Value,
-    params: &Value,
-    state: &Arc<SharedState>,
-) -> Response {
+fn handle_workspace_clear_ports(id: Value, params: &Value, state: &Arc<SharedState>) -> Response {
     let panel_id = params
         .get("panel")
         .or_else(|| params.get("surface"))
@@ -2366,12 +2329,8 @@ fn handle_workspace_report_pr(id: Value, params: &Value, state: &Arc<SharedState
         return Response::error(id, "not_found", "No workspace");
     };
 
-    ws.pr_status = status.map(|s| {
-        crate::model::workspace::truncate_str(s, 64).to_string()
-    });
-    ws.pr_url = url.map(|s| {
-        crate::model::workspace::truncate_str(s, 1024).to_string()
-    });
+    ws.pr_status = status.map(|s| crate::model::workspace::truncate_str(s, 64).to_string());
+    ws.pr_url = url.map(|s| crate::model::workspace::truncate_str(s, 1024).to_string());
 
     drop(tm);
     state.notify_ui_refresh();
@@ -2473,11 +2432,7 @@ fn handle_workspace_move_to_window(
 // app.focus_override.set
 // -----------------------------------------------------------------------
 
-fn handle_app_focus_override(
-    id: Value,
-    params: &Value,
-    _state: &Arc<SharedState>,
-) -> Response {
+fn handle_app_focus_override(id: Value, params: &Value, _state: &Arc<SharedState>) -> Response {
     let _active = params
         .get("active")
         .and_then(|v| v.as_bool())
@@ -2491,11 +2446,7 @@ fn handle_app_focus_override(
 // app.simulate_active
 // -----------------------------------------------------------------------
 
-fn handle_app_simulate_active(
-    id: Value,
-    _params: &Value,
-    _state: &Arc<SharedState>,
-) -> Response {
+fn handle_app_simulate_active(id: Value, _params: &Value, _state: &Arc<SharedState>) -> Response {
     // Simulate app activation — on Linux/GTK this is a no-op for protocol parity.
     Response::success(id, serde_json::json!({"ok": true}))
 }
@@ -2509,7 +2460,11 @@ fn handle_surface_send_key(id: Value, params: &Value, state: &Arc<SharedState>) 
     let mods_arr = params.get("mods").and_then(|v| v.as_array());
 
     let Some(key_name) = key_name else {
-        return Response::error(id, "invalid_params", "Provide 'key' (e.g. 'c', 'Return', 'Escape')");
+        return Response::error(
+            id,
+            "invalid_params",
+            "Provide 'key' (e.g. 'c', 'Return', 'Escape')",
+        );
     };
 
     // Parse modifier names to ghostty mods bitmask
@@ -2519,20 +2474,16 @@ fn handle_surface_send_key(id: Value, params: &Value, state: &Arc<SharedState>) 
             if let Some(s) = m.as_str() {
                 match s.to_lowercase().as_str() {
                     "ctrl" | "control" => {
-                        mods |=
-                            ghostty_sys::ghostty_input_mods_e::GHOSTTY_MODS_CTRL as u32;
+                        mods |= ghostty_sys::ghostty_input_mods_e::GHOSTTY_MODS_CTRL as u32;
                     }
                     "shift" => {
-                        mods |=
-                            ghostty_sys::ghostty_input_mods_e::GHOSTTY_MODS_SHIFT as u32;
+                        mods |= ghostty_sys::ghostty_input_mods_e::GHOSTTY_MODS_SHIFT as u32;
                     }
                     "alt" => {
-                        mods |=
-                            ghostty_sys::ghostty_input_mods_e::GHOSTTY_MODS_ALT as u32;
+                        mods |= ghostty_sys::ghostty_input_mods_e::GHOSTTY_MODS_ALT as u32;
                     }
                     "super" | "meta" => {
-                        mods |=
-                            ghostty_sys::ghostty_input_mods_e::GHOSTTY_MODS_SUPER as u32;
+                        mods |= ghostty_sys::ghostty_input_mods_e::GHOSTTY_MODS_SUPER as u32;
                     }
                     _ => {}
                 }
@@ -2769,9 +2720,7 @@ fn handle_pane_join(id: Value, params: &Value, state: &Arc<SharedState>) -> Resp
     };
 
     // Find the source workspace containing this panel
-    let source_ws_id = tm
-        .find_workspace_with_panel(panel_id)
-        .map(|ws| ws.id);
+    let source_ws_id = tm.find_workspace_with_panel(panel_id).map(|ws| ws.id);
     let Some(source_ws_id) = source_ws_id else {
         return Response::error(id, "not_found", "Panel not found in any workspace");
     };
@@ -2786,20 +2735,22 @@ fn handle_pane_join(id: Value, params: &Value, state: &Arc<SharedState>) -> Resp
     }
 
     // Detach from source
-    let source_ws = tm.workspace_mut(source_ws_id).unwrap();
+    let source_ws = tm
+        .workspace_mut(source_ws_id)
+        .expect("source workspace validated");
     let panel = source_ws.detach_panel(panel_id);
     let Some(panel) = panel else {
         return Response::error(id, "not_found", "Panel not found");
     };
-    let source_empty = tm
-        .workspace(source_ws_id)
-        .is_some_and(|ws| ws.is_empty());
+    let source_empty = tm.workspace(source_ws_id).is_some_and(|ws| ws.is_empty());
     if source_empty {
         tm.remove_by_id(source_ws_id);
     }
 
     // Insert into target workspace
-    let target_ws = tm.workspace_mut(selected_ws_id).unwrap();
+    let target_ws = tm
+        .workspace_mut(selected_ws_id)
+        .expect("target workspace validated");
     target_ws.insert_panel(panel, orientation);
 
     drop(tm);
@@ -2973,26 +2924,28 @@ fn handle_surface_move(id: Value, params: &Value, state: &Arc<SharedState>) -> R
     let mut tm = lock_or_recover(&state.tab_manager);
 
     // Find source workspace
-    let source_ws_id = tm
-        .find_workspace_with_panel(panel_id)
-        .map(|ws| ws.id);
+    let source_ws_id = tm.find_workspace_with_panel(panel_id).map(|ws| ws.id);
     let Some(source_ws_id) = source_ws_id else {
         return Response::error(id, "not_found", "Panel not found in any workspace");
     };
 
     if source_ws_id == target_ws_id {
-        return Response::error(id, "invalid_params", "Panel is already in the target workspace");
+        return Response::error(
+            id,
+            "invalid_params",
+            "Panel is already in the target workspace",
+        );
     }
 
     // Detach from source
-    let source_ws = tm.workspace_mut(source_ws_id).unwrap();
+    let source_ws = tm
+        .workspace_mut(source_ws_id)
+        .expect("source workspace validated");
     let panel = source_ws.detach_panel(panel_id);
     let Some(panel) = panel else {
         return Response::error(id, "not_found", "Panel not found");
     };
-    let source_empty = tm
-        .workspace(source_ws_id)
-        .is_some_and(|ws| ws.is_empty());
+    let source_empty = tm.workspace(source_ws_id).is_some_and(|ws| ws.is_empty());
     if source_empty {
         tm.remove_by_id(source_ws_id);
     }
@@ -3064,7 +3017,10 @@ fn handle_surface_create(id: Value, params: &Value, state: &Arc<SharedState>) ->
         _ => crate::model::PanelType::Terminal,
     };
 
-    let url = params.get("url").and_then(|v| v.as_str()).map(|s| s.to_string());
+    let url = params
+        .get("url")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string());
     let mut new_panel = match panel_type {
         crate::model::PanelType::Terminal => crate::model::Panel::new_terminal(),
         crate::model::PanelType::Browser => crate::model::Panel::new_browser(),
@@ -3156,11 +3112,7 @@ fn handle_pane_surfaces(id: Value, params: &Value, state: &Arc<SharedState>) -> 
 // surface.drag_to_split — move a surface into a new split pane
 // -----------------------------------------------------------------------
 
-fn handle_surface_drag_to_split(
-    id: Value,
-    params: &Value,
-    state: &Arc<SharedState>,
-) -> Response {
+fn handle_surface_drag_to_split(id: Value, params: &Value, state: &Arc<SharedState>) -> Response {
     use crate::model::panel::Direction;
 
     let panel_id = match resolve_panel_id(&id, params, state) {
@@ -3249,9 +3201,8 @@ fn handle_tab_action(id: Value, params: &Value, state: &Arc<SharedState>) -> Res
                 return Response::error(id, "invalid_params", "rename requires 'title'");
             };
             if let Some(panel) = ws.panels.get_mut(&panel_id) {
-                panel.custom_title = Some(
-                    crate::model::workspace::truncate_str(title, 1024).to_string(),
-                );
+                panel.custom_title =
+                    Some(crate::model::workspace::truncate_str(title, 1024).to_string());
             }
         }
         "clear_name" => {
@@ -3301,10 +3252,7 @@ fn handle_tab_action(id: Value, params: &Value, state: &Arc<SharedState>) -> Res
             }
             drop(tm);
             state.notify_ui_refresh();
-            return Response::success(
-                id,
-                serde_json::json!({"closed": to_close.len()}),
-            );
+            return Response::success(id, serde_json::json!({"closed": to_close.len()}));
         }
         "pin" => {
             if let Some(panel) = ws.panels.get_mut(&panel_id) {
@@ -3451,19 +3399,23 @@ pub(crate) fn require_panel_id(id: &Value, params: &Value) -> Result<uuid::Uuid,
 }
 
 /// Extract an optional UUID parameter.
-fn optional_uuid(
-    id: &Value,
-    params: &Value,
-    key: &str,
-) -> Result<Option<uuid::Uuid>, Response> {
+fn optional_uuid(id: &Value, params: &Value, key: &str) -> Result<Option<uuid::Uuid>, Response> {
     match params.get(key) {
         Some(v) if !v.is_null() => {
             let s = v.as_str().ok_or_else(|| {
-                Response::error(id.clone(), "invalid_params", &format!("'{key}' must be a string UUID"))
+                Response::error(
+                    id.clone(),
+                    "invalid_params",
+                    &format!("'{key}' must be a string UUID"),
+                )
             })?;
-            uuid::Uuid::parse_str(s)
-                .map(Some)
-                .map_err(|_| Response::error(id.clone(), "invalid_params", &format!("Invalid UUID for '{key}'")))
+            uuid::Uuid::parse_str(s).map(Some).map_err(|_| {
+                Response::error(
+                    id.clone(),
+                    "invalid_params",
+                    &format!("Invalid UUID for '{key}'"),
+                )
+            })
         }
         _ => Ok(None),
     }
@@ -3486,9 +3438,7 @@ fn handle_markdown_open(id: Value, params: &Value, state: &Arc<SharedState>) -> 
     let panel_id = panel.id;
 
     let mut tm = lock_or_recover(&state.tab_manager);
-    let ws_id = workspace_id.unwrap_or_else(|| {
-        tm.selected().map(|ws| ws.id).unwrap_or_default()
-    });
+    let ws_id = workspace_id.unwrap_or_else(|| tm.selected().map(|ws| ws.id).unwrap_or_default());
 
     if let Some(ws) = tm.workspace_mut(ws_id) {
         ws.panels.insert(panel_id, panel);

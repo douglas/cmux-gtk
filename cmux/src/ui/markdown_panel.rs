@@ -42,11 +42,7 @@ pub fn create_markdown_widget(
 
     let file_label = gtk4::Label::new(
         file_path
-            .and_then(|p| {
-                std::path::Path::new(p)
-                    .file_name()
-                    .and_then(|n| n.to_str())
-            })
+            .and_then(|p| std::path::Path::new(p).file_name().and_then(|n| n.to_str()))
             .or(Some("Markdown")),
     );
     file_label.set_ellipsize(gtk4::pango::EllipsizeMode::Middle);
@@ -99,8 +95,7 @@ pub fn create_markdown_widget(
     // File watcher — native inotify via gio::FileMonitor
     if let Some(path) = file_path {
         let file = gio::File::for_path(path);
-        if let Ok(monitor) =
-            file.monitor_file(gio::FileMonitorFlags::NONE, gio::Cancellable::NONE)
+        if let Ok(monitor) = file.monitor_file(gio::FileMonitorFlags::NONE, gio::Cancellable::NONE)
         {
             let path = path.to_string();
             let wv = web_view.clone();

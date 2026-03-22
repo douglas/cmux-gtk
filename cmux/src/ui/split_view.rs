@@ -4,8 +4,8 @@ use std::cell::Cell;
 use std::collections::HashMap;
 use std::rc::Rc;
 
-use gtk4::prelude::*;
 use gtk4::gio;
+use gtk4::prelude::*;
 use uuid::Uuid;
 
 use crate::app::{lock_or_recover, AppState};
@@ -273,6 +273,7 @@ fn build_pane(
 }
 
 /// Build a single tab button with label, close button, and drag-drop reorder.
+#[allow(clippy::too_many_arguments)]
 fn build_tab_button(
     panel_id: Uuid,
     tab_index: usize,
@@ -520,10 +521,22 @@ fn build_split(
 
     let first_panel_ids = first.all_panel_ids();
     let second_panel_ids = second.all_panel_ids();
-    let first_widget =
-        build_layout(workspace_id, first, panels, attention_panel_id, focused_panel_id, state);
-    let second_widget =
-        build_layout(workspace_id, second, panels, attention_panel_id, focused_panel_id, state);
+    let first_widget = build_layout(
+        workspace_id,
+        first,
+        panels,
+        attention_panel_id,
+        focused_panel_id,
+        state,
+    );
+    let second_widget = build_layout(
+        workspace_id,
+        second,
+        panels,
+        attention_panel_id,
+        focused_panel_id,
+        state,
+    );
 
     paned.set_start_child(Some(&first_widget));
     paned.set_end_child(Some(&second_widget));

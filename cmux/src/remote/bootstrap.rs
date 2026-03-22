@@ -72,10 +72,7 @@ pub fn check_remote_binary(ssh_args: &[String], remote_path: &str) -> bool {
         .output();
 
     match output {
-        Ok(out) => {
-            out.status.success()
-                && String::from_utf8_lossy(&out.stdout).trim() == "OK"
-        }
+        Ok(out) => out.status.success() && String::from_utf8_lossy(&out.stdout).trim() == "OK",
         Err(_) => false,
     }
 }
@@ -88,10 +85,7 @@ pub fn build_daemon_locally(
     platform: &RemotePlatform,
     go_source_dir: &str,
 ) -> Result<String, String> {
-    let output_path = format!(
-        "/tmp/cmuxd-remote-{}-{}",
-        platform.go_os, platform.go_arch
-    );
+    let output_path = format!("/tmp/cmuxd-remote-{}-{}", platform.go_os, platform.go_arch);
 
     tracing::info!(
         go_os = %platform.go_os,
@@ -140,9 +134,7 @@ pub fn upload_daemon(
     }
 
     // Build scp destination from ssh_args (extract destination)
-    let destination = ssh_args
-        .last()
-        .ok_or("No SSH destination in args")?;
+    let destination = ssh_args.last().ok_or("No SSH destination in args")?;
 
     // Extract port if present
     let mut scp_args: Vec<String> = Vec::new();

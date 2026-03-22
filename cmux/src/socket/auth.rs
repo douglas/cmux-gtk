@@ -148,9 +148,7 @@ pub fn is_authorized(peer: &PeerInfo, mode: SocketControlMode, server_pid: u32) 
         SocketControlMode::Off => false,
         SocketControlMode::AllowAll => true,
         SocketControlMode::LocalUser | SocketControlMode::Automation => is_same_user(peer),
-        SocketControlMode::CmuxOnly => {
-            is_same_user(peer) && is_descendant(peer.pid, server_pid)
-        }
+        SocketControlMode::CmuxOnly => is_same_user(peer) && is_descendant(peer.pid, server_pid),
         SocketControlMode::Password => {
             // Password mode still requires same-user for the socket connection;
             // the HMAC challenge happens at the protocol level in the server.

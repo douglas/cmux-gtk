@@ -6,15 +6,17 @@
 //! background, split opacity, divider color) to the terminal theme.
 
 /// Cached ghostty config values used by cmux's UI.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct GhosttyUiConfig {
     /// Terminal background color (r, g, b) as 0.0-1.0 floats.
     pub background: Option<(f32, f32, f32)>,
     /// Terminal background opacity (0.0-1.0).
+    #[allow(dead_code)] // populated for omarchy theme integration
     pub background_opacity: Option<f64>,
     /// Opacity for unfocused split panes (0.0-1.0).
     pub unfocused_split_opacity: Option<f64>,
     /// Fill color for unfocused split panes.
+    #[allow(dead_code)] // populated for omarchy theme integration
     pub unfocused_split_fill: Option<(f32, f32, f32)>,
     /// Split divider color.
     pub split_divider_color: Option<(f32, f32, f32)>,
@@ -48,17 +50,5 @@ impl GhosttyUiConfig {
                 (b * 255.0) as u8,
             )
         })
-    }
-}
-
-impl Default for GhosttyUiConfig {
-    fn default() -> Self {
-        Self {
-            background: None,
-            background_opacity: None,
-            unfocused_split_opacity: None,
-            unfocused_split_fill: None,
-            split_divider_color: None,
-        }
     }
 }

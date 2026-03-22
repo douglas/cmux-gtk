@@ -75,6 +75,7 @@ mod imp {
         pub(super) im_composing: Cell<bool>,
         pub(super) in_keyevent: Cell<ImeKeyEventState>,
         pub(super) im_commit_text: RefCell<Vec<u8>>,
+        #[allow(clippy::type_complexity)]
         pub(super) close_handler: RefCell<Option<Rc<dyn Fn(bool)>>>,
         pub(super) focused: Cell<bool>,
         pub(super) focus_idle_queued: Cell<bool>,
@@ -85,6 +86,7 @@ mod imp {
         /// callback paints the initial background color instead of
         /// drawing terminal content, hiding the mispositioned prompt
         /// until Ctrl+L corrects it.
+        #[allow(dead_code)] // read via imp() in render callback
         pub(super) created_at: Cell<Option<std::time::Instant>>,
         /// Background color (r, g, b) to paint during the grace period.
         pub(super) initial_bg: Cell<(f32, f32, f32)>,
@@ -322,6 +324,7 @@ impl GhosttyGlSurface {
         });
     }
 
+    #[allow(clippy::needless_return)] // guard clauses before cfg-gated body
     fn create_surface(
         &self,
         app: ghostty_app_t,
@@ -417,21 +420,15 @@ impl GhosttyGlSurface {
             // After the shell has started, send Ctrl+L to clear and
             // redraw the prompt at the top. Then resume rendering.
             let widget = self.clone();
-            glib::timeout_add_local_once(
-                std::time::Duration::from_millis(150),
-                move || {
-                    widget.send_text("\x0c");
-                    let widget2 = widget.clone();
-                    glib::timeout_add_local_once(
-                        std::time::Duration::from_millis(50),
-                        move || {
-                            widget2.imp().created_at.set(None);
-                            widget2.set_auto_render(true);
-                            widget2.queue_draw();
-                        },
-                    );
-                },
-            );
+            glib::timeout_add_local_once(std::time::Duration::from_millis(150), move || {
+                widget.send_text("\x0c");
+                let widget2 = widget.clone();
+                glib::timeout_add_local_once(std::time::Duration::from_millis(50), move || {
+                    widget2.imp().created_at.set(None);
+                    widget2.set_auto_render(true);
+                    widget2.queue_draw();
+                });
+            });
 
             self.flush_pending_text();
         }
@@ -664,7 +661,10 @@ impl GhosttyGlSurface {
             let display = self.display();
             let group = controller
                 .current_event()
-                .and_then(|ev| ev.downcast_ref::<gdk4::KeyEvent>().map(|ke| ke.layout() as i32))
+                .and_then(|ev| {
+                    ev.downcast_ref::<gdk4::KeyEvent>()
+                        .map(|ke| ke.layout() as i32)
+                })
                 .unwrap_or(0);
             if let Some((unshifted_key, _, _, _)) =
                 display.translate_key(keycode, gdk4::ModifierType::empty(), group)
@@ -740,6 +740,7 @@ impl GhosttyGlSurface {
         let _ = (dx, dy);
     }
 
+    #[allow(clippy::needless_return)] // guard clause before cfg-gated closure body
     fn on_focus_change(&self, focused: bool) {
         self.imp().focused.set(focused);
         let surface = self.imp().surface.get();
@@ -862,6 +863,7 @@ impl GhosttyGlSurface {
         true
     }
 
+    #[allow(dead_code)] // called from init_ghostty
     fn flush_pending_text(&self) {
         let surface = self.imp().surface.get();
         if surface.is_null() {
@@ -909,21 +911,22 @@ impl GhosttyGlSurface {
         // Build the text pointer for printable keys
         let key: gdk4::Key = unsafe { glib::translate::from_glib(keyval) };
         let mut text_buf = [0u8; 8];
-        let text_ptr = if mods == 0 || mods == ghostty_sys::ghostty_input_mods_e::GHOSTTY_MODS_SHIFT as u32 {
-            if let Some(ch) = key.to_unicode() {
-                if ch >= '\x20' {
-                    let len = ch.encode_utf8(&mut text_buf).len();
-                    text_buf[len] = 0;
-                    text_buf.as_ptr() as *const c_char
+        let text_ptr =
+            if mods == 0 || mods == ghostty_sys::ghostty_input_mods_e::GHOSTTY_MODS_SHIFT as u32 {
+                if let Some(ch) = key.to_unicode() {
+                    if ch >= '\x20' {
+                        let len = ch.encode_utf8(&mut text_buf).len();
+                        text_buf[len] = 0;
+                        text_buf.as_ptr() as *const c_char
+                    } else {
+                        ptr::null()
+                    }
                 } else {
                     ptr::null()
                 }
             } else {
                 ptr::null()
-            }
-        } else {
-            ptr::null()
-        };
+            };
 
         let unshifted_codepoint = key.to_lower().to_unicode().map(|c| c as u32).unwrap_or(0);
 
@@ -991,10 +994,8 @@ impl GhosttyGlSurface {
             let result = if text_out.text.is_null() || text_out.text_len == 0 {
                 String::new()
             } else {
-                let slice = std::slice::from_raw_parts(
-                    text_out.text as *const u8,
-                    text_out.text_len,
-                );
+                let slice =
+                    std::slice::from_raw_parts(text_out.text as *const u8, text_out.text_len);
                 String::from_utf8_lossy(slice).into_owned()
             };
 
@@ -1047,10 +1048,8 @@ impl GhosttyGlSurface {
             let result = if text_out.text.is_null() || text_out.text_len == 0 {
                 String::new()
             } else {
-                let slice = std::slice::from_raw_parts(
-                    text_out.text as *const u8,
-                    text_out.text_len,
-                );
+                let slice =
+                    std::slice::from_raw_parts(text_out.text as *const u8, text_out.text_len);
                 String::from_utf8_lossy(slice).into_owned()
             };
 
@@ -1268,6 +1267,7 @@ impl GhosttyGlSurface {
         let _ = text;
     }
 
+    #[allow(clippy::needless_return)] // guard clause before cfg-gated body
     fn update_ime_cursor_location(&self) {
         let surface = self.imp().surface.get();
         if surface.is_null() {

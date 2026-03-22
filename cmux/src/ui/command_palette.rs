@@ -124,32 +124,30 @@ pub fn show_command_palette(
     let key_controller2 = gtk4::EventControllerKey::new();
     {
         let list_box = list_box.clone();
-        key_controller2.connect_key_pressed(move |_, keyval, _, _| {
-            match keyval {
-                gdk4::Key::Down => {
-                    if let Some(row) = list_box.selected_row() {
-                        let next_index = row.index() + 1;
-                        if let Some(next) = list_box.row_at_index(next_index) {
-                            list_box.select_row(Some(&next));
-                        }
-                    } else if let Some(first) = list_box.row_at_index(0) {
-                        list_box.select_row(Some(&first));
+        key_controller2.connect_key_pressed(move |_, keyval, _, _| match keyval {
+            gdk4::Key::Down => {
+                if let Some(row) = list_box.selected_row() {
+                    let next_index = row.index() + 1;
+                    if let Some(next) = list_box.row_at_index(next_index) {
+                        list_box.select_row(Some(&next));
                     }
-                    glib::Propagation::Stop
+                } else if let Some(first) = list_box.row_at_index(0) {
+                    list_box.select_row(Some(&first));
                 }
-                gdk4::Key::Up => {
-                    if let Some(row) = list_box.selected_row() {
-                        let prev_index = row.index() - 1;
-                        if prev_index >= 0 {
-                            if let Some(prev) = list_box.row_at_index(prev_index) {
-                                list_box.select_row(Some(&prev));
-                            }
-                        }
-                    }
-                    glib::Propagation::Stop
-                }
-                _ => glib::Propagation::Proceed,
+                glib::Propagation::Stop
             }
+            gdk4::Key::Up => {
+                if let Some(row) = list_box.selected_row() {
+                    let prev_index = row.index() - 1;
+                    if prev_index >= 0 {
+                        if let Some(prev) = list_box.row_at_index(prev_index) {
+                            list_box.select_row(Some(&prev));
+                        }
+                    }
+                }
+                glib::Propagation::Stop
+            }
+            _ => glib::Propagation::Proceed,
         });
     }
     entry.add_controller(key_controller2);
@@ -321,11 +319,7 @@ fn build_actions(state: &Rc<AppState>) -> Rc<Vec<PaletteAction>> {
                                 .collect::<String>();
                             actions.push(PaletteAction {
                                 name: format!("surface.search.{ws_idx}.{panel_id}"),
-                                label: format!(
-                                    "{} — {}",
-                                    ws.display_title(),
-                                    preview,
-                                ),
+                                label: format!("{} — {}", ws.display_title(), preview,),
                                 shortcut: None,
                                 is_workspace: false,
                                 is_search_result: true,
@@ -429,10 +423,7 @@ fn fuzzy_match(haystack: &str, needle: &str) -> bool {
 /// Check if a binary is on PATH.
 fn which_exists(binary: &str) -> bool {
     std::env::var_os("PATH")
-        .map(|paths| {
-            std::env::split_paths(&paths)
-                .any(|dir| dir.join(binary).is_file())
-        })
+        .map(|paths| std::env::split_paths(&paths).any(|dir| dir.join(binary).is_file()))
         .unwrap_or(false)
 }
 
@@ -475,7 +466,9 @@ fn execute_action(name: &str, state: &Rc<AppState>, on_refresh: &Rc<dyn Fn()>) {
             }
         }
         "settings.open" => {
-            state.shared.send_ui_event(crate::app::UiEvent::OpenSettings);
+            state
+                .shared
+                .send_ui_event(crate::app::UiEvent::OpenSettings);
             return; // Don't refresh — the settings dialog handles itself
         }
         "config.reload" => {
@@ -502,8 +495,7 @@ fn execute_action(name: &str, state: &Rc<AppState>, on_refresh: &Rc<dyn Fn()>) {
                 }
             }
         }
-        name @ ("pane.focus_left" | "pane.focus_right"
-              | "pane.focus_up" | "pane.focus_down") => {
+        name @ ("pane.focus_left" | "pane.focus_right" | "pane.focus_up" | "pane.focus_down") => {
             use crate::model::panel::Direction;
             let dir = match name {
                 "pane.focus_left" => Direction::Left,
@@ -544,8 +536,7 @@ fn execute_action(name: &str, state: &Rc<AppState>, on_refresh: &Rc<dyn Fn()>) {
                             }
                             new_ws.current_directory = source_dir;
                             new_ws.panels.insert(panel_id, panel);
-                            new_ws.layout =
-                                crate::model::panel::LayoutNode::single_pane(panel_id);
+                            new_ws.layout = crate::model::panel::LayoutNode::single_pane(panel_id);
                             new_ws.focused_panel_id = Some(panel_id);
                             tm.add_workspace(new_ws);
                         }
@@ -613,9 +604,7 @@ fn execute_action(name: &str, state: &Rc<AppState>, on_refresh: &Rc<dyn Fn()>) {
                 .selected()
                 .map(|ws| ws.current_directory.clone());
             if let Some(dir) = dir {
-                let _ = std::process::Command::new(binary)
-                    .arg(&dir)
-                    .spawn();
+                let _ = std::process::Command::new(binary).arg(&dir).spawn();
             }
             return; // Don't refresh — external command
         }
@@ -728,8 +717,7 @@ fn execute_action(name: &str, state: &Rc<AppState>, on_refresh: &Rc<dyn Fn()>) {
             let mut tm = lock_or_recover(&state.shared.tab_manager);
             if let Some(ws) = tm.selected_mut() {
                 if let Some(panel_id) = ws.focused_panel_id {
-                    if let Some(pane_ids) = ws.layout.find_pane_with_panel_readonly(panel_id)
-                    {
+                    if let Some(pane_ids) = ws.layout.find_pane_with_panel_readonly(panel_id) {
                         let to_close: Vec<uuid::Uuid> = pane_ids
                             .iter()
                             .filter(|&&pid| pid != panel_id)
@@ -763,10 +751,12 @@ fn execute_action(name: &str, state: &Rc<AppState>, on_refresh: &Rc<dyn Fn()>) {
             };
             if let Some((panel_id, panel_type)) = info {
                 if panel_type == PanelType::Browser {
-                    state.shared.send_ui_event(crate::app::UiEvent::BrowserAction {
-                        panel_id,
-                        action: crate::ui::browser_panel::BrowserActionKind::ZoomIn,
-                    });
+                    state
+                        .shared
+                        .send_ui_event(crate::app::UiEvent::BrowserAction {
+                            panel_id,
+                            action: crate::ui::browser_panel::BrowserActionKind::ZoomIn,
+                        });
                 } else if let Some(surface) = state.terminal_cache.borrow().get(&panel_id) {
                     surface.binding_action("increase_font_size:1");
                 }
@@ -783,10 +773,12 @@ fn execute_action(name: &str, state: &Rc<AppState>, on_refresh: &Rc<dyn Fn()>) {
             };
             if let Some((panel_id, panel_type)) = info {
                 if panel_type == PanelType::Browser {
-                    state.shared.send_ui_event(crate::app::UiEvent::BrowserAction {
-                        panel_id,
-                        action: crate::ui::browser_panel::BrowserActionKind::ZoomOut,
-                    });
+                    state
+                        .shared
+                        .send_ui_event(crate::app::UiEvent::BrowserAction {
+                            panel_id,
+                            action: crate::ui::browser_panel::BrowserActionKind::ZoomOut,
+                        });
                 } else if let Some(surface) = state.terminal_cache.borrow().get(&panel_id) {
                     surface.binding_action("decrease_font_size:1");
                 }
@@ -803,12 +795,14 @@ fn execute_action(name: &str, state: &Rc<AppState>, on_refresh: &Rc<dyn Fn()>) {
             };
             if let Some((panel_id, panel_type)) = info {
                 if panel_type == PanelType::Browser {
-                    state.shared.send_ui_event(crate::app::UiEvent::BrowserAction {
-                        panel_id,
-                        action: crate::ui::browser_panel::BrowserActionKind::SetZoom {
-                            zoom: 1.0,
-                        },
-                    });
+                    state
+                        .shared
+                        .send_ui_event(crate::app::UiEvent::BrowserAction {
+                            panel_id,
+                            action: crate::ui::browser_panel::BrowserActionKind::SetZoom {
+                                zoom: 1.0,
+                            },
+                        });
                 } else if let Some(surface) = state.terminal_cache.borrow().get(&panel_id) {
                     surface.binding_action("reset_font_size");
                 }

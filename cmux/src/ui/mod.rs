@@ -1,4 +1,3 @@
-pub(crate) mod util;
 pub mod all_surfaces_search;
 pub mod browser_panel;
 pub mod command_palette;

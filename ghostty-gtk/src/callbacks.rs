@@ -128,10 +128,14 @@ unsafe fn weak_surface_from_userdata(
     surface_userdata_from_ptr(userdata).map(SurfaceUserdata::weak_surface)
 }
 
+/// # Safety
+/// `userdata` must be a valid pointer obtained from `ghostty_surface_new`.
 pub unsafe fn surface_from_callback_userdata(userdata: *mut c_void) -> Option<GhosttyGlSurface> {
     surface_userdata_from_ptr(userdata).and_then(|userdata| userdata.surface.upgrade())
 }
 
+/// # Safety
+/// `userdata` must be a valid pointer obtained from `ghostty_surface_new`.
 pub unsafe fn queue_render_from_userdata(userdata: *mut c_void) -> bool {
     let Some(surface) = weak_surface_from_userdata(userdata) else {
         return false;

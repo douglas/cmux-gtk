@@ -262,14 +262,17 @@ impl BrowserThemeMode {
     /// Returns the JavaScript to inject for forcing browser color scheme.
     pub fn theme_injection_js(self) -> &'static str {
         match self {
-            Self::System => r#"
+            Self::System => {
+                r#"
                 (function() {
                     var meta = document.getElementById('cmux-browser-theme-meta');
                     if (meta) meta.remove();
                     document.documentElement.removeAttribute('data-cmux-browser-theme');
                 })();
-            "#,
-            Self::Light => r#"
+            "#
+            }
+            Self::Light => {
+                r#"
                 (function() {
                     var meta = document.getElementById('cmux-browser-theme-meta');
                     if (!meta) {
@@ -281,8 +284,10 @@ impl BrowserThemeMode {
                     meta.content = 'light';
                     document.documentElement.setAttribute('data-cmux-browser-theme', 'light');
                 })();
-            "#,
-            Self::Dark => r#"
+            "#
+            }
+            Self::Dark => {
+                r#"
                 (function() {
                     var meta = document.getElementById('cmux-browser-theme-meta');
                     if (!meta) {
@@ -294,7 +299,8 @@ impl BrowserThemeMode {
                     meta.content = 'dark';
                     document.documentElement.setAttribute('data-cmux-browser-theme', 'dark');
                 })();
-            "#,
+            "#
+            }
         }
     }
 }
@@ -454,22 +460,7 @@ impl Default for SidebarDisplaySettings {
     }
 }
 
-impl SidebarDisplaySettings {
-    /// Resolve the effective tint color based on the current theme appearance.
-    /// Prefers light/dark variant; falls back to the general `tint_color`.
-    pub fn effective_tint_color(&self, is_dark: bool) -> &str {
-        let variant = if is_dark {
-            &self.tint_color_dark
-        } else {
-            &self.tint_color_light
-        };
-        if variant.is_empty() {
-            &self.tint_color
-        } else {
-            variant
-        }
-    }
-}
+impl SidebarDisplaySettings {}
 
 /// Link routing — determines which URLs open in cmux browser vs system browser.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -564,8 +555,7 @@ pub fn save(settings: &AppSettings) -> Result<(), std::io::Error> {
     std::fs::create_dir_all(&dir)?;
 
     let path = dir.join("settings.json");
-    let json = serde_json::to_string_pretty(settings)
-        .map_err(std::io::Error::other)?;
+    let json = serde_json::to_string_pretty(settings).map_err(std::io::Error::other)?;
     std::fs::write(path, json)?;
 
     shortcuts::save(&settings.shortcuts)?;
@@ -586,8 +576,7 @@ mod tests {
 
     #[test]
     fn test_malformed_json_returns_default() {
-        let result: AppSettings = serde_json::from_str("not valid json")
-            .unwrap_or_default();
+        let result: AppSettings = serde_json::from_str("not valid json").unwrap_or_default();
         assert_eq!(result.theme, ThemeMode::System);
     }
 

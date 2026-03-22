@@ -1127,36 +1127,34 @@ fn main() -> anyhow::Result<()> {
                 "browser.execute_js",
                 serde_json::json!({"panel": panel, "script": script}),
             ),
-            BrowserCommands::GetUrl { panel } => (
-                "browser.get_url",
-                serde_json::json!({"panel": panel}),
-            ),
-            BrowserCommands::GetText { panel } => (
-                "browser.get_text",
-                serde_json::json!({"panel": panel}),
-            ),
-            BrowserCommands::Back { panel } => (
-                "browser.back",
-                serde_json::json!({"panel": panel}),
-            ),
-            BrowserCommands::Forward { panel } => (
-                "browser.forward",
-                serde_json::json!({"panel": panel}),
-            ),
-            BrowserCommands::Reload { panel } => (
-                "browser.reload",
-                serde_json::json!({"panel": panel}),
-            ),
+            BrowserCommands::GetUrl { panel } => {
+                ("browser.get_url", serde_json::json!({"panel": panel}))
+            }
+            BrowserCommands::GetText { panel } => {
+                ("browser.get_text", serde_json::json!({"panel": panel}))
+            }
+            BrowserCommands::Back { panel } => {
+                ("browser.back", serde_json::json!({"panel": panel}))
+            }
+            BrowserCommands::Forward { panel } => {
+                ("browser.forward", serde_json::json!({"panel": panel}))
+            }
+            BrowserCommands::Reload { panel } => {
+                ("browser.reload", serde_json::json!({"panel": panel}))
+            }
             BrowserCommands::SetZoom { panel, zoom } => (
                 "browser.set_zoom",
                 serde_json::json!({"panel": panel, "zoom": zoom}),
             ),
-            BrowserCommands::Screenshot { panel } => (
-                "browser.screenshot",
-                serde_json::json!({"panel": panel}),
-            ),
+            BrowserCommands::Screenshot { panel } => {
+                ("browser.screenshot", serde_json::json!({"panel": panel}))
+            }
             // Phase 2: DOM interaction
-            BrowserCommands::Click { panel, selector, button } => (
+            BrowserCommands::Click {
+                panel,
+                selector,
+                button,
+            } => (
                 "browser.click",
                 serde_json::json!({"panel": panel, "selector": selector, "button": button}),
             ),
@@ -1168,11 +1166,19 @@ fn main() -> anyhow::Result<()> {
                 "browser.hover",
                 serde_json::json!({"panel": panel, "selector": selector}),
             ),
-            BrowserCommands::Type { panel, selector, text } => (
+            BrowserCommands::Type {
+                panel,
+                selector,
+                text,
+            } => (
                 "browser.type",
                 serde_json::json!({"panel": panel, "selector": selector, "text": text}),
             ),
-            BrowserCommands::Fill { panel, selector, value } => (
+            BrowserCommands::Fill {
+                panel,
+                selector,
+                value,
+            } => (
                 "browser.fill",
                 serde_json::json!({"panel": panel, "selector": selector, "value": value}),
             ),
@@ -1180,15 +1186,29 @@ fn main() -> anyhow::Result<()> {
                 "browser.clear",
                 serde_json::json!({"panel": panel, "selector": selector}),
             ),
-            BrowserCommands::Press { panel, selector, key } => (
+            BrowserCommands::Press {
+                panel,
+                selector,
+                key,
+            } => (
                 "browser.press",
                 serde_json::json!({"panel": panel, "selector": selector, "key": key}),
             ),
-            BrowserCommands::SelectOption { panel, selector, value, label, index } => (
+            BrowserCommands::SelectOption {
+                panel,
+                selector,
+                value,
+                label,
+                index,
+            } => (
                 "browser.select_option",
                 serde_json::json!({"panel": panel, "selector": selector, "value": value, "label": label, "index": index}),
             ),
-            BrowserCommands::Check { panel, selector, checked } => (
+            BrowserCommands::Check {
+                panel,
+                selector,
+                checked,
+            } => (
                 "browser.check",
                 serde_json::json!({"panel": panel, "selector": selector, "checked": checked}),
             ),
@@ -1200,12 +1220,21 @@ fn main() -> anyhow::Result<()> {
                 "browser.blur",
                 serde_json::json!({"panel": panel, "selector": selector}),
             ),
-            BrowserCommands::ScrollTo { panel, selector, x, y } => (
+            BrowserCommands::ScrollTo {
+                panel,
+                selector,
+                x,
+                y,
+            } => (
                 "browser.scroll_to",
                 serde_json::json!({"panel": panel, "selector": selector, "x": x, "y": y}),
             ),
             // Phase 3: Element queries
-            BrowserCommands::GetHtml { panel, selector, outer } => (
+            BrowserCommands::GetHtml {
+                panel,
+                selector,
+                outer,
+            } => (
                 "browser.get_html",
                 serde_json::json!({"panel": panel, "selector": selector, "outer": outer}),
             ),
@@ -1213,11 +1242,19 @@ fn main() -> anyhow::Result<()> {
                 "browser.get_value",
                 serde_json::json!({"panel": panel, "selector": selector}),
             ),
-            BrowserCommands::GetAttribute { panel, selector, name } => (
+            BrowserCommands::GetAttribute {
+                panel,
+                selector,
+                name,
+            } => (
                 "browser.get_attribute",
                 serde_json::json!({"panel": panel, "selector": selector, "name": name}),
             ),
-            BrowserCommands::GetProperty { panel, selector, name } => (
+            BrowserCommands::GetProperty {
+                panel,
+                selector,
+                name,
+            } => (
                 "browser.get_property",
                 serde_json::json!({"panel": panel, "selector": selector, "name": name}),
             ),
@@ -1225,7 +1262,11 @@ fn main() -> anyhow::Result<()> {
                 "browser.get_bounding_box",
                 serde_json::json!({"panel": panel, "selector": selector}),
             ),
-            BrowserCommands::GetComputedStyle { panel, selector, property } => (
+            BrowserCommands::GetComputedStyle {
+                panel,
+                selector,
+                property,
+            } => (
                 "browser.get_computed_style",
                 serde_json::json!({"panel": panel, "selector": selector, "property": property}),
             ),
@@ -1283,7 +1324,11 @@ fn main() -> anyhow::Result<()> {
                 serde_json::json!({"panel": panel, "ref": ref_id}),
             ),
             // Phase 5: Advanced
-            BrowserCommands::WaitForSelector { panel, selector, timeout } => (
+            BrowserCommands::WaitForSelector {
+                panel,
+                selector,
+                timeout,
+            } => (
                 "browser.wait_for_selector",
                 serde_json::json!({"panel": panel, "selector": selector, "timeout": timeout}),
             ),
@@ -1295,30 +1340,30 @@ fn main() -> anyhow::Result<()> {
                 "browser.wait_for_load_state",
                 serde_json::json!({"panel": panel, "timeout": timeout}),
             ),
-            BrowserCommands::WaitForFunction { panel, expression, timeout } => (
+            BrowserCommands::WaitForFunction {
+                panel,
+                expression,
+                timeout,
+            } => (
                 "browser.wait_for_function",
                 serde_json::json!({"panel": panel, "expression": expression, "timeout": timeout}),
             ),
-            BrowserCommands::Snapshot { panel } => (
-                "browser.snapshot",
-                serde_json::json!({"panel": panel}),
-            ),
-            BrowserCommands::Title { panel } => (
-                "browser.title",
-                serde_json::json!({"panel": panel}),
-            ),
-            BrowserCommands::GetCookies { panel } => (
-                "browser.get_cookies",
-                serde_json::json!({"panel": panel}),
-            ),
+            BrowserCommands::Snapshot { panel } => {
+                ("browser.snapshot", serde_json::json!({"panel": panel}))
+            }
+            BrowserCommands::Title { panel } => {
+                ("browser.title", serde_json::json!({"panel": panel}))
+            }
+            BrowserCommands::GetCookies { panel } => {
+                ("browser.get_cookies", serde_json::json!({"panel": panel}))
+            }
             BrowserCommands::SetCookie { panel, cookie } => (
                 "browser.set_cookie",
                 serde_json::json!({"panel": panel, "cookie": cookie}),
             ),
-            BrowserCommands::ClearCookies { panel } => (
-                "browser.clear_cookies",
-                serde_json::json!({"panel": panel}),
-            ),
+            BrowserCommands::ClearCookies { panel } => {
+                ("browser.clear_cookies", serde_json::json!({"panel": panel}))
+            }
             BrowserCommands::LocalStorageGet { panel, key } => (
                 "browser.local_storage_get",
                 serde_json::json!({"panel": panel, "key": key}),
@@ -1339,7 +1384,11 @@ fn main() -> anyhow::Result<()> {
                 "browser.get_console_messages",
                 serde_json::json!({"panel": panel}),
             ),
-            BrowserCommands::SetDialogHandler { panel, action, text } => (
+            BrowserCommands::SetDialogHandler {
+                panel,
+                action,
+                text,
+            } => (
                 "browser.set_dialog_handler",
                 serde_json::json!({"panel": panel, "action": action, "text": text}),
             ),
@@ -1501,18 +1550,14 @@ fn main() -> anyhow::Result<()> {
                     "panel": panel,
                 }),
             ),
-            WorkspaceCommands::ClearPorts { panel } => (
-                "workspace.clear_ports",
-                serde_json::json!({"panel": panel}),
-            ),
+            WorkspaceCommands::ClearPorts { panel } => {
+                ("workspace.clear_ports", serde_json::json!({"panel": panel}))
+            }
             WorkspaceCommands::ReportTty { tty, panel } => (
                 "workspace.report_tty",
                 serde_json::json!({"tty": tty, "panel": panel}),
             ),
-            WorkspaceCommands::PortsKick => (
-                "workspace.ports_kick",
-                serde_json::json!({}),
-            ),
+            WorkspaceCommands::PortsKick => ("workspace.ports_kick", serde_json::json!({})),
             WorkspaceCommands::ReportGit { branch, dirty } => (
                 "workspace.report_git_branch",
                 serde_json::json!({"branch": branch, "is_dirty": dirty}),
@@ -1530,20 +1575,12 @@ fn main() -> anyhow::Result<()> {
                     }),
                 )
             }
-            SurfaceCommands::List { workspace } => (
-                "surface.list",
-                serde_json::json!({"workspace": workspace}),
-            ),
+            SurfaceCommands::List { workspace } => {
+                ("surface.list", serde_json::json!({"workspace": workspace}))
+            }
             SurfaceCommands::Current => ("surface.current", serde_json::json!({})),
-            SurfaceCommands::Focus { id } => (
-                "surface.focus",
-                serde_json::json!({"panel": id}),
-            ),
-            SurfaceCommands::SendKey {
-                key,
-                mods,
-                surface,
-            } => (
+            SurfaceCommands::Focus { id } => ("surface.focus", serde_json::json!({"panel": id})),
+            SurfaceCommands::SendKey { key, mods, surface } => (
                 "surface.send_key",
                 serde_json::json!({
                     "key": key,
@@ -1551,10 +1588,9 @@ fn main() -> anyhow::Result<()> {
                     "surface": surface,
                 }),
             ),
-            SurfaceCommands::ReadScreen { surface } => (
-                "surface.read_text",
-                serde_json::json!({"surface": surface}),
-            ),
+            SurfaceCommands::ReadScreen { surface } => {
+                ("surface.read_text", serde_json::json!({"surface": surface}))
+            }
             SurfaceCommands::Flash { surface } => (
                 "surface.trigger_flash",
                 serde_json::json!({"surface": surface}),
@@ -1563,14 +1599,10 @@ fn main() -> anyhow::Result<()> {
                 "surface.split",
                 serde_json::json!({"orientation": orientation}),
             ),
-            SurfaceCommands::Close { id } => (
-                "surface.close",
-                serde_json::json!({"panel": id}),
-            ),
-            SurfaceCommands::Refresh { surface } => (
-                "surface.refresh",
-                serde_json::json!({"surface": surface}),
-            ),
+            SurfaceCommands::Close { id } => ("surface.close", serde_json::json!({"panel": id})),
+            SurfaceCommands::Refresh { surface } => {
+                ("surface.refresh", serde_json::json!({"surface": surface}))
+            }
             SurfaceCommands::ClearHistory { surface } => (
                 "surface.clear_history",
                 serde_json::json!({"surface": surface}),
@@ -1579,10 +1611,9 @@ fn main() -> anyhow::Result<()> {
                 "surface.action",
                 serde_json::json!({"action": action, "surface": surface}),
             ),
-            SurfaceCommands::Health { surface } => (
-                "surface.health",
-                serde_json::json!({"surface": surface}),
-            ),
+            SurfaceCommands::Health { surface } => {
+                ("surface.health", serde_json::json!({"surface": surface}))
+            }
             SurfaceCommands::Move {
                 panel,
                 workspace,
@@ -1599,14 +1630,10 @@ fn main() -> anyhow::Result<()> {
                 "surface.reorder",
                 serde_json::json!({"panel": panel, "index": index}),
             ),
-            SurfaceCommands::Create { r#type } => (
-                "surface.create",
-                serde_json::json!({"type": r#type}),
-            ),
-            SurfaceCommands::DragToSplit {
-                direction,
-                surface,
-            } => (
+            SurfaceCommands::Create { r#type } => {
+                ("surface.create", serde_json::json!({"type": r#type}))
+            }
+            SurfaceCommands::DragToSplit { direction, surface } => (
                 "surface.drag_to_split",
                 serde_json::json!({
                     "direction": direction,
@@ -1634,29 +1661,19 @@ fn main() -> anyhow::Result<()> {
             PaneCommands::New { orientation } => {
                 ("pane.new", serde_json::json!({"orientation": orientation}))
             }
-            PaneCommands::Create { orientation } => {
-                ("pane.create", serde_json::json!({"orientation": orientation}))
+            PaneCommands::Create { orientation } => (
+                "pane.create",
+                serde_json::json!({"orientation": orientation}),
+            ),
+            PaneCommands::List { workspace } => {
+                ("pane.list", serde_json::json!({"workspace": workspace}))
             }
-            PaneCommands::List { workspace } => (
-                "pane.list",
-                serde_json::json!({"workspace": workspace}),
-            ),
-            PaneCommands::Focus { id } => (
-                "pane.focus",
-                serde_json::json!({"panel": id}),
-            ),
-            PaneCommands::Close { id } => (
-                "pane.close",
-                serde_json::json!({"panel": id}),
-            ),
-            PaneCommands::Last { workspace } => (
-                "pane.last",
-                serde_json::json!({"workspace": workspace}),
-            ),
-            PaneCommands::Swap { a, b } => (
-                "pane.swap",
-                serde_json::json!({"a": a, "b": b}),
-            ),
+            PaneCommands::Focus { id } => ("pane.focus", serde_json::json!({"panel": id})),
+            PaneCommands::Close { id } => ("pane.close", serde_json::json!({"panel": id})),
+            PaneCommands::Last { workspace } => {
+                ("pane.last", serde_json::json!({"workspace": workspace}))
+            }
+            PaneCommands::Swap { a, b } => ("pane.swap", serde_json::json!({"a": a, "b": b})),
             PaneCommands::Resize { amount, panel } => (
                 "pane.resize",
                 serde_json::json!({"amount": amount, "panel": panel}),
@@ -1665,22 +1682,17 @@ fn main() -> anyhow::Result<()> {
                 "pane.focus_direction",
                 serde_json::json!({"direction": direction}),
             ),
-            PaneCommands::Break { panel } => (
-                "pane.break",
-                serde_json::json!({"panel": panel}),
-            ),
+            PaneCommands::Break { panel } => ("pane.break", serde_json::json!({"panel": panel})),
             PaneCommands::Join { id, orientation } => (
                 "pane.join",
                 serde_json::json!({"panel": id, "orientation": orientation}),
             ),
-            PaneCommands::Equalize { workspace } => (
-                "pane.equalize",
-                serde_json::json!({"workspace": workspace}),
-            ),
-            PaneCommands::Surfaces { panel } => (
-                "pane.surfaces",
-                serde_json::json!({"panel": panel}),
-            ),
+            PaneCommands::Equalize { workspace } => {
+                ("pane.equalize", serde_json::json!({"workspace": workspace}))
+            }
+            PaneCommands::Surfaces { panel } => {
+                ("pane.surfaces", serde_json::json!({"panel": panel}))
+            }
         },
 
         Commands::Notification(notif) => match notif {

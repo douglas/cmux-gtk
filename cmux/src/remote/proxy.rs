@@ -31,9 +31,7 @@ impl ProxyTunnel {
         let alive_clone = Arc::clone(&alive);
 
         // Set a short accept timeout so the thread can check `alive`
-        listener
-            .set_nonblocking(false)
-            .ok();
+        listener.set_nonblocking(false).ok();
 
         std::thread::spawn(move || {
             tracing::info!(port, "Proxy tunnel listening");
@@ -94,16 +92,12 @@ impl Drop for ProxyTunnel {
 
 /// Handle a single proxy client connection.
 fn handle_proxy_connection(mut stream: TcpStream, rpc: &RemoteRpcClient) -> Result<(), String> {
-    stream
-        .set_read_timeout(Some(Duration::from_secs(30)))
-        .ok();
+    stream.set_read_timeout(Some(Duration::from_secs(30))).ok();
 
     let mut buf = [0u8; 4096];
 
     // Read first bytes to detect SOCKS5 vs HTTP CONNECT
-    let n = stream
-        .read(&mut buf)
-        .map_err(|e| format!("read: {}", e))?;
+    let n = stream.read(&mut buf).map_err(|e| format!("read: {}", e))?;
     if n == 0 {
         return Err("empty connection".to_string());
     }
@@ -115,7 +109,10 @@ fn handle_proxy_connection(mut stream: TcpStream, rpc: &RemoteRpcClient) -> Resu
         // HTTP CONNECT
         handle_http_connect(stream, rpc, &buf[..n])
     } else {
-        Err(format!("Unknown proxy protocol: first byte 0x{:02x}", buf[0]))
+        Err(format!(
+            "Unknown proxy protocol: first byte 0x{:02x}",
+            buf[0]
+        ))
     }
 }
 
@@ -170,7 +167,10 @@ fn handle_socks5(
         // Not a CONNECT command
         let reply = [0x05, 0x07, 0x00, 0x01, 0, 0, 0, 0, 0, 0]; // command not supported
         let _ = stream.write_all(&reply);
-        return Err(format!("Unsupported SOCKS5 command: 0x{:02x}", connect_buf[1]));
+        return Err(format!(
+            "Unsupported SOCKS5 command: 0x{:02x}",
+            connect_buf[1]
+        ));
     }
 
     let atyp = connect_buf[3];
@@ -198,13 +198,9 @@ fn handle_socks5(
                 let n = stream.read(&mut more).map_err(|e| format!("read: {}", e))?;
                 connect_buf.extend_from_slice(&more[..n]);
             }
-            let host =
-                String::from_utf8_lossy(&connect_buf[5..5 + domain_len]).to_string();
+            let host = String::from_utf8_lossy(&connect_buf[5..5 + domain_len]).to_string();
             let port_offset = 5 + domain_len;
-            let port = u16::from_be_bytes([
-                connect_buf[port_offset],
-                connect_buf[port_offset + 1],
-            ]);
+            let port = u16::from_be_bytes([connect_buf[port_offset], connect_buf[port_offset + 1]]);
             (host, port, needed)
         }
         0x04 => {
@@ -286,7 +282,7 @@ fn handle_http_connect(
     let header_end = buf
         .windows(4)
         .position(|w| w == b"\r\n\r\n")
-        .unwrap()
+        .ok_or("Malformed HTTP CONNECT header")?
         + 4;
     let first_line = buf
         .iter()
@@ -354,30 +350,27 @@ fn relay_streams(
     stream.set_nonblocking(true).ok();
 
     let mut local_buf = [0u8; 32768];
-    let mut remote_done = false;
 
     loop {
         // Read from local → write to remote
-        if !remote_done {
-            match stream.read(&mut local_buf) {
-                Ok(0) => {
-                    // Local EOF
-                    let _ = rpc.proxy_close(stream_id);
+        match stream.read(&mut local_buf) {
+            Ok(0) => {
+                // Local EOF
+                let _ = rpc.proxy_close(stream_id);
+                return Ok(());
+            }
+            Ok(n) => {
+                if let Err(e) = rpc.proxy_write(stream_id, &local_buf[..n]) {
+                    tracing::debug!("proxy.write failed: {}", e);
                     return Ok(());
                 }
-                Ok(n) => {
-                    if let Err(e) = rpc.proxy_write(stream_id, &local_buf[..n]) {
-                        tracing::debug!("proxy.write failed: {}", e);
-                        return Ok(());
-                    }
-                }
-                Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
-                    // No data available, continue to check remote
-                }
-                Err(e) => {
-                    let _ = rpc.proxy_close(stream_id);
-                    return Err(format!("Local read error: {}", e));
-                }
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                // No data available, continue to check remote
+            }
+            Err(e) => {
+                let _ = rpc.proxy_close(stream_id);
+                return Err(format!("Local read error: {}", e));
             }
         }
 
@@ -397,7 +390,6 @@ fn relay_streams(
                 if let Some(data) = final_data {
                     let _ = stream.write_all(&data);
                 }
-                remote_done = true;
                 // Shut down the write side — remote is done sending
                 let _ = stream.shutdown(std::net::Shutdown::Write);
                 return Ok(());

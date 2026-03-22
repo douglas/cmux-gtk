@@ -36,6 +36,7 @@ impl TabManager {
         self.workspaces.len()
     }
 
+    #[allow(dead_code)]
     pub fn is_empty(&self) -> bool {
         self.workspaces.is_empty()
     }
@@ -337,8 +338,7 @@ impl TabManager {
         // Fix selection
         if let Some(sel) = self.selected_index {
             if sel >= self.workspaces.len() {
-                self.selected_index =
-                    Some(self.workspaces.len().saturating_sub(1));
+                self.selected_index = Some(self.workspaces.len().saturating_sub(1));
             }
         }
         count

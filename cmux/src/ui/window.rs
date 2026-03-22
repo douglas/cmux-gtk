@@ -9,7 +9,6 @@ use tokio::sync::mpsc::UnboundedReceiver;
 
 use std::cell::Cell;
 
-
 use crate::app::{lock_or_recover, AppState, UiEvent};
 use crate::model::panel::{GitBranch, SplitOrientation};
 use crate::model::{PanelType, Workspace};
@@ -156,7 +155,7 @@ pub fn create_window(
         let window_ref = window.clone();
         let list_box = list_box.clone();
         let content_box = content_box.clone();
-        let state = Rc::clone(&state);
+        let state = Rc::clone(state);
         settings_btn.connect_clicked(move |_| {
             let lb = list_box.clone();
             let cb = content_box.clone();
@@ -243,11 +242,7 @@ pub fn create_window(
                 return glib::Propagation::Proceed;
             }
 
-            let dialog = adw::MessageDialog::new(
-                Some(window),
-                Some("Quit cmux?"),
-                None,
-            );
+            let dialog = adw::MessageDialog::new(Some(window), Some("Quit cmux?"), None);
             dialog.set_body(&format!(
                 "There {} still active. Are you sure you want to quit?",
                 if terminal_count == 1 {
@@ -333,7 +328,7 @@ pub fn rebuild_content(content_box: &gtk4::Box, state: &Rc<AppState>) {
             None
         };
         let widget = if let Some(zoomed_id) = zoomed_panel_id {
-            split_view::build_zoomed(zoomed_id, &panels, &state)
+            split_view::build_zoomed(zoomed_id, &panels, state)
         } else {
             split_view::build_layout(
                 id,
@@ -341,7 +336,7 @@ pub fn rebuild_content(content_box: &gtk4::Box, state: &Rc<AppState>) {
                 &panels,
                 effective_attention,
                 focused_panel_id,
-                &state,
+                state,
             )
         };
         content_box.append(&widget);
@@ -646,14 +641,12 @@ fn bind_shared_state_updates(
                         // source_panel_id (window.open / Ctrl+click / middle-click).
                         let mut tm = lock_or_recover(&state.shared.tab_manager);
                         if let Some(ws) = tm.selected_mut() {
-                            let mut panel =
-                                crate::model::panel::Panel::new_browser();
+                            let mut panel = crate::model::panel::Panel::new_browser();
                             panel.browser_url = Some(url.clone());
                             panel.directory = Some(url);
                             let new_panel_id = panel.id;
                             ws.panels.insert(new_panel_id, panel);
-                            ws.layout
-                                .add_panel_to_pane(source_panel_id, new_panel_id);
+                            ws.layout.add_panel_to_pane(source_panel_id, new_panel_id);
                             ws.focused_panel_id = Some(new_panel_id);
                         }
                         drop(tm);
@@ -663,8 +656,7 @@ fn bind_shared_state_updates(
                         if let Some(url) = state.shared.pop_closed_browser_url() {
                             let mut tm = lock_or_recover(&state.shared.tab_manager);
                             if let Some(ws) = tm.selected_mut() {
-                                let mut panel =
-                                    crate::model::panel::Panel::new_browser();
+                                let mut panel = crate::model::panel::Panel::new_browser();
                                 panel.browser_url = Some(url.clone());
                                 panel.directory = Some(url);
                                 let panel_id = panel.id;
@@ -736,16 +728,13 @@ fn bind_shared_state_updates(
                                         let panel =
                                             crate::model::panel::Panel::new_markdown(&path_str);
                                         let panel_id = panel.id;
-                                        let mut tm =
-                                            lock_or_recover(&state.shared.tab_manager);
+                                        let mut tm = lock_or_recover(&state.shared.tab_manager);
                                         if let Some(ws) = tm.selected_mut() {
                                             ws.panels.insert(panel_id, panel);
                                             if let Some(focused) = ws.focused_panel_id {
-                                                ws.layout
-                                                    .add_panel_to_pane(focused, panel_id);
+                                                ws.layout.add_panel_to_pane(focused, panel_id);
                                             }
-                                            ws.previous_focused_panel_id =
-                                                ws.focused_panel_id;
+                                            ws.previous_focused_panel_id = ws.focused_panel_id;
                                             ws.focused_panel_id = Some(panel_id);
                                         }
                                         drop(tm);
@@ -772,8 +761,7 @@ fn bind_shared_state_updates(
                     UiEvent::ReloadConfig => {
                         if let Some(app) = state.ghostty_app.borrow_mut().as_mut() {
                             app.reload_config();
-                            let ui_config =
-                                crate::ghostty_config::GhosttyUiConfig::from_app(app);
+                            let ui_config = crate::ghostty_config::GhosttyUiConfig::from_app(app);
                             tracing::info!(?ui_config, "Reloaded ghostty config");
                             crate::app::apply_ghostty_css(&ui_config);
                             *state.ghostty_ui_config.borrow_mut() = ui_config;
@@ -800,15 +788,13 @@ fn bind_shared_state_updates(
 
                         // Record in notification store with desktop alert
                         {
-                            let mut store =
-                                lock_or_recover(&state.shared.notifications);
+                            let mut store = lock_or_recover(&state.shared.notifications);
                             store.add(&title, &body, ws_id, panel_id, true);
                         }
 
                         // Record workspace-level notification for sidebar badge
                         if let Some(ws_id) = ws_id {
-                            let mut tm =
-                                lock_or_recover(&state.shared.tab_manager);
+                            let mut tm = lock_or_recover(&state.shared.tab_manager);
                             if let Some(ws) = tm.workspace_mut(ws_id) {
                                 ws.record_notification(&title, &body, panel_id);
                             }
@@ -819,8 +805,8 @@ fn bind_shared_state_updates(
                     // directly via its own callbacks.
                     UiEvent::StartSearch
                     | UiEvent::EndSearch
-                    | UiEvent::SearchTotal { .. }
-                    | UiEvent::SearchSelected { .. } => {}
+                    | UiEvent::SearchTotal
+                    | UiEvent::SearchSelected => {}
                 }
             }
 
@@ -868,8 +854,7 @@ fn select_latest_unread(state: &Rc<AppState>) -> bool {
 fn mark_workspace_read(state: &Rc<AppState>, workspace_id: uuid::Uuid) {
     lock_or_recover(&state.shared.notifications).mark_workspace_read(workspace_id);
 
-    if let Some(workspace) =
-        lock_or_recover(&state.shared.tab_manager).workspace_mut(workspace_id)
+    if let Some(workspace) = lock_or_recover(&state.shared.tab_manager).workspace_mut(workspace_id)
     {
         workspace.mark_notifications_read();
         workspace.clear_attention();
@@ -1000,10 +985,7 @@ fn setup_shortcuts(
                     if let Some(workspace) =
                         lock_or_recover(&state.shared.tab_manager).selected_mut()
                     {
-                        workspace.split(
-                            SplitOrientation::Horizontal,
-                            PanelType::Browser,
-                        );
+                        workspace.split(SplitOrientation::Horizontal, PanelType::Browser);
                     }
                     refresh_ui(&list_box, &content_box, &state);
                     return glib::Propagation::Stop;
@@ -1013,10 +995,7 @@ fn setup_shortcuts(
                     if let Some(workspace) =
                         lock_or_recover(&state.shared.tab_manager).selected_mut()
                     {
-                        workspace.split(
-                            SplitOrientation::Vertical,
-                            PanelType::Browser,
-                        );
+                        workspace.split(SplitOrientation::Vertical, PanelType::Browser);
                     }
                     refresh_ui(&list_box, &content_box, &state);
                     return glib::Propagation::Stop;
@@ -1048,8 +1027,7 @@ fn setup_shortcuts(
                 let mut tm = lock_or_recover(&state.shared.tab_manager);
                 if let Some(ws) = tm.selected_mut() {
                     if let Some(panel_id) = ws.focused_panel_id {
-                        let pane_ids =
-                            ws.layout.find_pane_with_panel_readonly(panel_id);
+                        let pane_ids = ws.layout.find_pane_with_panel_readonly(panel_id);
                         if let Some(pane_ids) = pane_ids {
                             let to_close: Vec<uuid::Uuid> = pane_ids
                                 .iter()
@@ -1116,21 +1094,18 @@ fn setup_shortcuts(
                 let search_entry_c = search_entry.clone();
                 if let Some(display) = gdk4::Display::default() {
                     let primary = display.primary_clipboard();
-                    primary.read_text_async(
-                        gio::Cancellable::NONE,
-                        move |result| {
-                            if let Ok(Some(text)) = result {
-                                let text = text.to_string();
-                                if !text.is_empty() {
-                                    if !search_bar_c.is_visible() {
-                                        search_bar_c.set_visible(true);
-                                    }
-                                    search_entry_c.set_text(&text);
-                                    search_entry_c.grab_focus();
+                    primary.read_text_async(gio::Cancellable::NONE, move |result| {
+                        if let Ok(Some(text)) = result {
+                            let text = text.to_string();
+                            if !text.is_empty() {
+                                if !search_bar_c.is_visible() {
+                                    search_bar_c.set_visible(true);
                                 }
+                                search_entry_c.set_text(&text);
+                                search_entry_c.grab_focus();
                             }
-                        },
-                    );
+                        }
+                    });
                 }
                 glib::Propagation::Stop
             }
@@ -1151,9 +1126,7 @@ fn setup_shortcuts(
             // Ctrl+P: All-surfaces search
             (gdk4::Key::p, true, false) => {
                 if let Some(window) = window_weak.upgrade() {
-                    super::all_surfaces_search::show_all_surfaces_search(
-                        &window, &state,
-                    );
+                    super::all_surfaces_search::show_all_surfaces_search(&window, &state);
                 }
                 glib::Propagation::Stop
             }
@@ -1223,10 +1196,12 @@ fn setup_shortcuts(
             (gdk4::Key::T, true, true) => {
                 let mut workspace = Workspace::new();
                 workspace.window_id = uuid::Uuid::parse_str(
-                    &window_weak.upgrade()
+                    &window_weak
+                        .upgrade()
                         .map(|w| w.widget_name().to_string())
                         .unwrap_or_default(),
-                ).ok();
+                )
+                .ok();
                 let placement = crate::settings::load().new_workspace_placement;
                 lock_or_recover(&state.shared.tab_manager)
                     .add_workspace_with_placement(workspace, placement);
@@ -1305,9 +1280,7 @@ fn setup_shortcuts(
                     } else {
                         dir
                     };
-                    let _ = std::process::Command::new("xdg-open")
-                        .arg(&path)
-                        .spawn();
+                    let _ = std::process::Command::new("xdg-open").arg(&path).spawn();
                 }
                 glib::Propagation::Stop
             }
@@ -1503,23 +1476,19 @@ fn setup_shortcuts(
                 let info = {
                     let tm = lock_or_recover(&state.shared.tab_manager);
                     tm.selected().and_then(|ws| {
-                        ws.focused_panel_id.and_then(|pid| {
-                            ws.panels.get(&pid).map(|p| (pid, p.panel_type))
-                        })
+                        ws.focused_panel_id
+                            .and_then(|pid| ws.panels.get(&pid).map(|p| (pid, p.panel_type)))
                     })
                 };
                 if let Some((panel_id, panel_type)) = info {
                     if panel_type == PanelType::Browser {
-                        state.shared.send_ui_event(
-                            crate::app::UiEvent::BrowserAction {
+                        state
+                            .shared
+                            .send_ui_event(crate::app::UiEvent::BrowserAction {
                                 panel_id,
-                                action:
-                                    crate::ui::browser_panel::BrowserActionKind::ZoomIn,
-                            },
-                        );
-                    } else if let Some(surface) =
-                        state.terminal_cache.borrow().get(&panel_id)
-                    {
+                                action: crate::ui::browser_panel::BrowserActionKind::ZoomIn,
+                            });
+                    } else if let Some(surface) = state.terminal_cache.borrow().get(&panel_id) {
                         surface.binding_action("increase_font_size:1");
                     }
                 }
@@ -1530,23 +1499,19 @@ fn setup_shortcuts(
                 let info = {
                     let tm = lock_or_recover(&state.shared.tab_manager);
                     tm.selected().and_then(|ws| {
-                        ws.focused_panel_id.and_then(|pid| {
-                            ws.panels.get(&pid).map(|p| (pid, p.panel_type))
-                        })
+                        ws.focused_panel_id
+                            .and_then(|pid| ws.panels.get(&pid).map(|p| (pid, p.panel_type)))
                     })
                 };
                 if let Some((panel_id, panel_type)) = info {
                     if panel_type == PanelType::Browser {
-                        state.shared.send_ui_event(
-                            crate::app::UiEvent::BrowserAction {
+                        state
+                            .shared
+                            .send_ui_event(crate::app::UiEvent::BrowserAction {
                                 panel_id,
-                                action:
-                                    crate::ui::browser_panel::BrowserActionKind::ZoomOut,
-                            },
-                        );
-                    } else if let Some(surface) =
-                        state.terminal_cache.borrow().get(&panel_id)
-                    {
+                                action: crate::ui::browser_panel::BrowserActionKind::ZoomOut,
+                            });
+                    } else if let Some(surface) = state.terminal_cache.borrow().get(&panel_id) {
                         surface.binding_action("decrease_font_size:1");
                     }
                 }
@@ -1557,25 +1522,21 @@ fn setup_shortcuts(
                 let info = {
                     let tm = lock_or_recover(&state.shared.tab_manager);
                     tm.selected().and_then(|ws| {
-                        ws.focused_panel_id.and_then(|pid| {
-                            ws.panels.get(&pid).map(|p| (pid, p.panel_type))
-                        })
+                        ws.focused_panel_id
+                            .and_then(|pid| ws.panels.get(&pid).map(|p| (pid, p.panel_type)))
                     })
                 };
                 if let Some((panel_id, panel_type)) = info {
                     if panel_type == PanelType::Browser {
-                        state.shared.send_ui_event(
-                            crate::app::UiEvent::BrowserAction {
+                        state
+                            .shared
+                            .send_ui_event(crate::app::UiEvent::BrowserAction {
                                 panel_id,
-                                action:
-                                    crate::ui::browser_panel::BrowserActionKind::SetZoom {
-                                        zoom: 1.0,
-                                    },
-                            },
-                        );
-                    } else if let Some(surface) =
-                        state.terminal_cache.borrow().get(&panel_id)
-                    {
+                                action: crate::ui::browser_panel::BrowserActionKind::SetZoom {
+                                    zoom: 1.0,
+                                },
+                            });
+                    } else if let Some(surface) = state.terminal_cache.borrow().get(&panel_id) {
                         surface.binding_action("reset_font_size");
                     }
                 }

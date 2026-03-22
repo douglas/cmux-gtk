@@ -53,9 +53,10 @@ impl RemoteConfig {
 }
 
 /// Remote connection state.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "lowercase")]
 pub enum RemoteState {
+    #[default]
     Disconnected,
     Connecting,
     Connected {
@@ -65,12 +66,6 @@ pub enum RemoteState {
         daemon_version: String,
     },
     Error(String),
-}
-
-impl Default for RemoteState {
-    fn default() -> Self {
-        Self::Disconnected
-    }
 }
 
 /// Manages the lifecycle of a single remote daemon connection.
@@ -126,9 +121,8 @@ impl RemoteSessionController {
         let rpc = RemoteRpcClient::new(&ssh_args, &daemon_path)?;
 
         // Hello handshake
-        let hello = rpc.hello().map_err(|e| {
+        let hello = rpc.hello().inspect_err(|e| {
             self.state = RemoteState::Error(e.clone());
-            e
         })?;
 
         tracing::info!(
@@ -141,9 +135,8 @@ impl RemoteSessionController {
         let rpc = Arc::new(rpc);
 
         // Start proxy tunnel
-        let proxy = ProxyTunnel::start(Arc::clone(&rpc)).map_err(|e| {
+        let proxy = ProxyTunnel::start(Arc::clone(&rpc)).inspect_err(|e| {
             self.state = RemoteState::Error(e.clone());
-            e
         })?;
 
         let proxy_port = proxy.port();

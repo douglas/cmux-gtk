@@ -5,8 +5,8 @@ use libadwaita as adw;
 use libadwaita::prelude::*;
 
 use crate::settings::{
-    self, AppSettings, BrowserSettings, NewWorkspacePlacement, NotificationSound,
-    SearchEngine, SidebarDisplaySettings, SidebarFocusStyle, SocketAccess, ThemeMode,
+    self, AppSettings, BrowserSettings, NewWorkspacePlacement, NotificationSound, SearchEngine,
+    SidebarDisplaySettings, SidebarFocusStyle, SocketAccess, ThemeMode,
 };
 
 /// Create and show the settings preferences window.
@@ -43,7 +43,13 @@ pub fn show_settings(parent: &adw::ApplicationWindow, on_close: impl Fn() + 'sta
         ThemeMode::System => 0,
         ThemeMode::Light => 1,
         ThemeMode::Dark => 2,
-        ThemeMode::Omarchy => if on_omarchy { 3 } else { 0 },
+        ThemeMode::Omarchy => {
+            if on_omarchy {
+                3
+            } else {
+                0
+            }
+        }
     });
     theme_group.add(&theme_row);
     appearance_page.add(&theme_group);
@@ -60,7 +66,9 @@ pub fn show_settings(parent: &adw::ApplicationWindow, on_close: impl Fn() + 'sta
 
     let first_click_row = adw::SwitchRow::new();
     first_click_row.set_title("First Click Focus Only");
-    first_click_row.set_subtitle("Clicking an unfocused pane only focuses it, without passing the click to the terminal");
+    first_click_row.set_subtitle(
+        "Clicking an unfocused pane only focuses it, without passing the click to the terminal",
+    );
     first_click_row.set_active(current_settings.first_click_focus);
     behavior_group.add(&first_click_row);
 
@@ -226,8 +234,7 @@ pub fn show_settings(parent: &adw::ApplicationWindow, on_close: impl Fn() + 'sta
     let sound_preset_row = adw::ComboRow::new();
     sound_preset_row.set_title("Sound Preset");
     sound_preset_row.set_subtitle("Which sound to play for notifications");
-    let sound_preset_list =
-        gtk4::StringList::new(&sound_preset_labels);
+    let sound_preset_list = gtk4::StringList::new(&sound_preset_labels);
     sound_preset_row.set_model(Some(&sound_preset_list));
     sound_preset_row.set_selected(match &current_settings.notifications.sound_name {
         NotificationSound::Default => 0,
@@ -297,10 +304,8 @@ pub fn show_settings(parent: &adw::ApplicationWindow, on_close: impl Fn() + 'sta
     let browser_theme_row = adw::ComboRow::new();
     browser_theme_row.set_title("Browser Theme");
     browser_theme_row.set_subtitle("Override color scheme for web pages");
-    browser_theme_row
-        .set_model(Some(&gtk4::StringList::new(&theme_labels)));
-    browser_theme_row
-        .set_selected(current_settings.browser.browser_theme.to_index());
+    browser_theme_row.set_model(Some(&gtk4::StringList::new(&theme_labels)));
+    browser_theme_row.set_selected(current_settings.browser.browser_theme.to_index());
     browser_group.add(&browser_theme_row);
 
     browser_page.add(&browser_group);
@@ -347,9 +352,8 @@ pub fn show_settings(parent: &adw::ApplicationWindow, on_close: impl Fn() + 'sta
         "Click a shortcut to record a new binding. Press Escape to cancel.",
     ));
 
-    let shortcuts_state = std::rc::Rc::new(std::cell::RefCell::new(
-        current_settings.shortcuts.clone(),
-    ));
+    let shortcuts_state =
+        std::rc::Rc::new(std::cell::RefCell::new(current_settings.shortcuts.clone()));
 
     let mut sorted_bindings: Vec<_> = current_settings.shortcuts.bindings.iter().collect();
     sorted_bindings.sort_by_key(|(action, _)| (*action).clone());

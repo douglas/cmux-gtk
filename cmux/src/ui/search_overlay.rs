@@ -9,9 +9,8 @@ use crate::app::AppState;
 
 /// Shared search state updated by ghostty callbacks and read by the overlay.
 #[derive(Debug, Default)]
+#[allow(dead_code)] // fields updated by ghostty callbacks
 pub struct SearchState {
-    pub total: Cell<isize>,
-    pub selected: Cell<isize>,
     pub visible: Cell<bool>,
 }
 
@@ -25,10 +24,7 @@ pub struct SearchOverlay {
 }
 
 /// Create a search overlay that wraps the given child widget.
-pub fn create_search_overlay(
-    child: &gtk4::Widget,
-    app_state: &Rc<AppState>,
-) -> SearchOverlay {
+pub fn create_search_overlay(child: &gtk4::Widget, app_state: &Rc<AppState>) -> SearchOverlay {
     let overlay = gtk4::Overlay::new();
     overlay.set_child(Some(child));
     overlay.set_hexpand(true);
@@ -216,21 +212,5 @@ pub fn trigger_find_prev(state: &Rc<AppState>, entry: &gtk4::SearchEntry) {
     let text = entry.text().to_string();
     if !text.is_empty() {
         do_search_needle(state, &text, false);
-    }
-}
-
-/// Update the search overlay match count from ghostty callbacks.
-pub fn update_search_count(overlay: &SearchOverlay) {
-    let total = overlay.state.total.get();
-    let selected = overlay.state.selected.get();
-
-    if total < 0 {
-        overlay.count_label.set_text("");
-    } else if total == 0 {
-        overlay.count_label.set_text("No matches");
-    } else {
-        overlay
-            .count_label
-            .set_text(&format!("{}/{}", selected + 1, total));
     }
 }

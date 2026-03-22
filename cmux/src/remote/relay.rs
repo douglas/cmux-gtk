@@ -57,9 +57,7 @@ impl RelayServer {
                         let rid = relay_id_clone.clone();
                         let token = auth_token_clone.clone();
                         std::thread::spawn(move || {
-                            if let Err(e) =
-                                handle_relay_connection(stream, &socket, &rid, &token)
-                            {
+                            if let Err(e) = handle_relay_connection(stream, &socket, &rid, &token) {
                                 tracing::debug!("Relay connection error: {}", e);
                             }
                         });
@@ -113,10 +111,7 @@ impl RelayServer {
         // We try port 0 which lets SSH allocate
         let remote_port = allocate_remote_port(ssh_args)?;
 
-        let forward_spec = format!(
-            "127.0.0.1:{}:127.0.0.1:{}",
-            remote_port, self.local_port
-        );
+        let forward_spec = format!("127.0.0.1:{}:127.0.0.1:{}", remote_port, self.local_port);
 
         tracing::info!(
             forward = %forward_spec,
@@ -176,9 +171,7 @@ fn handle_relay_connection(
     relay_id: &str,
     auth_token: &str,
 ) -> Result<(), String> {
-    stream
-        .set_read_timeout(Some(Duration::from_secs(10)))
-        .ok();
+    stream.set_read_timeout(Some(Duration::from_secs(10))).ok();
 
     // Step 1: Send challenge
     let nonce = uuid::Uuid::new_v4().to_string();
@@ -188,7 +181,7 @@ fn handle_relay_connection(
         "relay_id": relay_id,
         "nonce": nonce,
     });
-    let challenge_line = serde_json::to_string(&challenge).unwrap();
+    let challenge_line = serde_json::to_string(&challenge).expect("challenge JSON");
     writeln!(stream, "{}", challenge_line).map_err(|e| format!("write challenge: {}", e))?;
     stream.flush().ok();
 
@@ -206,10 +199,7 @@ fn handle_relay_connection(
         .get("relay_id")
         .and_then(|v| v.as_str())
         .unwrap_or("");
-    let client_mac = response
-        .get("mac")
-        .and_then(|v| v.as_str())
-        .unwrap_or("");
+    let client_mac = response.get("mac").and_then(|v| v.as_str()).unwrap_or("");
 
     if client_relay_id != relay_id {
         return Err("Relay ID mismatch".to_string());
@@ -247,8 +237,8 @@ fn handle_relay_connection(
 fn forward_to_socket(socket_path: &str, command: &str) -> Result<String, String> {
     use std::os::unix::net::UnixStream;
 
-    let mut sock = UnixStream::connect(socket_path)
-        .map_err(|e| format!("Connect to socket: {}", e))?;
+    let mut sock =
+        UnixStream::connect(socket_path).map_err(|e| format!("Connect to socket: {}", e))?;
     sock.set_read_timeout(Some(Duration::from_secs(5))).ok();
 
     writeln!(sock, "{}", command).map_err(|e| format!("Write to socket: {}", e))?;

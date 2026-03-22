@@ -66,7 +66,12 @@ fn canonical_url(url: &str) -> String {
         path
     };
 
-    format!("{}://{}{}", scheme.to_lowercase(), host_port.to_lowercase(), path)
+    format!(
+        "{}://{}{}",
+        scheme.to_lowercase(),
+        host_port.to_lowercase(),
+        path
+    )
 }
 
 fn now_secs() -> u64 {
@@ -148,13 +153,16 @@ pub fn record_visit(url: &str, title: &str) {
     let store = guard.get_or_insert_with(BrowserHistoryStore::load_from_disk);
 
     let now = now_secs();
-    let entry = store.entries.entry(canonical.clone()).or_insert_with(|| HistoryEntry {
-        url: url.to_string(),
-        title: String::new(),
-        visit_count: 0,
-        last_visited: now,
-        frecency_score: 0.0,
-    });
+    let entry = store
+        .entries
+        .entry(canonical.clone())
+        .or_insert_with(|| HistoryEntry {
+            url: url.to_string(),
+            title: String::new(),
+            visit_count: 0,
+            last_visited: now,
+            frecency_score: 0.0,
+        });
 
     entry.visit_count += 1;
     entry.last_visited = now;
@@ -181,7 +189,11 @@ pub fn search(query: &str, limit: usize) -> Vec<HistoryEntry> {
     if terms.is_empty() {
         // Return top frecency entries
         let mut results: Vec<HistoryEntry> = store.entries.values().cloned().collect();
-        results.sort_by(|a, b| b.frecency_score.partial_cmp(&a.frecency_score).unwrap_or(std::cmp::Ordering::Equal));
+        results.sort_by(|a, b| {
+            b.frecency_score
+                .partial_cmp(&a.frecency_score)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
         results.truncate(limit);
         return results;
     }
@@ -192,7 +204,9 @@ pub fn search(query: &str, limit: usize) -> Vec<HistoryEntry> {
         .filter(|entry| {
             let url_lower = entry.url.to_lowercase();
             let title_lower = entry.title.to_lowercase();
-            terms.iter().all(|term| url_lower.contains(term) || title_lower.contains(term))
+            terms
+                .iter()
+                .all(|term| url_lower.contains(term) || title_lower.contains(term))
         })
         .cloned()
         .collect();
@@ -243,7 +257,10 @@ mod tests {
             canonical_url("https://example.com/path#section"),
             "https://example.com/path"
         );
-        assert_eq!(canonical_url("https://example.com/"), "https://example.com/");
+        assert_eq!(
+            canonical_url("https://example.com/"),
+            "https://example.com/"
+        );
         assert_eq!(canonical_url("about:blank"), "about:blank");
     }
 

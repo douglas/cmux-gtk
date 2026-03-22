@@ -14,6 +14,7 @@ use crate::settings::SidebarDisplaySettings;
 pub struct SidebarWidgets {
     pub root: gtk4::Box,
     pub list_box: gtk4::ListBox,
+    #[allow(dead_code)] // kept alive for GTK widget tree
     pub search_entry: gtk4::SearchEntry,
 }
 
@@ -40,9 +41,7 @@ pub fn create_sidebar(state: &Rc<AppState>) -> SidebarWidgets {
     list_box.add_css_class("navigation-sidebar");
 
     // Apply sidebar focus style from settings
-    if crate::settings::load().sidebar.focus_style
-        == crate::settings::SidebarFocusStyle::LeftRail
-    {
+    if crate::settings::load().sidebar.focus_style == crate::settings::SidebarFocusStyle::LeftRail {
         list_box.add_css_class("sidebar-left-rail");
     }
 
@@ -131,7 +130,9 @@ pub fn create_sidebar(state: &Rc<AppState>) -> SidebarWidgets {
         let help_popover = help_popover.clone();
         shortcuts_btn.connect_clicked(move |_| {
             help_popover.popdown();
-            state.shared.send_ui_event(crate::app::UiEvent::OpenSettings);
+            state
+                .shared
+                .send_ui_event(crate::app::UiEvent::OpenSettings);
         });
     }
     help_box.append(&shortcuts_btn);
@@ -246,11 +247,9 @@ fn create_workspace_row(
     if let Some(ref color) = workspace.custom_color {
         row.add_css_class("workspace-row-colored");
         let css = gtk4::CssProvider::new();
-        css.load_from_data(&format!(
-            "row {{ border-left-color: {}; }}",
-            color
-        ));
-        row.style_context().add_provider(&css, gtk4::STYLE_PROVIDER_PRIORITY_APPLICATION);
+        css.load_from_data(&format!("row {{ border-left-color: {}; }}", color));
+        row.style_context()
+            .add_provider(&css, gtk4::STYLE_PROVIDER_PRIORITY_APPLICATION);
     } else {
         row.add_css_class("workspace-row");
     }
@@ -296,18 +295,24 @@ fn create_workspace_row(
     // Remote connection state indicator
     if workspace.remote_config.is_some() {
         let (icon_name, css_class, tooltip) = match &workspace.remote_state {
-            Some(crate::remote::session::RemoteState::Connected { .. }) => {
-                ("emblem-ok-symbolic", "remote-connected", "Remote: Connected")
-            }
-            Some(crate::remote::session::RemoteState::Connecting) => {
-                ("content-loading-symbolic", "remote-connecting", "Remote: Connecting...")
-            }
+            Some(crate::remote::session::RemoteState::Connected { .. }) => (
+                "emblem-ok-symbolic",
+                "remote-connected",
+                "Remote: Connected",
+            ),
+            Some(crate::remote::session::RemoteState::Connecting) => (
+                "content-loading-symbolic",
+                "remote-connecting",
+                "Remote: Connecting...",
+            ),
             Some(crate::remote::session::RemoteState::Error(msg)) => {
                 ("dialog-warning-symbolic", "remote-error", msg.as_str())
             }
-            _ => {
-                ("network-offline-symbolic", "remote-disconnected", "Remote: Disconnected")
-            }
+            _ => (
+                "network-offline-symbolic",
+                "remote-disconnected",
+                "Remote: Disconnected",
+            ),
         };
         let state_icon = gtk4::Image::from_icon_name(icon_name);
         state_icon.set_pixel_size(12);
@@ -351,18 +356,13 @@ fn create_workspace_row(
     outer.append(&meta_label);
 
     // ── Per-panel branch vertical layout ──
-    if !sidebar.hide_all_details
-        && sidebar.branch_vertical_layout
-        && sidebar.show_git_branch
-    {
+    if !sidebar.hide_all_details && sidebar.branch_vertical_layout && sidebar.show_git_branch {
         let branches: Vec<_> = workspace
             .panels
             .values()
             .filter_map(|p| p.git_branch.as_ref())
             .collect();
-        if branches.len() > 1
-            || (branches.len() == 1 && workspace.git_branch.is_some())
-        {
+        if branches.len() > 1 || (branches.len() == 1 && workspace.git_branch.is_some()) {
             let branch_box = gtk4::Box::new(gtk4::Orientation::Vertical, 1);
             for panel in workspace.panels.values() {
                 if let Some(ref gb) = panel.git_branch {
@@ -389,7 +389,10 @@ fn create_workspace_row(
     }
 
     // ── Status pills ──
-    if !sidebar.hide_all_details && sidebar.show_status_pills && !workspace.status_entries.is_empty() {
+    if !sidebar.hide_all_details
+        && sidebar.show_status_pills
+        && !workspace.status_entries.is_empty()
+    {
         let pills_box = gtk4::Box::new(gtk4::Orientation::Horizontal, 4);
         pills_box.set_halign(gtk4::Align::Start);
         // Show up to 4 most recent status entries
@@ -425,10 +428,11 @@ fn create_workspace_row(
     if !sidebar.hide_all_details && !workspace.metadata_entries.is_empty() {
         let mut sorted: Vec<_> = workspace.metadata_entries.iter().collect();
         sorted.sort_by(|a, b| {
-            b.priority
-                .cmp(&a.priority)
-                .then(a.timestamp.partial_cmp(&b.timestamp)
-                    .unwrap_or(std::cmp::Ordering::Equal))
+            b.priority.cmp(&a.priority).then(
+                a.timestamp
+                    .partial_cmp(&b.timestamp)
+                    .unwrap_or(std::cmp::Ordering::Equal),
+            )
         });
         let meta_box = gtk4::Box::new(gtk4::Orientation::Vertical, 2);
         for entry in sorted.iter().take(6) {
@@ -462,17 +466,14 @@ fn create_workspace_row(
     if !sidebar.hide_all_details && !workspace.metadata_blocks.is_empty() {
         let mut sorted: Vec<_> = workspace.metadata_blocks.iter().collect();
         sorted.sort_by(|a, b| {
-            b.priority
-                .cmp(&a.priority)
-                .then(a.timestamp.partial_cmp(&b.timestamp)
-                    .unwrap_or(std::cmp::Ordering::Equal))
+            b.priority.cmp(&a.priority).then(
+                a.timestamp
+                    .partial_cmp(&b.timestamp)
+                    .unwrap_or(std::cmp::Ordering::Equal),
+            )
         });
         for block in sorted.iter().take(3) {
-            let first_line = block
-                .content
-                .lines()
-                .next()
-                .unwrap_or(&block.content);
+            let first_line = block.content.lines().next().unwrap_or(&block.content);
             let text = if block.key.is_empty() {
                 first_line.to_string()
             } else {
@@ -514,110 +515,107 @@ fn create_workspace_row(
 
     // ── Listening ports ──
     if !sidebar.hide_all_details && sidebar.show_ports {
-    let all_ports: Vec<u16> = workspace
-        .panels
-        .values()
-        .flat_map(|p| &p.listening_ports)
-        .copied()
-        .collect();
-    if !all_ports.is_empty() {
-        let ports_box = gtk4::Box::new(gtk4::Orientation::Horizontal, 4);
-        ports_box.set_halign(gtk4::Align::Start);
-        let mut sorted_ports = all_ports;
-        sorted_ports.sort_unstable();
-        sorted_ports.dedup();
-        for port in sorted_ports.iter().take(5) {
-            let port_label = gtk4::Label::new(Some(&format!(":{port}")));
-            port_label.add_css_class("port-badge");
-            port_label.add_css_class("caption");
-            ports_box.append(&port_label);
+        let all_ports: Vec<u16> = workspace
+            .panels
+            .values()
+            .flat_map(|p| &p.listening_ports)
+            .copied()
+            .collect();
+        if !all_ports.is_empty() {
+            let ports_box = gtk4::Box::new(gtk4::Orientation::Horizontal, 4);
+            ports_box.set_halign(gtk4::Align::Start);
+            let mut sorted_ports = all_ports;
+            sorted_ports.sort_unstable();
+            sorted_ports.dedup();
+            for port in sorted_ports.iter().take(5) {
+                let port_label = gtk4::Label::new(Some(&format!(":{port}")));
+                port_label.add_css_class("port-badge");
+                port_label.add_css_class("caption");
+                ports_box.append(&port_label);
+            }
+            if sorted_ports.len() > 5 {
+                let more = gtk4::Label::new(Some(&format!("+{}", sorted_ports.len() - 5)));
+                more.add_css_class("port-badge");
+                more.add_css_class("caption");
+                ports_box.append(&more);
+            }
+            outer.append(&ports_box);
         }
-        if sorted_ports.len() > 5 {
-            let more = gtk4::Label::new(Some(&format!("+{}", sorted_ports.len() - 5)));
-            more.add_css_class("port-badge");
-            more.add_css_class("caption");
-            ports_box.append(&more);
-        }
-        outer.append(&ports_box);
-    }
     }
 
     // ── Latest log entry ──
     if !sidebar.hide_all_details && sidebar.show_logs {
-    if let Some(log_entry) = workspace.log_entries.last() {
-        let log_text = if let Some(ref source) = log_entry.source {
-            format!("[{}] {}", source, log_entry.message)
-        } else {
-            log_entry.message.clone()
-        };
-        let log_label = gtk4::Label::new(Some(&log_text));
-        log_label.set_halign(gtk4::Align::Start);
-        log_label.set_wrap(false);
-        log_label.set_ellipsize(gtk4::pango::EllipsizeMode::End);
-        log_label.add_css_class("caption");
-        match log_entry.level.as_str() {
-            "warning" | "warn" => log_label.add_css_class("log-warning"),
-            "error" => log_label.add_css_class("log-error"),
-            "success" => log_label.add_css_class("log-success"),
-            "progress" => log_label.add_css_class("log-progress"),
-            _ => log_label.add_css_class("log-info"),
+        if let Some(log_entry) = workspace.log_entries.last() {
+            let log_text = if let Some(ref source) = log_entry.source {
+                format!("[{}] {}", source, log_entry.message)
+            } else {
+                log_entry.message.clone()
+            };
+            let log_label = gtk4::Label::new(Some(&log_text));
+            log_label.set_halign(gtk4::Align::Start);
+            log_label.set_wrap(false);
+            log_label.set_ellipsize(gtk4::pango::EllipsizeMode::End);
+            log_label.add_css_class("caption");
+            match log_entry.level.as_str() {
+                "warning" | "warn" => log_label.add_css_class("log-warning"),
+                "error" => log_label.add_css_class("log-error"),
+                "success" => log_label.add_css_class("log-success"),
+                "progress" => log_label.add_css_class("log-progress"),
+                _ => log_label.add_css_class("log-info"),
+            }
+            outer.append(&log_label);
         }
-        outer.append(&log_label);
-    }
     }
 
     // ── PR status pill ──
     if !sidebar.hide_all_details && sidebar.show_pr_status {
-    if let Some(ref pr_status) = workspace.pr_status {
-        let pr_box = gtk4::Box::new(gtk4::Orientation::Vertical, 2);
-        pr_box.set_halign(gtk4::Align::Start);
-        let pr_label = gtk4::Label::new(Some(&format!("PR: {pr_status}")));
-        pr_label.add_css_class("status-pill");
-        pr_label.add_css_class("caption");
-        match pr_status.as_str() {
-            "merged" => pr_label.add_css_class("status-pill-green"),
-            "open" | "draft" => pr_label.add_css_class("status-pill-yellow"),
-            "closed" => pr_label.add_css_class("status-pill-red"),
-            _ => {}
-        }
-        // Show individual check icons if available
-        if !workspace.pr_checks.is_empty() {
-            for check in workspace.pr_checks.iter().take(8) {
-                let icon = match check.conclusion.as_str() {
-                    "SUCCESS" => "\u{2713}",  // ✓
-                    "FAILURE" => "\u{2717}",  // ✗
-                    "NEUTRAL" | "SKIPPED" => "\u{2014}", // —
-                    _ => "\u{25CB}",          // ○ (pending)
-                };
-                let check_label = gtk4::Label::new(
-                    Some(&format!("{} {}", icon, check.name)),
-                );
-                check_label.set_halign(gtk4::Align::Start);
-                check_label.set_ellipsize(gtk4::pango::EllipsizeMode::End);
-                check_label.set_max_width_chars(30);
-                check_label.add_css_class("caption");
-                match check.conclusion.as_str() {
-                    "SUCCESS" => check_label.add_css_class("status-pill-green"),
-                    "FAILURE" => check_label.add_css_class("status-pill-red"),
-                    "PENDING" | "" => check_label.add_css_class("status-pill-yellow"),
-                    _ => check_label.add_css_class("dim-label"),
-                }
-                pr_box.append(&check_label);
+        if let Some(ref pr_status) = workspace.pr_status {
+            let pr_box = gtk4::Box::new(gtk4::Orientation::Vertical, 2);
+            pr_box.set_halign(gtk4::Align::Start);
+            let pr_label = gtk4::Label::new(Some(&format!("PR: {pr_status}")));
+            pr_label.add_css_class("status-pill");
+            pr_label.add_css_class("caption");
+            match pr_status.as_str() {
+                "merged" => pr_label.add_css_class("status-pill-green"),
+                "open" | "draft" => pr_label.add_css_class("status-pill-yellow"),
+                "closed" => pr_label.add_css_class("status-pill-red"),
+                _ => {}
             }
+            // Show individual check icons if available
+            if !workspace.pr_checks.is_empty() {
+                for check in workspace.pr_checks.iter().take(8) {
+                    let icon = match check.conclusion.as_str() {
+                        "SUCCESS" => "\u{2713}",             // ✓
+                        "FAILURE" => "\u{2717}",             // ✗
+                        "NEUTRAL" | "SKIPPED" => "\u{2014}", // —
+                        _ => "\u{25CB}",                     // ○ (pending)
+                    };
+                    let check_label = gtk4::Label::new(Some(&format!("{} {}", icon, check.name)));
+                    check_label.set_halign(gtk4::Align::Start);
+                    check_label.set_ellipsize(gtk4::pango::EllipsizeMode::End);
+                    check_label.set_max_width_chars(30);
+                    check_label.add_css_class("caption");
+                    match check.conclusion.as_str() {
+                        "SUCCESS" => check_label.add_css_class("status-pill-green"),
+                        "FAILURE" => check_label.add_css_class("status-pill-red"),
+                        "PENDING" | "" => check_label.add_css_class("status-pill-yellow"),
+                        _ => check_label.add_css_class("dim-label"),
+                    }
+                    pr_box.append(&check_label);
+                }
+            }
+            outer.append(&pr_box);
         }
-        outer.append(&pr_box);
-    }
     }
 
     // ── Notification line ──
     if !sidebar.hide_all_details {
         let notification_text = if sidebar.show_notification_message {
-            workspace
-                .latest_notification
-                .clone()
-                .or_else(|| {
-                    sidebar.show_directory.then(|| compact_path(&workspace.current_directory))
-                })
+            workspace.latest_notification.clone().or_else(|| {
+                sidebar
+                    .show_directory
+                    .then(|| compact_path(&workspace.current_directory))
+            })
         } else if sidebar.show_directory {
             Some(compact_path(&workspace.current_directory))
         } else {
@@ -693,10 +691,7 @@ fn setup_row_context_menu(
         ("Rose", "rose"),
         ("None", ""),
     ] {
-        color_menu.append(
-            Some(label),
-            Some(&format!("sidebar.color.{index}.{color}")),
-        );
+        color_menu.append(Some(label), Some(&format!("sidebar.color.{index}.{color}")));
     }
     color_menu.append(
         Some("Custom Color…"),
@@ -719,10 +714,7 @@ fn setup_row_context_menu(
         Some("Move to Top"),
         Some(&format!("sidebar.move-top.{index}")),
     );
-    reorder_menu.append(
-        Some("Move Up"),
-        Some(&format!("sidebar.move-up.{index}")),
-    );
+    reorder_menu.append(Some("Move Up"), Some(&format!("sidebar.move-up.{index}")));
     reorder_menu.append(
         Some("Move Down"),
         Some(&format!("sidebar.move-down.{index}")),
@@ -819,9 +811,7 @@ fn setup_row_context_menu(
             if let Some(title) = current_title {
                 if let Some(row) = row_weak.upgrade() {
                     if let Some(root) = row.root() {
-                        if let Some(window) =
-                            root.downcast_ref::<libadwaita::ApplicationWindow>()
-                        {
+                        if let Some(window) = root.downcast_ref::<libadwaita::ApplicationWindow>() {
                             show_rename_for_index(window, &state, index, &title);
                         }
                     }
@@ -833,8 +823,8 @@ fn setup_row_context_menu(
 
     // Color actions — 16-color palette matching macOS + "" for clear
     for color in &[
-        "red", "crimson", "orange", "amber", "yellow", "lime", "green", "teal",
-        "cyan", "sky", "blue", "indigo", "purple", "violet", "pink", "rose", "",
+        "red", "crimson", "orange", "amber", "yellow", "lime", "green", "teal", "cyan", "sky",
+        "blue", "indigo", "purple", "violet", "pink", "rose", "",
     ] {
         let action_name = format!("color.{index}.{color}");
         let color_action = gtk4::gio::SimpleAction::new(&action_name, None);
@@ -858,17 +848,14 @@ fn setup_row_context_menu(
     }
 
     // Custom color picker
-    let custom_color_action =
-        gtk4::gio::SimpleAction::new(&format!("custom-color.{index}"), None);
+    let custom_color_action = gtk4::gio::SimpleAction::new(&format!("custom-color.{index}"), None);
     {
         let state = state.clone();
         let row_weak = row.downgrade();
         custom_color_action.connect_activate(move |_, _| {
             if let Some(row) = row_weak.upgrade() {
                 if let Some(root) = row.root() {
-                    if let Some(window) =
-                        root.downcast_ref::<libadwaita::ApplicationWindow>()
-                    {
+                    if let Some(window) = root.downcast_ref::<libadwaita::ApplicationWindow>() {
                         show_custom_color_picker(window, &state, index);
                     }
                 }
@@ -982,8 +969,7 @@ fn setup_row_context_menu(
     action_group.add_action(&close_action);
 
     // Close others
-    let close_others_action =
-        gtk4::gio::SimpleAction::new(&format!("close-others.{index}"), None);
+    let close_others_action = gtk4::gio::SimpleAction::new(&format!("close-others.{index}"), None);
     {
         let state = state.clone();
         close_others_action.connect_activate(move |_, _| {
@@ -1002,8 +988,7 @@ fn setup_row_context_menu(
     action_group.add_action(&close_others_action);
 
     // Close above
-    let close_above_action =
-        gtk4::gio::SimpleAction::new(&format!("close-above.{index}"), None);
+    let close_above_action = gtk4::gio::SimpleAction::new(&format!("close-above.{index}"), None);
     {
         let state = state.clone();
         close_above_action.connect_activate(move |_, _| {
@@ -1022,8 +1007,7 @@ fn setup_row_context_menu(
     action_group.add_action(&close_above_action);
 
     // Close below
-    let close_below_action =
-        gtk4::gio::SimpleAction::new(&format!("close-below.{index}"), None);
+    let close_below_action = gtk4::gio::SimpleAction::new(&format!("close-below.{index}"), None);
     {
         let state = state.clone();
         close_below_action.connect_activate(move |_, _| {
@@ -1052,10 +1036,7 @@ fn show_custom_color_picker(
 ) {
     use gtk4::prelude::*;
 
-    let dialog = gtk4::ColorChooserDialog::new(
-        Some("Choose Workspace Color"),
-        Some(window),
-    );
+    let dialog = gtk4::ColorChooserDialog::new(Some("Choose Workspace Color"), Some(window));
     dialog.set_use_alpha(false);
 
     // Pre-select the current custom color if set
@@ -1099,11 +1080,8 @@ fn show_rename_for_index(
 ) {
     use libadwaita::prelude::*;
 
-    let dialog = libadwaita::MessageDialog::new(
-        Some(window),
-        Some("Rename Workspace"),
-        None::<&str>,
-    );
+    let dialog =
+        libadwaita::MessageDialog::new(Some(window), Some("Rename Workspace"), None::<&str>);
     dialog.set_body("Enter a new name for this workspace:");
 
     let entry = gtk4::Entry::new();
@@ -1167,7 +1145,9 @@ fn setup_row_close_button(row: &gtk4::ListBoxRow, index: usize, state: &Rc<AppSt
     let Some(outer) = row.child() else { return };
     let outer = outer.downcast_ref::<gtk4::Box>().cloned();
     let Some(outer) = outer else { return };
-    let Some(header) = outer.first_child() else { return };
+    let Some(header) = outer.first_child() else {
+        return;
+    };
     let header = header.downcast_ref::<gtk4::Box>().cloned();
     let Some(header) = header else { return };
 

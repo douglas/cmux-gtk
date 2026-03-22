@@ -76,11 +76,13 @@ impl NotificationStore {
     }
 
     /// Get unread count.
+    #[allow(dead_code)]
     pub fn unread_count(&self) -> usize {
         self.notifications.iter().filter(|n| !n.is_read).count()
     }
 
     /// Get unread count for a specific workspace.
+    #[allow(dead_code)]
     pub fn unread_count_for_workspace(&self, workspace_id: Uuid) -> usize {
         self.notifications
             .iter()
@@ -105,6 +107,7 @@ impl NotificationStore {
     }
 
     /// Mark all notifications as read.
+    #[allow(dead_code)]
     pub fn mark_all_read(&mut self) {
         for n in &mut self.notifications {
             n.is_read = true;

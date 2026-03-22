@@ -287,11 +287,7 @@ impl Workspace {
 
     /// Insert a panel into the workspace by splitting the focused pane.
     /// Returns true if the panel was inserted successfully.
-    pub fn insert_panel(
-        &mut self,
-        panel: Panel,
-        orientation: SplitOrientation,
-    ) -> bool {
+    pub fn insert_panel(&mut self, panel: Panel, orientation: SplitOrientation) -> bool {
         let panel_id = panel.id;
         self.panels.insert(panel_id, panel);
 
@@ -329,11 +325,7 @@ impl Workspace {
     /// Move a panel into a new split adjacent to the focused pane.
     /// The panel is removed from its current pane and placed in a new
     /// split in the given direction.
-    pub fn drag_to_split(
-        &mut self,
-        panel_id: Uuid,
-        direction: super::panel::Direction,
-    ) -> bool {
+    pub fn drag_to_split(&mut self, panel_id: Uuid, direction: super::panel::Direction) -> bool {
         use super::panel::Direction;
 
         if !self.panels.contains_key(&panel_id) {
@@ -364,12 +356,10 @@ impl Workspace {
         self.layout.remove_panel(panel_id);
 
         // Split the target pane with the panel
-        if !self.layout.split_pane_with_panel(
-            target_panel_id,
-            panel_id,
-            orientation,
-            direction,
-        ) {
+        if !self
+            .layout
+            .split_pane_with_panel(target_panel_id, panel_id, orientation, direction)
+        {
             // Fallback: re-add as a tab (shouldn't happen, but be safe)
             self.layout.add_panel_to_pane(target_panel_id, panel_id);
         }
@@ -385,6 +375,7 @@ impl Workspace {
     }
 
     /// Get a mutable reference to a panel by ID.
+    #[allow(dead_code)]
     pub fn panel_mut(&mut self, id: Uuid) -> Option<&mut Panel> {
         self.panels.get_mut(&id)
     }
@@ -404,13 +395,8 @@ impl Workspace {
     const MAX_STATUS_VALUE_LEN: usize = 4096;
 
     /// Update the status entry for a key, creating it if it doesn't exist.
-    pub fn set_status(
-        &mut self,
-        key: &str,
-        value: &str,
-        icon: Option<&str>,
-        color: Option<&str>,
-    ) {
+    #[allow(dead_code)]
+    pub fn set_status(&mut self, key: &str, value: &str, icon: Option<&str>, color: Option<&str>) {
         self.set_status_with_url(key, value, icon, color, None);
     }
 
@@ -471,6 +457,7 @@ impl Workspace {
     const MAX_BLOCK_CONTENT_LEN: usize = 32768;
 
     /// Set or update a rich metadata entry (with priority, URL, format).
+    #[allow(clippy::too_many_arguments)]
     pub fn set_metadata(
         &mut self,
         key: &str,
@@ -504,10 +491,11 @@ impl Workspace {
                     .iter()
                     .enumerate()
                     .min_by(|a, b| {
-                        a.1.priority
-                            .cmp(&b.1.priority)
-                            .then(a.1.timestamp.partial_cmp(&b.1.timestamp)
-                                .unwrap_or(std::cmp::Ordering::Equal))
+                        a.1.priority.cmp(&b.1.priority).then(
+                            a.1.timestamp
+                                .partial_cmp(&b.1.timestamp)
+                                .unwrap_or(std::cmp::Ordering::Equal),
+                        )
                     })
                     .map(|(i, _)| i)
                 {
@@ -552,10 +540,11 @@ impl Workspace {
                     .iter()
                     .enumerate()
                     .min_by(|a, b| {
-                        a.1.priority
-                            .cmp(&b.1.priority)
-                            .then(a.1.timestamp.partial_cmp(&b.1.timestamp)
-                                .unwrap_or(std::cmp::Ordering::Equal))
+                        a.1.priority.cmp(&b.1.priority).then(
+                            a.1.timestamp
+                                .partial_cmp(&b.1.timestamp)
+                                .unwrap_or(std::cmp::Ordering::Equal),
+                        )
                     })
                     .map(|(i, _)| i)
                 {

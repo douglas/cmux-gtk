@@ -455,7 +455,10 @@ fn handle_click(id: Value, params: &Value, state: &Arc<SharedState>) -> Response
         Ok(s) => s,
         Err(e) => return e,
     };
-    let button = params.get("button").and_then(|v| v.as_str()).unwrap_or("left");
+    let button = params
+        .get("button")
+        .and_then(|v| v.as_str())
+        .unwrap_or("left");
     let js = match button {
         "right" => format!(
             r#"(function(){{ var el = document.querySelector({sel}); if(!el) return 'ERROR:not_found'; el.dispatchEvent(new MouseEvent('contextmenu', {{bubbles:true,cancelable:true,button:2}})); return 'ok'; }})()"#,
@@ -594,7 +597,10 @@ fn handle_check(id: Value, params: &Value, state: &Arc<SharedState>) -> Response
         Ok(s) => s,
         Err(e) => return e,
     };
-    let checked = params.get("checked").and_then(|v| v.as_bool()).unwrap_or(true);
+    let checked = params
+        .get("checked")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(true);
     let js = format!(
         r#"(function(){{ var el = document.querySelector({sel}); if(!el) return 'ERROR:not_found'; el.checked = {checked}; el.dispatchEvent(new Event('change',{{bubbles:true}})); return 'ok'; }})()"#,
         sel = js(&selector),
@@ -657,7 +663,10 @@ fn handle_get_html(id: Value, params: &Value, state: &Arc<SharedState>) -> Respo
         Ok(s) => s,
         Err(e) => return e,
     };
-    let outer = params.get("outer").and_then(|v| v.as_bool()).unwrap_or(false);
+    let outer = params
+        .get("outer")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
     let prop = if outer { "outerHTML" } else { "innerHTML" };
     let js = format!(
         r#"(function(){{ var el = document.querySelector({sel}); if(!el) return 'ERROR:not_found'; return el.{prop}; }})()"#,
@@ -867,11 +876,7 @@ fn handle_find_all(id: Value, params: &Value, state: &Arc<SharedState>) -> Respo
             let mut refs = Vec::with_capacity(count);
             for i in 0..count {
                 // Use querySelectorAll-based nth selector for precise targeting
-                let nth_sel = format!(
-                    ":is({}):nth-child({})",
-                    selector,
-                    i + 1
-                );
+                let nth_sel = format!(":is({}):nth-child({})", selector, i + 1);
                 let ref_id = crate::ui::browser_panel::allocate_ref(panel_id, &nth_sel);
                 refs.push(ref_id);
             }
@@ -950,10 +955,7 @@ fn handle_find_by_placeholder(id: Value, params: &Value, state: &Arc<SharedState
         Ok(v) => v,
         Err(e) => return e,
     };
-    let selector = format!(
-        "[placeholder=\"{}\"]",
-        placeholder.replace('"', r#"\""#)
-    );
+    let selector = format!("[placeholder=\"{}\"]", placeholder.replace('"', r#"\""#));
     find_by_selector(&id, params, state, panel_id, &selector)
 }
 
@@ -1104,10 +1106,7 @@ fn handle_snapshot(id: Value, params: &Value, state: &Arc<SharedState>) -> Respo
         &id,
         params,
         state,
-        |reply| BrowserActionKind::Eval {
-            script: js,
-            reply,
-        },
+        |reply| BrowserActionKind::Eval { script: js, reply },
         "not_found",
         "UI event channel closed",
     )
@@ -1119,10 +1118,7 @@ fn handle_title(id: Value, params: &Value, state: &Arc<SharedState>) -> Response
         &id,
         params,
         state,
-        |reply| BrowserActionKind::Eval {
-            script: js,
-            reply,
-        },
+        |reply| BrowserActionKind::Eval { script: js, reply },
         "not_found",
         "UI event channel closed",
     )
@@ -1134,10 +1130,7 @@ fn handle_get_cookies(id: Value, params: &Value, state: &Arc<SharedState>) -> Re
         &id,
         params,
         state,
-        |reply| BrowserActionKind::Eval {
-            script: js,
-            reply,
-        },
+        |reply| BrowserActionKind::Eval { script: js, reply },
         "not_found",
         "UI event channel closed",
     )
@@ -1297,12 +1290,7 @@ fn handle_remove_injected(id: Value, params: &Value, state: &Arc<SharedState>) -
 // ---------------------------------------------------------------------------
 
 /// Send a JS eval action and translate the result, handling `ERROR:*` prefixes.
-fn send_eval_action(
-    id: &Value,
-    params: &Value,
-    state: &Arc<SharedState>,
-    js: String,
-) -> Response {
+fn send_eval_action(id: &Value, params: &Value, state: &Arc<SharedState>, js: String) -> Response {
     let panel_id = match require_panel_id(id, params) {
         Ok(v) => v,
         Err(e) => return e,
@@ -1362,10 +1350,7 @@ fn handle_tab_new(id: Value, params: &Value, state: &Arc<SharedState>) -> Respon
 
     if let Some(panel_id) = panel_id {
         state.notify_ui_refresh();
-        Response::success(
-            id,
-            serde_json::json!({"panel_id": panel_id.to_string()}),
-        )
+        Response::success(id, serde_json::json!({"panel_id": panel_id.to_string()}))
     } else {
         Response::error(id, "not_found", "No workspace selected")
     }
@@ -1645,7 +1630,7 @@ fn handle_frame_select(id: Value, params: &Value, state: &Arc<SharedState>) -> R
 }
 
 /// browser.frame.main — Switch back to the main frame.
-fn handle_frame_main(id: Value, params: &Value, state: &Arc<SharedState>) -> Response {
+fn handle_frame_main(id: Value, params: &Value, _state: &Arc<SharedState>) -> Response {
     // No-op in WebKit2GTK (always executes in main frame)
     let _ = params;
     Response::success(id, serde_json::json!({"ok": true, "frame": "main"}))
@@ -1659,18 +1644,28 @@ fn handle_dialog_accept(id: Value, params: &Value, state: &Arc<SharedState>) -> 
     } else {
         "accept".to_string()
     };
-    send_action(&id, params, state, BrowserActionKind::SetDialogHandler {
-        action,
-        prompt_text: text.map(|s| s.to_string()),
-    })
+    send_action(
+        &id,
+        params,
+        state,
+        BrowserActionKind::SetDialogHandler {
+            action,
+            prompt_text: text.map(|s| s.to_string()),
+        },
+    )
 }
 
 /// browser.dialog.dismiss — Dismiss the current dialog.
 fn handle_dialog_dismiss(id: Value, params: &Value, state: &Arc<SharedState>) -> Response {
-    send_action(&id, params, state, BrowserActionKind::SetDialogHandler {
-        action: "dismiss".to_string(),
-        prompt_text: None,
-    })
+    send_action(
+        &id,
+        params,
+        state,
+        BrowserActionKind::SetDialogHandler {
+            action: "dismiss".to_string(),
+            prompt_text: None,
+        },
+    )
 }
 
 /// browser.highlight — Temporarily highlight an element with a colored outline.
@@ -1700,9 +1695,18 @@ fn handle_console_clear(id: Value, params: &Value, state: &Arc<SharedState>) -> 
 
 /// browser.geolocation.set — Override the navigator.geolocation API.
 fn handle_geolocation_set(id: Value, params: &Value, state: &Arc<SharedState>) -> Response {
-    let lat = params.get("latitude").and_then(|v| v.as_f64()).unwrap_or(0.0);
-    let lng = params.get("longitude").and_then(|v| v.as_f64()).unwrap_or(0.0);
-    let accuracy = params.get("accuracy").and_then(|v| v.as_f64()).unwrap_or(1.0);
+    let lat = params
+        .get("latitude")
+        .and_then(|v| v.as_f64())
+        .unwrap_or(0.0);
+    let lng = params
+        .get("longitude")
+        .and_then(|v| v.as_f64())
+        .unwrap_or(0.0);
+    let accuracy = params
+        .get("accuracy")
+        .and_then(|v| v.as_f64())
+        .unwrap_or(1.0);
     let js = format!(
         "navigator.geolocation.getCurrentPosition = function(cb) {{ \
          cb({{coords:{{latitude:{lat},longitude:{lng},accuracy:{accuracy}}},timestamp:Date.now()}}); \
@@ -1713,7 +1717,10 @@ fn handle_geolocation_set(id: Value, params: &Value, state: &Arc<SharedState>) -
 
 /// browser.offline.set — Simulate offline/online state via navigator.onLine override.
 fn handle_offline_set(id: Value, params: &Value, state: &Arc<SharedState>) -> Response {
-    let offline = params.get("offline").and_then(|v| v.as_bool()).unwrap_or(false);
+    let offline = params
+        .get("offline")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
     let js = format!(
         "Object.defineProperty(navigator, 'onLine', {{value: {online}, configurable: true}}); \
          window.dispatchEvent(new Event('{event}')); 'ok'",
@@ -1753,15 +1760,22 @@ fn handle_state_save(id: Value, params: &Value, state: &Arc<SharedState>) -> Res
         scrollX: window.scrollX, \
         scrollY: window.scrollY, \
         html: document.documentElement.outerHTML.slice(0, 100000)\
-    })".to_string();
+    })"
+    .to_string();
     send_eval_action(&id, params, state, js)
 }
 
 /// browser.state.load — Restore page state (navigate + scroll).
 fn handle_state_load(id: Value, params: &Value, state: &Arc<SharedState>) -> Response {
     let url = params.get("url").and_then(|v| v.as_str()).unwrap_or("");
-    let scroll_x = params.get("scrollX").and_then(|v| v.as_f64()).unwrap_or(0.0);
-    let scroll_y = params.get("scrollY").and_then(|v| v.as_f64()).unwrap_or(0.0);
+    let scroll_x = params
+        .get("scrollX")
+        .and_then(|v| v.as_f64())
+        .unwrap_or(0.0);
+    let scroll_y = params
+        .get("scrollY")
+        .and_then(|v| v.as_f64())
+        .unwrap_or(0.0);
     if !url.is_empty() {
         let panel_id = match require_panel_id(&id, params) {
             Ok(v) => v,
@@ -1769,13 +1783,14 @@ fn handle_state_load(id: Value, params: &Value, state: &Arc<SharedState>) -> Res
         };
         state.send_ui_event(UiEvent::BrowserAction {
             panel_id,
-            action: BrowserActionKind::Navigate { url: url.to_string() },
+            action: BrowserActionKind::Navigate {
+                url: url.to_string(),
+            },
         });
     }
     // Scroll will be applied after navigation
-    let js = format!(
-        "setTimeout(function(){{ window.scrollTo({scroll_x},{scroll_y}); }}, 500); 'ok'"
-    );
+    let js =
+        format!("setTimeout(function(){{ window.scrollTo({scroll_x},{scroll_y}); }}, 500); 'ok'");
     send_eval_action(&id, params, state, js)
 }
 
@@ -1801,7 +1816,10 @@ fn handle_network_requests(id: Value, _params: &Value, _state: &Arc<SharedState>
 
 /// browser.input_mouse — Dispatch a synthetic mouse event at coordinates.
 fn handle_input_mouse(id: Value, params: &Value, state: &Arc<SharedState>) -> Response {
-    let event_type = params.get("type").and_then(|v| v.as_str()).unwrap_or("click");
+    let event_type = params
+        .get("type")
+        .and_then(|v| v.as_str())
+        .unwrap_or("click");
     let x = params.get("x").and_then(|v| v.as_f64()).unwrap_or(0.0);
     let y = params.get("y").and_then(|v| v.as_f64()).unwrap_or(0.0);
     let button = params.get("button").and_then(|v| v.as_u64()).unwrap_or(0);
@@ -1818,7 +1836,10 @@ fn handle_input_mouse(id: Value, params: &Value, state: &Arc<SharedState>) -> Re
 
 /// browser.input_keyboard — Dispatch a synthetic keyboard event.
 fn handle_input_keyboard(id: Value, params: &Value, state: &Arc<SharedState>) -> Response {
-    let event_type = params.get("type").and_then(|v| v.as_str()).unwrap_or("keypress");
+    let event_type = params
+        .get("type")
+        .and_then(|v| v.as_str())
+        .unwrap_or("keypress");
     let key = params.get("key").and_then(|v| v.as_str()).unwrap_or("");
     let js = format!(
         "document.activeElement.dispatchEvent(new KeyboardEvent('{event_type}', \
@@ -1830,7 +1851,10 @@ fn handle_input_keyboard(id: Value, params: &Value, state: &Arc<SharedState>) ->
 
 /// browser.input_touch — Dispatch a synthetic touch event.
 fn handle_input_touch(id: Value, params: &Value, state: &Arc<SharedState>) -> Response {
-    let event_type = params.get("type").and_then(|v| v.as_str()).unwrap_or("touchstart");
+    let event_type = params
+        .get("type")
+        .and_then(|v| v.as_str())
+        .unwrap_or("touchstart");
     let x = params.get("x").and_then(|v| v.as_f64()).unwrap_or(0.0);
     let y = params.get("y").and_then(|v| v.as_f64()).unwrap_or(0.0);
     let js = format!(

@@ -425,7 +425,9 @@ fn populate_suggestions(
     }
 
     // ── History suggestions ──
-    let history_limit = MAX_SUGGESTIONS.saturating_sub(items.len()).saturating_sub(1);
+    let history_limit = MAX_SUGGESTIONS
+        .saturating_sub(items.len())
+        .saturating_sub(1);
     let results = browser_history::search(trimmed, history_limit);
     for result in &results {
         // Skip if already shown as a switch-to-tab
@@ -550,10 +552,7 @@ fn build_search_suggestion_row(text: &str) -> gtk4::ListBoxRow {
 }
 
 /// Fetch search suggestions from the search engine's suggestion API.
-fn fetch_search_suggestions(
-    query: &str,
-    engine: settings::SearchEngine,
-) -> Vec<String> {
+fn fetch_search_suggestions(query: &str, engine: settings::SearchEngine) -> Vec<String> {
     let url = match engine {
         settings::SearchEngine::Google => format!(
             "https://suggestqueries.google.com/complete/search?client=firefox&q={}",
