@@ -8,6 +8,7 @@ use std::sync::{Arc, Mutex, MutexGuard};
 
 use ghostty_sys::*;
 use gtk4::prelude::*;
+use gtk4::gio;
 use libadwaita as adw;
 use tokio::sync::mpsc::UnboundedSender;
 
@@ -354,6 +355,7 @@ impl SharedState {
 pub fn run() -> i32 {
     let app = adw::Application::builder()
         .application_id("ai.manaflow.cmux")
+        .flags(gio::ApplicationFlags::NON_UNIQUE)
         .build();
 
     let shared = Arc::new(SharedState::new());
@@ -514,13 +516,41 @@ fn restore_session(state: &Rc<AppState>) -> Vec<Uuid> {
         return vec![];
     }
 
+    // Filter out empty windows (stale sessions from crashes can leave windows with 0
+    // workspaces). Consolidate all workspaces into a single window if every window
+    // is empty — this prevents launching invisible windows with no content.
+    let total_workspaces: usize = snapshot
+        .windows
+        .iter()
+        .map(|w| w.tab_manager.workspaces.len())
+        .sum();
+    if total_workspaces == 0 {
+        tracing::warn!(
+            "Session has {} windows but 0 workspaces — discarding stale session",
+            snapshot.windows.len()
+        );
+        return vec![];
+    }
+
+    // Drop windows that have no workspaces (keep only populated ones)
+    let live_windows: Vec<_> = snapshot
+        .windows
+        .iter()
+        .filter(|w| !w.tab_manager.workspaces.is_empty())
+        .collect();
+    if live_windows.len() < snapshot.windows.len() {
+        tracing::info!(
+            "Dropped {} empty windows from session restore",
+            snapshot.windows.len() - live_windows.len()
+        );
+    }
+
     let mut tab_manager = lock_or_recover(&state.shared.tab_manager);
     *tab_manager = TabManager::empty();
 
     // Restore each window's workspaces and geometry
-    // First window uses the window_id from activate(), subsequent windows get new IDs
     let mut window_ids: Vec<Uuid> = Vec::new();
-    for window_snapshot in &snapshot.windows {
+    for window_snapshot in &live_windows {
         let window_id = Uuid::new_v4();
 
         // Restore window geometry
