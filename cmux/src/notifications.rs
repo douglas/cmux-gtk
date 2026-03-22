@@ -204,6 +204,96 @@ fn play_theme_sound(name: &str) {
     });
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn make_store_with(n: usize) -> NotificationStore {
+        let mut store = NotificationStore::new();
+        for i in 0..n {
+            store.add(
+                &format!("title-{i}"),
+                &format!("body-{i}"),
+                None,
+                None,
+                false,
+            );
+        }
+        store
+    }
+
+    #[test]
+    fn test_add_and_all() {
+        let mut store = NotificationStore::new();
+        let id = store.add("hello", "world", None, None, false);
+        assert_eq!(store.all().len(), 1);
+        assert_eq!(store.all()[0].id, id);
+        assert_eq!(store.all()[0].title, "hello");
+        assert!(!store.all()[0].is_read);
+    }
+
+    #[test]
+    fn test_unread_count() {
+        let mut store = make_store_with(3);
+        assert_eq!(store.unread_count(), 3);
+
+        let id = store.all()[0].id;
+        store.mark_read(id);
+        assert_eq!(store.unread_count(), 2);
+    }
+
+    #[test]
+    fn test_unread_count_for_workspace() {
+        let ws1 = Uuid::new_v4();
+        let ws2 = Uuid::new_v4();
+        let mut store = NotificationStore::new();
+        store.add("a", "b", Some(ws1), None, false);
+        store.add("c", "d", Some(ws1), None, false);
+        store.add("e", "f", Some(ws2), None, false);
+
+        assert_eq!(store.unread_count_for_workspace(ws1), 2);
+        assert_eq!(store.unread_count_for_workspace(ws2), 1);
+    }
+
+    #[test]
+    fn test_mark_workspace_read() {
+        let ws = Uuid::new_v4();
+        let mut store = NotificationStore::new();
+        store.add("a", "b", Some(ws), None, false);
+        store.add("c", "d", Some(ws), None, false);
+        store.add("e", "f", None, None, false);
+
+        store.mark_workspace_read(ws);
+        assert_eq!(store.unread_count(), 1); // only the None-workspace one
+    }
+
+    #[test]
+    fn test_mark_all_read() {
+        let mut store = make_store_with(5);
+        assert_eq!(store.unread_count(), 5);
+        store.mark_all_read();
+        assert_eq!(store.unread_count(), 0);
+    }
+
+    #[test]
+    fn test_clear() {
+        let mut store = make_store_with(3);
+        store.clear();
+        assert!(store.all().is_empty());
+    }
+
+    #[test]
+    fn test_eviction_on_overflow() {
+        let mut store = make_store_with(MAX_NOTIFICATIONS);
+        assert_eq!(store.all().len(), MAX_NOTIFICATIONS);
+
+        // Adding one more triggers eviction of the oldest 25%
+        store.add("overflow", "test", None, None, false);
+        assert!(store.all().len() < MAX_NOTIFICATIONS);
+        assert_eq!(store.all().last().unwrap().title, "overflow");
+    }
+}
+
 /// Play a custom sound file (WAV, OGG, OGA).
 fn play_sound_file(path: &str) {
     let path = path.to_string();

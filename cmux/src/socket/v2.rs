@@ -29,7 +29,7 @@ pub struct Request {
     pub params: Value,
 }
 
-/// V2 protocol response.
+/// V2 protocol response — `ok: true` with `result` on success, `ok: false` with `error` on failure.
 #[derive(Debug, Serialize)]
 pub struct Response {
     pub id: Value,
@@ -40,9 +40,12 @@ pub struct Response {
     pub error: Option<ErrorInfo>,
 }
 
+/// Structured error returned in failed V2 responses.
 #[derive(Debug, Serialize)]
 pub struct ErrorInfo {
+    /// Machine-readable error code (e.g., `"not_found"`, `"invalid_params"`).
     pub code: String,
+    /// Human-readable description of what went wrong.
     pub message: String,
 }
 
@@ -68,6 +71,16 @@ impl Response {
         }
     }
 }
+
+// Truncation limits for user-supplied strings stored in model objects.
+const MAX_DIRECTORY_LEN: usize = 4096;
+const MAX_TITLE_LEN: usize = 1024;
+const MAX_URL_LEN: usize = 1024;
+const MAX_BRANCH_LEN: usize = 256;
+const MAX_METHOD_LEN: usize = 200;
+const MAX_NAME_LEN: usize = 128;
+const MAX_STATUS_LEN: usize = 64;
+const MAX_SURFACE_INPUT_LEN: usize = 128 * 1024;
 
 /// Parse and dispatch a v2 request. Returns the response.
 pub fn dispatch(json_line: &str, state: &Arc<SharedState>) -> Response {
@@ -208,7 +221,7 @@ pub fn dispatch(json_line: &str, state: &Arc<SharedState>) -> Response {
             "unknown_method",
             &format!(
                 "Unknown method: {}",
-                crate::model::workspace::truncate_str(&req.method, 200)
+                crate::model::workspace::truncate_str(&req.method, MAX_METHOD_LEN)
             ),
         ),
     }
@@ -359,11 +372,11 @@ fn create_workspace(
         .get("directory")
         .or_else(|| params.get("cwd"))
         .and_then(|v| v.as_str())
-        .map(|s| crate::model::workspace::truncate_str(s, 4096));
+        .map(|s| crate::model::workspace::truncate_str(s, MAX_DIRECTORY_LEN));
     let title = params
         .get("title")
         .and_then(|v| v.as_str())
-        .map(|s| crate::model::workspace::truncate_str(s, 1024));
+        .map(|s| crate::model::workspace::truncate_str(s, MAX_TITLE_LEN));
 
     let mut ws = if let Some(dir) = directory {
         Workspace::with_directory(dir)
@@ -721,7 +734,7 @@ fn handle_workspace_report_git(id: Value, params: &Value, state: &Arc<SharedStat
         None
     } else {
         Some(crate::model::panel::GitBranch {
-            branch: crate::model::workspace::truncate_str(branch, 256).to_string(),
+            branch: crate::model::workspace::truncate_str(branch, MAX_BRANCH_LEN).to_string(),
             is_dirty,
         })
     };
@@ -1224,7 +1237,7 @@ fn handle_surface_send_input(id: Value, params: &Value, state: &Arc<SharedState>
         return Response::error(id, "invalid_params", "Provide 'input'");
     };
     // Limit input size to prevent unbounded memory growth via the channel
-    let input = crate::model::workspace::truncate_str(input, 128 * 1024);
+    let input = crate::model::workspace::truncate_str(input, MAX_SURFACE_INPUT_LEN);
 
     let explicit_panel_id = match params
         .get("surface")
@@ -1497,7 +1510,8 @@ fn handle_workspace_rename(id: Value, params: &Value, state: &Arc<SharedState>) 
         };
 
         if let Some(ws) = ws {
-            ws.custom_title = Some(crate::model::workspace::truncate_str(title, 1024).to_string());
+            ws.custom_title =
+                Some(crate::model::workspace::truncate_str(title, MAX_TITLE_LEN).to_string());
             true
         } else {
             false
@@ -1995,7 +2009,7 @@ fn handle_workspace_action(id: Value, params: &Value, state: &Arc<SharedState>) 
                 );
             };
             ws.custom_color = Some(
-                crate::model::workspace::truncate_str(color, 64).to_string(),
+                crate::model::workspace::truncate_str(color, MAX_STATUS_LEN).to_string(),
             );
             drop(tm);
             state.notify_ui_refresh();
@@ -2017,7 +2031,7 @@ fn handle_workspace_action(id: Value, params: &Value, state: &Arc<SharedState>) 
                 );
             };
             ws.custom_title = Some(
-                crate::model::workspace::truncate_str(title, 200).to_string(),
+                crate::model::workspace::truncate_str(title, MAX_METHOD_LEN).to_string(),
             );
             drop(tm);
             state.notify_ui_refresh();
@@ -2329,8 +2343,9 @@ fn handle_workspace_report_pr(id: Value, params: &Value, state: &Arc<SharedState
         return Response::error(id, "not_found", "No workspace");
     };
 
-    ws.pr_status = status.map(|s| crate::model::workspace::truncate_str(s, 64).to_string());
-    ws.pr_url = url.map(|s| crate::model::workspace::truncate_str(s, 1024).to_string());
+    ws.pr_status =
+        status.map(|s| crate::model::workspace::truncate_str(s, MAX_STATUS_LEN).to_string());
+    ws.pr_url = url.map(|s| crate::model::workspace::truncate_str(s, MAX_URL_LEN).to_string());
 
     drop(tm);
     state.notify_ui_refresh();
@@ -2365,7 +2380,7 @@ fn handle_workspace_report_pr_checks(
                 .and_then(|v| v.as_str())
                 .unwrap_or("PENDING");
             Some(crate::model::workspace::PrCheck {
-                name: crate::model::workspace::truncate_str(name, 128).to_string(),
+                name: crate::model::workspace::truncate_str(name, MAX_NAME_LEN).to_string(),
                 conclusion: conclusion.to_uppercase(),
             })
         })
@@ -3202,7 +3217,7 @@ fn handle_tab_action(id: Value, params: &Value, state: &Arc<SharedState>) -> Res
             };
             if let Some(panel) = ws.panels.get_mut(&panel_id) {
                 panel.custom_title =
-                    Some(crate::model::workspace::truncate_str(title, 1024).to_string());
+                    Some(crate::model::workspace::truncate_str(title, MAX_TITLE_LEN).to_string());
             }
         }
         "clear_name" => {
