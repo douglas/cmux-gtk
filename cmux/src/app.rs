@@ -398,7 +398,9 @@ pub fn run() -> i32 {
                 tracing::error!("Failed to save session on shutdown: {}", e);
             }
 
-            *GHOSTTY_APP_PTR.lock().unwrap() = SendAppPtr(std::ptr::null_mut());
+            if let Ok(mut ptr) = GHOSTTY_APP_PTR.lock() {
+                *ptr = SendAppPtr(std::ptr::null_mut());
+            }
             GHOSTTY_TICK_PENDING.store(false, Ordering::Release);
             socket::server::cleanup();
             tracing::info!("Application shutdown");
@@ -874,7 +876,9 @@ fn init_ghostty(state: &Rc<AppState>) {
     match ghostty_gtk::app::GhosttyApp::new(&callbacks) {
         Ok(ghostty_app) => {
             tracing::info!("Ghostty app initialized successfully");
-            *GHOSTTY_APP_PTR.lock().unwrap() = SendAppPtr(ghostty_app.raw());
+            if let Ok(mut ptr) = GHOSTTY_APP_PTR.lock() {
+                *ptr = SendAppPtr(ghostty_app.raw());
+            }
 
             // Cache ghostty config values for cmux UI decisions
             let ui_config = crate::ghostty_config::GhosttyUiConfig::from_app(&ghostty_app);
@@ -927,7 +931,8 @@ struct CmuxCallbackHandler {
 
 impl ghostty_gtk::callbacks::GhosttyCallbackHandler for CmuxCallbackHandler {
     fn on_wakeup(&self) {
-        if (*GHOSTTY_APP_PTR.lock().unwrap()).is_null() {
+        let is_null = GHOSTTY_APP_PTR.lock().ok().map_or(true, |p| p.is_null());
+        if is_null {
             return;
         }
 
@@ -937,7 +942,10 @@ impl ghostty_gtk::callbacks::GhosttyCallbackHandler for CmuxCallbackHandler {
 
         glib::MainContext::default().invoke_with_priority(glib::Priority::DEFAULT, move || {
             GHOSTTY_TICK_PENDING.store(false, Ordering::Release);
-            let app_ptr = *GHOSTTY_APP_PTR.lock().unwrap();
+            let app_ptr = match GHOSTTY_APP_PTR.lock() {
+                Ok(p) => *p,
+                Err(_) => return,
+            };
             if app_ptr.is_null() {
                 return;
             }

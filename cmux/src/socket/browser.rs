@@ -288,6 +288,16 @@ pub fn method_names() -> Vec<&'static str> {
 }
 
 // ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+/// JSON-encode a value for embedding in JavaScript.  Infallible for types
+/// that are always representable as JSON (strings, numbers, bools).
+fn js<T: serde::Serialize + ?Sized>(v: &T) -> String {
+    serde_json::to_string(v).unwrap_or_else(|_| "null".into())
+}
+
+// ---------------------------------------------------------------------------
 // Helper: send a BrowserAction and block for reply
 // ---------------------------------------------------------------------------
 
@@ -449,15 +459,15 @@ fn handle_click(id: Value, params: &Value, state: &Arc<SharedState>) -> Response
     let js = match button {
         "right" => format!(
             r#"(function(){{ var el = document.querySelector({sel}); if(!el) return 'ERROR:not_found'; el.dispatchEvent(new MouseEvent('contextmenu', {{bubbles:true,cancelable:true,button:2}})); return 'ok'; }})()"#,
-            sel = serde_json::to_string(&selector).unwrap()
+            sel = js(&selector)
         ),
         "middle" => format!(
             r#"(function(){{ var el = document.querySelector({sel}); if(!el) return 'ERROR:not_found'; el.dispatchEvent(new MouseEvent('click', {{bubbles:true,cancelable:true,button:1}})); return 'ok'; }})()"#,
-            sel = serde_json::to_string(&selector).unwrap()
+            sel = js(&selector)
         ),
         _ => format!(
             r#"(function(){{ var el = document.querySelector({sel}); if(!el) return 'ERROR:not_found'; el.click(); return 'ok'; }})()"#,
-            sel = serde_json::to_string(&selector).unwrap()
+            sel = js(&selector)
         ),
     };
     send_eval_action(&id, params, state, js)
@@ -470,7 +480,7 @@ fn handle_dblclick(id: Value, params: &Value, state: &Arc<SharedState>) -> Respo
     };
     let js = format!(
         r#"(function(){{ var el = document.querySelector({sel}); if(!el) return 'ERROR:not_found'; el.dispatchEvent(new MouseEvent('dblclick', {{bubbles:true,cancelable:true}})); return 'ok'; }})()"#,
-        sel = serde_json::to_string(&selector).unwrap()
+        sel = js(&selector)
     );
     send_eval_action(&id, params, state, js)
 }
@@ -482,7 +492,7 @@ fn handle_hover(id: Value, params: &Value, state: &Arc<SharedState>) -> Response
     };
     let js = format!(
         r#"(function(){{ var el = document.querySelector({sel}); if(!el) return 'ERROR:not_found'; el.dispatchEvent(new MouseEvent('mouseover', {{bubbles:true}})); el.dispatchEvent(new MouseEvent('mouseenter', {{bubbles:false}})); return 'ok'; }})()"#,
-        sel = serde_json::to_string(&selector).unwrap()
+        sel = js(&selector)
     );
     send_eval_action(&id, params, state, js)
 }
@@ -497,8 +507,8 @@ fn handle_type(id: Value, params: &Value, state: &Arc<SharedState>) -> Response 
     };
     let js = format!(
         r#"(function(){{ var el = document.querySelector({sel}); if(!el) return 'ERROR:not_found'; el.focus(); var text = {text}; for(var i=0;i<text.length;i++){{ var ch=text[i]; el.dispatchEvent(new KeyboardEvent('keydown',{{key:ch,bubbles:true}})); el.dispatchEvent(new KeyboardEvent('keypress',{{key:ch,bubbles:true}})); if(el.value!==undefined) el.value+=ch; el.dispatchEvent(new KeyboardEvent('keyup',{{key:ch,bubbles:true}})); }} el.dispatchEvent(new Event('input',{{bubbles:true}})); return 'ok'; }})()"#,
-        sel = serde_json::to_string(&selector).unwrap(),
-        text = serde_json::to_string(text).unwrap()
+        sel = js(&selector),
+        text = js(text)
     );
     send_eval_action(&id, params, state, js)
 }
@@ -513,8 +523,8 @@ fn handle_fill(id: Value, params: &Value, state: &Arc<SharedState>) -> Response 
     };
     let js = format!(
         r#"(function(){{ var el = document.querySelector({sel}); if(!el) return 'ERROR:not_found'; el.focus(); el.value = {val}; el.dispatchEvent(new Event('input',{{bubbles:true}})); el.dispatchEvent(new Event('change',{{bubbles:true}})); return 'ok'; }})()"#,
-        sel = serde_json::to_string(&selector).unwrap(),
-        val = serde_json::to_string(value).unwrap()
+        sel = js(&selector),
+        val = js(value)
     );
     send_eval_action(&id, params, state, js)
 }
@@ -526,7 +536,7 @@ fn handle_clear(id: Value, params: &Value, state: &Arc<SharedState>) -> Response
     };
     let js = format!(
         r#"(function(){{ var el = document.querySelector({sel}); if(!el) return 'ERROR:not_found'; el.focus(); el.value = ''; el.dispatchEvent(new Event('input',{{bubbles:true}})); el.dispatchEvent(new Event('change',{{bubbles:true}})); return 'ok'; }})()"#,
-        sel = serde_json::to_string(&selector).unwrap()
+        sel = js(&selector)
     );
     send_eval_action(&id, params, state, js)
 }
@@ -541,8 +551,8 @@ fn handle_press(id: Value, params: &Value, state: &Arc<SharedState>) -> Response
     };
     let js = format!(
         r#"(function(){{ var el = document.querySelector({sel}); if(!el) return 'ERROR:not_found'; el.focus(); var opts = {{key:{key},bubbles:true,cancelable:true}}; el.dispatchEvent(new KeyboardEvent('keydown',opts)); el.dispatchEvent(new KeyboardEvent('keypress',opts)); el.dispatchEvent(new KeyboardEvent('keyup',opts)); return 'ok'; }})()"#,
-        sel = serde_json::to_string(&selector).unwrap(),
-        key = serde_json::to_string(key).unwrap()
+        sel = js(&selector),
+        key = js(key)
     );
     send_eval_action(&id, params, state, js)
 }
@@ -558,19 +568,19 @@ fn handle_select_option(id: Value, params: &Value, state: &Arc<SharedState>) -> 
     let js = if let Some(val) = by_value {
         format!(
             r#"(function(){{ var el = document.querySelector({sel}); if(!el) return 'ERROR:not_found'; el.value = {val}; el.dispatchEvent(new Event('change',{{bubbles:true}})); return 'ok'; }})()"#,
-            sel = serde_json::to_string(&selector).unwrap(),
-            val = serde_json::to_string(val).unwrap()
+            sel = js(&selector),
+            val = js(val)
         )
     } else if let Some(label) = by_label {
         format!(
             r#"(function(){{ var el = document.querySelector({sel}); if(!el) return 'ERROR:not_found'; var opts = el.options; for(var i=0;i<opts.length;i++){{ if(opts[i].text==={label}){{ el.selectedIndex=i; break; }} }} el.dispatchEvent(new Event('change',{{bubbles:true}})); return 'ok'; }})()"#,
-            sel = serde_json::to_string(&selector).unwrap(),
-            label = serde_json::to_string(label).unwrap()
+            sel = js(&selector),
+            label = js(label)
         )
     } else if let Some(idx) = by_index {
         format!(
             r#"(function(){{ var el = document.querySelector({sel}); if(!el) return 'ERROR:not_found'; el.selectedIndex = {idx}; el.dispatchEvent(new Event('change',{{bubbles:true}})); return 'ok'; }})()"#,
-            sel = serde_json::to_string(&selector).unwrap(),
+            sel = js(&selector),
             idx = idx
         )
     } else {
@@ -587,7 +597,7 @@ fn handle_check(id: Value, params: &Value, state: &Arc<SharedState>) -> Response
     let checked = params.get("checked").and_then(|v| v.as_bool()).unwrap_or(true);
     let js = format!(
         r#"(function(){{ var el = document.querySelector({sel}); if(!el) return 'ERROR:not_found'; el.checked = {checked}; el.dispatchEvent(new Event('change',{{bubbles:true}})); return 'ok'; }})()"#,
-        sel = serde_json::to_string(&selector).unwrap(),
+        sel = js(&selector),
         checked = checked
     );
     send_eval_action(&id, params, state, js)
@@ -600,7 +610,7 @@ fn handle_focus(id: Value, params: &Value, state: &Arc<SharedState>) -> Response
     };
     let js = format!(
         r#"(function(){{ var el = document.querySelector({sel}); if(!el) return 'ERROR:not_found'; el.focus(); return 'ok'; }})()"#,
-        sel = serde_json::to_string(&selector).unwrap()
+        sel = js(&selector)
     );
     send_eval_action(&id, params, state, js)
 }
@@ -612,7 +622,7 @@ fn handle_blur(id: Value, params: &Value, state: &Arc<SharedState>) -> Response 
     };
     let js = format!(
         r#"(function(){{ var el = document.querySelector({sel}); if(!el) return 'ERROR:not_found'; el.blur(); return 'ok'; }})()"#,
-        sel = serde_json::to_string(&selector).unwrap()
+        sel = js(&selector)
     );
     send_eval_action(&id, params, state, js)
 }
@@ -624,7 +634,7 @@ fn handle_scroll_to(id: Value, params: &Value, state: &Arc<SharedState>) -> Resp
     let js = if let Some(sel) = selector {
         format!(
             r#"(function(){{ var el = document.querySelector({sel}); if(!el) return 'ERROR:not_found'; el.scrollTo({x},{y}); return 'ok'; }})()"#,
-            sel = serde_json::to_string(sel).unwrap(),
+            sel = js(sel),
             x = x,
             y = y
         )
@@ -651,7 +661,7 @@ fn handle_get_html(id: Value, params: &Value, state: &Arc<SharedState>) -> Respo
     let prop = if outer { "outerHTML" } else { "innerHTML" };
     let js = format!(
         r#"(function(){{ var el = document.querySelector({sel}); if(!el) return 'ERROR:not_found'; return el.{prop}; }})()"#,
-        sel = serde_json::to_string(&selector).unwrap(),
+        sel = js(&selector),
         prop = prop
     );
     send_eval_action(&id, params, state, js)
@@ -664,7 +674,7 @@ fn handle_get_value(id: Value, params: &Value, state: &Arc<SharedState>) -> Resp
     };
     let js = format!(
         r#"(function(){{ var el = document.querySelector({sel}); if(!el) return 'ERROR:not_found'; return String(el.value); }})()"#,
-        sel = serde_json::to_string(&selector).unwrap()
+        sel = js(&selector)
     );
     send_eval_action(&id, params, state, js)
 }
@@ -679,8 +689,8 @@ fn handle_get_attribute(id: Value, params: &Value, state: &Arc<SharedState>) -> 
     };
     let js = format!(
         r#"(function(){{ var el = document.querySelector({sel}); if(!el) return 'ERROR:not_found'; var v = el.getAttribute({name}); return v === null ? 'null' : v; }})()"#,
-        sel = serde_json::to_string(&selector).unwrap(),
-        name = serde_json::to_string(name).unwrap()
+        sel = js(&selector),
+        name = js(name)
     );
     send_eval_action(&id, params, state, js)
 }
@@ -695,8 +705,8 @@ fn handle_get_property(id: Value, params: &Value, state: &Arc<SharedState>) -> R
     };
     let js = format!(
         r#"(function(){{ var el = document.querySelector({sel}); if(!el) return 'ERROR:not_found'; return JSON.stringify(el[{name}]); }})()"#,
-        sel = serde_json::to_string(&selector).unwrap(),
-        name = serde_json::to_string(name).unwrap()
+        sel = js(&selector),
+        name = js(name)
     );
     send_eval_action(&id, params, state, js)
 }
@@ -708,7 +718,7 @@ fn handle_get_bounding_box(id: Value, params: &Value, state: &Arc<SharedState>) 
     };
     let js = format!(
         r#"(function(){{ var el = document.querySelector({sel}); if(!el) return 'ERROR:not_found'; var r = el.getBoundingClientRect(); return JSON.stringify({{x:r.x,y:r.y,width:r.width,height:r.height}}); }})()"#,
-        sel = serde_json::to_string(&selector).unwrap()
+        sel = js(&selector)
     );
     send_eval_action(&id, params, state, js)
 }
@@ -723,8 +733,8 @@ fn handle_get_computed_style(id: Value, params: &Value, state: &Arc<SharedState>
     };
     let js = format!(
         r#"(function(){{ var el = document.querySelector({sel}); if(!el) return 'ERROR:not_found'; return getComputedStyle(el)[{prop}]; }})()"#,
-        sel = serde_json::to_string(&selector).unwrap(),
-        prop = serde_json::to_string(property).unwrap()
+        sel = js(&selector),
+        prop = js(property)
     );
     send_eval_action(&id, params, state, js)
 }
@@ -736,7 +746,7 @@ fn handle_is_visible(id: Value, params: &Value, state: &Arc<SharedState>) -> Res
     };
     let js = format!(
         r#"(function(){{ var el = document.querySelector({sel}); if(!el) return 'ERROR:not_found'; var s = getComputedStyle(el); return String(el.offsetParent !== null && s.visibility !== 'hidden' && parseFloat(s.opacity) > 0); }})()"#,
-        sel = serde_json::to_string(&selector).unwrap()
+        sel = js(&selector)
     );
     send_eval_action(&id, params, state, js)
 }
@@ -748,7 +758,7 @@ fn handle_is_enabled(id: Value, params: &Value, state: &Arc<SharedState>) -> Res
     };
     let js = format!(
         r#"(function(){{ var el = document.querySelector({sel}); if(!el) return 'ERROR:not_found'; return String(!el.disabled); }})()"#,
-        sel = serde_json::to_string(&selector).unwrap()
+        sel = js(&selector)
     );
     send_eval_action(&id, params, state, js)
 }
@@ -760,7 +770,7 @@ fn handle_is_checked(id: Value, params: &Value, state: &Arc<SharedState>) -> Res
     };
     let js = format!(
         r#"(function(){{ var el = document.querySelector({sel}); if(!el) return 'ERROR:not_found'; return String(!!el.checked); }})()"#,
-        sel = serde_json::to_string(&selector).unwrap()
+        sel = js(&selector)
     );
     send_eval_action(&id, params, state, js)
 }
@@ -772,7 +782,7 @@ fn handle_is_editable(id: Value, params: &Value, state: &Arc<SharedState>) -> Re
     };
     let js = format!(
         r#"(function(){{ var el = document.querySelector({sel}); if(!el) return 'ERROR:not_found'; return String(!el.readOnly && !el.disabled); }})()"#,
-        sel = serde_json::to_string(&selector).unwrap()
+        sel = js(&selector)
     );
     send_eval_action(&id, params, state, js)
 }
@@ -784,7 +794,7 @@ fn handle_count(id: Value, params: &Value, state: &Arc<SharedState>) -> Response
     };
     let js = format!(
         r#"(function(){{ return String(document.querySelectorAll({sel}).length); }})()"#,
-        sel = serde_json::to_string(&selector).unwrap()
+        sel = js(&selector)
     );
     send_eval_action(&id, params, state, js)
 }
@@ -805,7 +815,7 @@ fn handle_find(id: Value, params: &Value, state: &Arc<SharedState>) -> Response 
     // Verify element exists via JS, then allocate a ref on the Rust side
     let js = format!(
         r#"(function(){{ var el = document.querySelector({sel}); return el ? 'found' : 'ERROR:not_found'; }})()"#,
-        sel = serde_json::to_string(&selector).unwrap()
+        sel = js(&selector)
     );
     let (tx, rx) = tokio::sync::oneshot::channel();
     state.send_ui_event(UiEvent::BrowserAction {
@@ -841,7 +851,7 @@ fn handle_find_all(id: Value, params: &Value, state: &Arc<SharedState>) -> Respo
     };
     let js = format!(
         r#"(function(){{ return String(document.querySelectorAll({sel}).length); }})()"#,
-        sel = serde_json::to_string(&selector).unwrap()
+        sel = js(&selector)
     );
     let (tx, rx) = tokio::sync::oneshot::channel();
     state.send_ui_event(UiEvent::BrowserAction {
@@ -883,7 +893,7 @@ fn handle_find_by_text(id: Value, params: &Value, state: &Arc<SharedState>) -> R
     // Use XPath to find element containing text, then return a unique selector
     let js = format!(
         r#"(function(){{ var result = document.evaluate("//text()[contains(.,"+{text}+")]/parent::*", document, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null); var el = result.singleNodeValue; if(!el) return 'ERROR:not_found'; return el.tagName.toLowerCase() + (el.id ? '#'+el.id : '') + (el.className ? '.'+el.className.split(' ').join('.') : ''); }})()"#,
-        text = serde_json::to_string(text).unwrap()
+        text = js(text)
     );
     let (tx, rx) = tokio::sync::oneshot::channel();
     state.send_ui_event(UiEvent::BrowserAction {
@@ -981,7 +991,7 @@ fn find_by_selector(
 ) -> Response {
     let js = format!(
         r#"(function(){{ var el = document.querySelector({sel}); return el ? 'found' : 'ERROR:not_found'; }})()"#,
-        sel = serde_json::to_string(selector).unwrap()
+        sel = js(selector)
     );
     let (tx, rx) = tokio::sync::oneshot::channel();
     state.send_ui_event(UiEvent::BrowserAction {
@@ -1139,7 +1149,7 @@ fn handle_set_cookie(id: Value, params: &Value, state: &Arc<SharedState>) -> Res
     };
     let js = format!(
         r#"(function(){{ document.cookie = {cookie}; return 'ok'; }})()"#,
-        cookie = serde_json::to_string(cookie).unwrap()
+        cookie = js(cookie)
     );
     send_eval_action(&id, params, state, js)
 }
@@ -1155,7 +1165,7 @@ fn handle_local_storage_get(id: Value, params: &Value, state: &Arc<SharedState>)
     };
     let js = format!(
         r#"(function(){{ var v = localStorage.getItem({key}); return v === null ? 'null' : v; }})()"#,
-        key = serde_json::to_string(key).unwrap()
+        key = js(key)
     );
     send_eval_action(&id, params, state, js)
 }
@@ -1169,8 +1179,8 @@ fn handle_local_storage_set(id: Value, params: &Value, state: &Arc<SharedState>)
     };
     let js = format!(
         r#"(function(){{ localStorage.setItem({key},{val}); return 'ok'; }})()"#,
-        key = serde_json::to_string(key).unwrap(),
-        val = serde_json::to_string(value).unwrap()
+        key = js(key),
+        val = js(value)
     );
     send_eval_action(&id, params, state, js)
 }
@@ -1181,7 +1191,7 @@ fn handle_session_storage_get(id: Value, params: &Value, state: &Arc<SharedState
     };
     let js = format!(
         r#"(function(){{ var v = sessionStorage.getItem({key}); return v === null ? 'null' : v; }})()"#,
-        key = serde_json::to_string(key).unwrap()
+        key = js(key)
     );
     send_eval_action(&id, params, state, js)
 }
@@ -1195,8 +1205,8 @@ fn handle_session_storage_set(id: Value, params: &Value, state: &Arc<SharedState
     };
     let js = format!(
         r#"(function(){{ sessionStorage.setItem({key},{val}); return 'ok'; }})()"#,
-        key = serde_json::to_string(key).unwrap(),
-        val = serde_json::to_string(value).unwrap()
+        key = js(key),
+        val = js(value)
     );
     send_eval_action(&id, params, state, js)
 }

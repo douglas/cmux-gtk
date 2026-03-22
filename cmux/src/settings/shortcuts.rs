@@ -274,7 +274,10 @@ impl ShortcutConfig {
 pub fn load() -> ShortcutConfig {
     let path = super::config_dir().join("shortcuts.json");
     match std::fs::read_to_string(&path) {
-        Ok(content) => serde_json::from_str(&content).unwrap_or_default(),
+        Ok(content) => serde_json::from_str(&content).unwrap_or_else(|err| {
+            tracing::warn!("Failed to parse {}: {err}", path.display());
+            ShortcutConfig::default()
+        }),
         Err(_) => ShortcutConfig::default(),
     }
 }

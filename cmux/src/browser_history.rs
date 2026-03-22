@@ -96,7 +96,10 @@ impl BrowserHistoryStore {
         match std::fs::read_to_string(&path) {
             Ok(content) => {
                 let entries: Vec<HistoryEntry> =
-                    serde_json::from_str(&content).unwrap_or_default();
+                    serde_json::from_str(&content).unwrap_or_else(|err| {
+                        tracing::warn!("Failed to parse browser history: {err}");
+                        Vec::new()
+                    });
                 let map: HashMap<String, HistoryEntry> = entries
                     .into_iter()
                     .map(|e| (canonical_url(&e.url), e))

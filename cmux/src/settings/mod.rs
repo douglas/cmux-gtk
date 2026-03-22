@@ -575,7 +575,10 @@ pub fn save(settings: &AppSettings) -> Result<(), std::io::Error> {
 fn load_main_settings() -> AppSettings {
     let path = config_dir().join("settings.json");
     match std::fs::read_to_string(&path) {
-        Ok(content) => serde_json::from_str(&content).unwrap_or_default(),
+        Ok(content) => serde_json::from_str(&content).unwrap_or_else(|err| {
+            tracing::warn!("Failed to parse {}: {err}", path.display());
+            AppSettings::default()
+        }),
         Err(_) => AppSettings::default(),
     }
 }
