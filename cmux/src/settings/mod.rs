@@ -7,7 +7,7 @@ use std::path::PathBuf;
 
 /// Top-level application settings.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(default)]
+#[serde(default, deny_unknown_fields)]
 pub struct AppSettings {
     /// Appearance settings.
     pub theme: ThemeMode,
@@ -570,6 +570,41 @@ pub fn save(settings: &AppSettings) -> Result<(), std::io::Error> {
 
     shortcuts::save(&settings.shortcuts)?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_default_settings_roundtrip() {
+        let settings = AppSettings::default();
+        let json = serde_json::to_string_pretty(&settings).unwrap();
+        let parsed: AppSettings = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed.theme, settings.theme);
+    }
+
+    #[test]
+    fn test_malformed_json_returns_default() {
+        let result: AppSettings = serde_json::from_str("not valid json")
+            .unwrap_or_default();
+        assert_eq!(result.theme, ThemeMode::System);
+    }
+
+    #[test]
+    fn test_unknown_fields_rejected() {
+        let json = r#"{"bogus_field": true}"#;
+        let result: Result<AppSettings, _> = serde_json::from_str(json);
+        assert!(result.is_err(), "unknown fields should be rejected");
+    }
+
+    #[test]
+    fn test_partial_settings_merged_with_defaults() {
+        let json = r#"{"theme": "dark"}"#;
+        let settings: AppSettings = serde_json::from_str(json).unwrap();
+        assert_eq!(settings.theme, ThemeMode::Dark);
+        assert!(settings.confirm_before_close); // default value
+    }
 }
 
 fn load_main_settings() -> AppSettings {

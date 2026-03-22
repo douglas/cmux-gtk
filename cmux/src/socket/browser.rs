@@ -1870,3 +1870,33 @@ fn handle_screencast_start(id: Value, _params: &Value, _state: &Arc<SharedState>
 fn handle_screencast_stop(id: Value, _params: &Value, _state: &Arc<SharedState>) -> Response {
     Response::success(id, serde_json::json!({"ok": true}))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_js_helper_strings() {
+        assert_eq!(js(&"hello"), r#""hello""#);
+        assert_eq!(js(&"with \"quotes\""), r#""with \"quotes\"""#);
+    }
+
+    #[test]
+    fn test_js_helper_special_chars() {
+        assert_eq!(js(&"<script>"), r#""<script>""#);
+        assert_eq!(js(&"line\nnewline"), r#""line\nnewline""#);
+    }
+
+    #[test]
+    fn test_method_names_includes_aliases() {
+        let names = method_names();
+        // Original names
+        assert!(names.contains(&"browser.execute_js"));
+        assert!(names.contains(&"browser.find_by_text"));
+        assert!(names.contains(&"browser.is_visible"));
+        // macOS aliases
+        assert!(names.contains(&"browser.eval"));
+        assert!(names.contains(&"browser.find.text"));
+        assert!(names.contains(&"browser.is.visible"));
+    }
+}
