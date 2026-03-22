@@ -683,7 +683,7 @@ fn bind_shared_state_updates(
                         // Check link routing — external patterns open in system browser
                         let settings = crate::settings::load();
                         if settings.link_routing.should_open_externally(&url) {
-                            tracing::warn!(%url, "OpenUrlInBrowser → launching in system browser");
+                            tracing::debug!(%url, "OpenUrlInBrowser → launching in system browser");
                             let _ = gio::AppInfo::launch_default_for_uri(
                                 &url,
                                 gio::AppLaunchContext::NONE,

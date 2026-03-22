@@ -359,7 +359,7 @@ impl SharedState {
 /// Run the GTK application. Returns the exit code.
 pub fn run() -> i32 {
     let app = adw::Application::builder()
-        .application_id("ai.manaflow.cmux")
+        .application_id("io.github.douglas.cmux_gtk")
         .flags(gio::ApplicationFlags::NON_UNIQUE)
         .build();
 

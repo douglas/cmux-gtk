@@ -1238,7 +1238,7 @@ pub fn create_browser_widget_with_profile(
         let shared_for_policy = shared.clone();
         let settings_for_policy = browser_settings.clone();
         web_view.connect_decide_policy(move |_wv, decision, decision_type| {
-            tracing::debug!(?decision_type, "decide_policy fired");
+            tracing::trace!(?decision_type, "decide_policy fired");
 
             // Response policy: convert non-displayable responses to downloads
             if decision_type == webkit6::PolicyDecisionType::Response {
@@ -1264,7 +1264,7 @@ pub fn create_browser_widget_with_profile(
                         if let Some(request) = nav_action.request() {
                             if let Some(uri) = request.uri() {
                                 let url = uri.to_string();
-                                tracing::info!(%url, "decide_policy: NewWindowAction → loading in current view");
+                                tracing::debug!(%url, "decide_policy: NewWindowAction → loading in current view");
                                 decision.ignore();
                                 wv_policy.load_uri(&url);
                                 return true;
@@ -1295,7 +1295,7 @@ pub fn create_browser_widget_with_profile(
 
                         if let Some(request) = nav_action.request() {
                             if let Some(uri) = request.uri() {
-                                tracing::info!(
+                                tracing::debug!(
                                     url = %uri,
                                     nav_type = ?nav_type,
                                     needs_policy,
@@ -1525,7 +1525,7 @@ pub fn create_browser_widget_with_profile(
                 .map(|u| u.to_string());
 
             if let Some(url) = url.as_deref() {
-                tracing::info!(%url, "connect_create: intercepted popup → new tab");
+                tracing::debug!(%url, "connect_create: intercepted popup → new tab");
                 if let Some(ref shared) = shared_for_create {
                     shared.send_ui_event(
                         crate::app::UiEvent::BrowserOpenInNewTab {
@@ -1547,7 +1547,7 @@ pub fn create_browser_widget_with_profile(
             // Block ALL navigations in the temp view so it can't open
             // the system browser via default decide_policy behavior.
             tmp.connect_decide_policy(|_wv, decision, decision_type| {
-                tracing::warn!(
+                tracing::debug!(
                     ?decision_type,
                     "TEMP WebView decide_policy → ignoring"
                 );
@@ -1555,7 +1555,7 @@ pub fn create_browser_widget_with_profile(
                 true
             });
             tmp.connect_create(|_wv, _nav| {
-                tracing::warn!("TEMP WebView connect_create → blocked");
+                tracing::debug!("TEMP WebView connect_create → blocked");
                 None::<gtk4::Widget>
             });
             tmp.load_uri("about:blank");
@@ -1617,7 +1617,7 @@ pub fn create_browser_widget_with_profile(
         let engine = browser_settings.search_engine;
         url_entry.connect_activate(move |entry| {
             let url = normalize_url(&entry.text(), engine);
-            tracing::info!(%url, "Browser URL bar: loading URI");
+            tracing::debug!(%url, "Browser URL bar: loading URI");
             wv.load_uri(&url);
         });
     }

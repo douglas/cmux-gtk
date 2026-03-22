@@ -131,7 +131,8 @@ All shortcuts are configurable via `~/.config/cmux/shortcuts.json`.
 | Ctrl+Shift+M | Enter copy mode |
 | Ctrl+Shift+Y | Reopen closed browser tab |
 | Ctrl+Shift+U | Jump to latest unread |
-| Ctrl+O | Open folder as workspace |
+| Ctrl+O | Open folder as new workspace |
+| Ctrl+Shift+O | Open workspace directory in file manager |
 | Ctrl+, | Settings |
 | Ctrl+Shift+, | Reload ghostty config |
 | Ctrl+K | Clear terminal scrollback |
