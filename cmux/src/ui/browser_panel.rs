@@ -378,6 +378,59 @@ pub fn wire_download_handling_for_session(session: &webkit6::NetworkSession) {
     wire_download_handling(session);
 }
 
+/// Poll a JavaScript expression every 100 ms until it returns a non-empty
+/// string, or timeout.  Used by WaitForSelector, WaitForLoadState, and
+/// WaitForFunction to avoid duplicating the same poll-loop boilerplate.
+fn poll_js_until_truthy(
+    panel_id: uuid::Uuid,
+    poll_js: &str,
+    timeout_ms: u64,
+    label: &str,
+    success_value: serde_json::Value,
+    reply: tokio::sync::oneshot::Sender<Result<serde_json::Value, String>>,
+) {
+    let Some(wv) = get_webview(panel_id) else {
+        let _ = reply.send(Err("Browser panel not found".to_string()));
+        return;
+    };
+    let start = std::time::Instant::now();
+    let deadline = std::time::Duration::from_millis(timeout_ms);
+    let reply = Rc::new(Cell::new(Some(reply)));
+    let reply_poll = reply.clone();
+    let poll_js = poll_js.to_string();
+    let label = label.to_string();
+    glib::timeout_add_local(std::time::Duration::from_millis(100), move || {
+        if start.elapsed() > deadline {
+            if let Some(tx) = reply_poll.take() {
+                let _ = tx.send(Err(format!("Timeout waiting for {label}")));
+            }
+            return glib::ControlFlow::Break;
+        }
+        let reply_inner = reply_poll.clone();
+        let success = success_value.clone();
+        wv.evaluate_javascript(
+            &poll_js,
+            None,
+            None,
+            None::<&gio::Cancellable>,
+            move |result| {
+                if let Ok(val) = result {
+                    if !val.to_str().is_empty() {
+                        if let Some(tx) = reply_inner.take() {
+                            let _ = tx.send(Ok(success));
+                        }
+                    }
+                }
+            },
+        );
+        if reply_poll.take().is_none() {
+            glib::ControlFlow::Break
+        } else {
+            glib::ControlFlow::Continue
+        }
+    });
+}
+
 fn wire_download_handling(session: &webkit6::NetworkSession) {
     session.connect_download_started(|_session, download| {
         let panel_id = download
@@ -591,53 +644,14 @@ pub fn execute_action(panel_id: uuid::Uuid, action: BrowserActionKind) {
             timeout_ms,
             reply,
         } => {
-            if let Some(wv) = get_webview(panel_id) {
-                let start = std::time::Instant::now();
-                let deadline = std::time::Duration::from_millis(timeout_ms);
-                let reply = Rc::new(Cell::new(Some(reply)));
-                let sel_js = serde_json::to_string(&selector).unwrap();
-                let poll_js = format!(
-                    r#"(function(){{ return document.querySelector({}) ? 'found' : ''; }})()"#,
-                    sel_js
-                );
-                let reply_clone = reply.clone();
-                glib::timeout_add_local(std::time::Duration::from_millis(100), move || {
-                    if start.elapsed() > deadline {
-                        if let Some(tx) = reply_clone.take() {
-                            let _ = tx.send(Err("Timeout waiting for selector".to_string()));
-                        }
-                        return glib::ControlFlow::Break;
-                    }
-                    let reply_inner = reply_clone.clone();
-                    let poll_js_clone = poll_js.clone();
-                    wv.evaluate_javascript(
-                        &poll_js_clone,
-                        None,
-                        None,
-                        None::<&gio::Cancellable>,
-                        move |result| {
-                            if let Ok(val) = result {
-                                let s = val.to_str();
-                                if s.as_str() == "found" {
-                                    if let Some(tx) = reply_inner.take() {
-                                        let _ = tx.send(Ok(
-                                            serde_json::json!({"found": true}),
-                                        ));
-                                    }
-                                }
-                            }
-                        },
-                    );
-                    if reply_clone.take().is_none() {
-                        // Already replied in the callback
-                        glib::ControlFlow::Break
-                    } else {
-                        glib::ControlFlow::Continue
-                    }
-                });
-            } else {
-                let _ = reply.send(Err("Browser panel not found".to_string()));
-            }
+            let sel_js = crate::socket::browser::js(&selector);
+            let poll_js = format!(
+                r#"(function(){{ return document.querySelector({sel_js}) ? 'found' : ''; }})()"#,
+            );
+            poll_js_until_truthy(
+                panel_id, &poll_js, timeout_ms, "selector",
+                serde_json::json!({"found": true}), reply,
+            );
         }
         BrowserActionKind::WaitForNavigation {
             timeout_ms,
@@ -685,95 +699,24 @@ pub fn execute_action(panel_id: uuid::Uuid, action: BrowserActionKind) {
             timeout_ms,
             reply,
         } => {
-            if let Some(wv) = get_webview(panel_id) {
-                let start = std::time::Instant::now();
-                let deadline = std::time::Duration::from_millis(timeout_ms);
-                let reply = Rc::new(Cell::new(Some(reply)));
-                let reply_clone = reply.clone();
-                glib::timeout_add_local(std::time::Duration::from_millis(100), move || {
-                    if start.elapsed() > deadline {
-                        if let Some(tx) = reply_clone.take() {
-                            let _ = tx.send(Err("Timeout waiting for load state".to_string()));
-                        }
-                        return glib::ControlFlow::Break;
-                    }
-                    let reply_inner = reply_clone.clone();
-                    wv.evaluate_javascript(
-                        "document.readyState",
-                        None,
-                        None,
-                        None::<&gio::Cancellable>,
-                        move |result| {
-                            if let Ok(val) = result {
-                                if val.to_str().as_str() == "complete" {
-                                    if let Some(tx) = reply_inner.take() {
-                                        let _ = tx.send(Ok(
-                                            serde_json::json!({"state": "complete"}),
-                                        ));
-                                    }
-                                }
-                            }
-                        },
-                    );
-                    if reply_clone.take().is_none() {
-                        glib::ControlFlow::Break
-                    } else {
-                        glib::ControlFlow::Continue
-                    }
-                });
-            } else {
-                let _ = reply.send(Err("Browser panel not found".to_string()));
-            }
+            let poll_js = r#"(function(){ return document.readyState === 'complete' ? 'complete' : ''; })()"#.to_string();
+            poll_js_until_truthy(
+                panel_id, &poll_js, timeout_ms, "load state",
+                serde_json::json!({"state": "complete"}), reply,
+            );
         }
         BrowserActionKind::WaitForFunction {
             expression,
             timeout_ms,
             reply,
         } => {
-            if let Some(wv) = get_webview(panel_id) {
-                let start = std::time::Instant::now();
-                let deadline = std::time::Duration::from_millis(timeout_ms);
-                let reply = Rc::new(Cell::new(Some(reply)));
-                let poll_js = format!(
-                    r#"(function(){{ return ({}) ? 'truthy' : ''; }})()"#,
-                    expression
-                );
-                let reply_clone = reply.clone();
-                glib::timeout_add_local(std::time::Duration::from_millis(100), move || {
-                    if start.elapsed() > deadline {
-                        if let Some(tx) = reply_clone.take() {
-                            let _ = tx.send(Err("Timeout waiting for function".to_string()));
-                        }
-                        return glib::ControlFlow::Break;
-                    }
-                    let reply_inner = reply_clone.clone();
-                    let poll_js_clone = poll_js.clone();
-                    wv.evaluate_javascript(
-                        &poll_js_clone,
-                        None,
-                        None,
-                        None::<&gio::Cancellable>,
-                        move |result| {
-                            if let Ok(val) = result {
-                                if val.to_str().as_str() == "truthy" {
-                                    if let Some(tx) = reply_inner.take() {
-                                        let _ = tx.send(Ok(
-                                            serde_json::json!({"result": true}),
-                                        ));
-                                    }
-                                }
-                            }
-                        },
-                    );
-                    if reply_clone.take().is_none() {
-                        glib::ControlFlow::Break
-                    } else {
-                        glib::ControlFlow::Continue
-                    }
-                });
-            } else {
-                let _ = reply.send(Err("Browser panel not found".to_string()));
-            }
+            let poll_js = format!(
+                r#"(function(){{ return ({expression}) ? 'truthy' : ''; }})()"#,
+            );
+            poll_js_until_truthy(
+                panel_id, &poll_js, timeout_ms, "function",
+                serde_json::json!({"result": true}), reply,
+            );
         }
         BrowserActionKind::GetConsoleMessages { reply } => {
             let messages = CONSOLE_BUFFERS.with(|bufs| {

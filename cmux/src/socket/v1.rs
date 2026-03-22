@@ -12,6 +12,16 @@ use serde_json::{json, Value};
 use crate::app::SharedState;
 use crate::socket::v2;
 
+/// Inject optional workspace/panel targeting into a JSON params object.
+fn target(p: &mut Value, ws: Option<&String>, panel: Option<&String>) {
+    if let Some(ws) = ws {
+        p["workspace"] = json!(ws);
+    }
+    if let Some(panel) = panel {
+        p["surface"] = json!(panel);
+    }
+}
+
 /// Check if a line looks like a V1 text command (not JSON).
 pub fn is_v1(line: &str) -> bool {
     let trimmed = line.trim();
@@ -36,12 +46,7 @@ pub fn dispatch(line: &str, state: &Arc<SharedState>) -> String {
         "report_pwd" => {
             let dir = args.first().map(|s| s.as_str()).unwrap_or("");
             let mut p = json!({"directory": dir});
-            if let Some(ws) = workspace_id {
-                p["workspace"] = json!(ws);
-            }
-            if let Some(panel) = panel_id {
-                p["surface"] = json!(panel);
-            }
+            target(&mut p, workspace_id, panel_id);
             ("workspace.report_pwd", p)
         }
         "report_git_branch" => {
@@ -53,12 +58,7 @@ pub fn dispatch(line: &str, state: &Arc<SharedState>) -> String {
                 (raw, flags.get("status") == Some(&"dirty".to_string()))
             };
             let mut p = json!({"branch": branch, "is_dirty": is_dirty});
-            if let Some(ws) = workspace_id {
-                p["workspace"] = json!(ws);
-            }
-            if let Some(panel) = panel_id {
-                p["surface"] = json!(panel);
-            }
+            target(&mut p, workspace_id, panel_id);
             ("workspace.report_git_branch", p)
         }
         "clear_git_branch" => {
@@ -78,12 +78,7 @@ pub fn dispatch(line: &str, state: &Arc<SharedState>) -> String {
             if let Some(u) = url {
                 p["url"] = json!(u);
             }
-            if let Some(ws) = workspace_id {
-                p["workspace"] = json!(ws);
-            }
-            if let Some(panel) = panel_id {
-                p["surface"] = json!(panel);
-            }
+            target(&mut p, workspace_id, panel_id);
             ("workspace.report_pr", p)
         }
         "clear_pr" => {
@@ -107,12 +102,7 @@ pub fn dispatch(line: &str, state: &Arc<SharedState>) -> String {
         "report_tty" => {
             let tty = args.first().map(|s| s.as_str()).unwrap_or("");
             let mut p = json!({"tty": tty});
-            if let Some(ws) = workspace_id {
-                p["workspace"] = json!(ws);
-            }
-            if let Some(panel) = panel_id {
-                p["surface"] = json!(panel);
-            }
+            target(&mut p, workspace_id, panel_id);
             ("workspace.report_tty", p)
         }
         "ports_kick" => ("workspace.ports_kick", json!({})),
@@ -533,12 +523,7 @@ pub fn dispatch(line: &str, state: &Arc<SharedState>) -> String {
             let title = args.first().map(|s| s.as_str()).unwrap_or("");
             let body = args.get(1).map(|s| s.as_str()).unwrap_or("");
             let mut p = json!({"title": title, "body": body});
-            if let Some(ws) = workspace_id {
-                p["workspace"] = json!(ws);
-            }
-            if let Some(panel) = panel_id {
-                p["surface"] = json!(panel);
-            }
+            target(&mut p, workspace_id, panel_id);
             ("notification.create", p)
         }
         "notify_surface" => {

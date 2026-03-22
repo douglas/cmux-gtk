@@ -293,7 +293,7 @@ pub fn method_names() -> Vec<&'static str> {
 
 /// JSON-encode a value for embedding in JavaScript.  Infallible for types
 /// that are always representable as JSON (strings, numbers, bools).
-fn js<T: serde::Serialize + ?Sized>(v: &T) -> String {
+pub(crate) fn js<T: serde::Serialize + ?Sized>(v: &T) -> String {
     serde_json::to_string(v).unwrap_or_else(|_| "null".into())
 }
 
