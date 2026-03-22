@@ -1256,8 +1256,8 @@ pub fn create_browser_widget_with_profile(
                                 if let Some(scheme) = url.split("://").next().map(|s| s.to_lowercase()) {
                                     if !matches!(
                                         scheme.as_str(),
-                                        "http" | "https" | "about" | "data"
-                                            | "blob" | "javascript"
+                                        "http" | "https" | "file" | "about"
+                                            | "data" | "blob" | "javascript"
                                     ) {
                                         decision.ignore();
                                         let _ = std::process::Command::new("xdg-open")
@@ -1337,6 +1337,7 @@ pub fn create_browser_widget_with_profile(
     // ── Context menu: augment default WebKit menu ──
     {
         let wv = web_view.clone();
+        let shared_for_ctx = shared.clone();
         web_view.connect_context_menu(move |_wv, menu, hit_test| {
             // Remove "Open * in New Window" items — we're an embedded browser,
             // not a standalone window-based browser.
@@ -1358,12 +1359,61 @@ pub fn create_browser_widget_with_profile(
                 menu.remove(item);
             }
 
-            // Add "Copy Page URL" at the end if not on a link
-            if !hit_test.context_is_link() {
-                let page_url = wv.uri().map(|u| u.to_string()).unwrap_or_default();
+            // Link context: add "Open Link in New Tab" + "Open in Default Browser"
+            if hit_test.context_is_link() {
+                if let Some(link_uri) = hit_test.link_uri() {
+                    let link_url = link_uri.to_string();
+                    let action_group = gio::SimpleActionGroup::new();
+
+                    // "Open Link in New Tab"
+                    let new_tab_action =
+                        gio::SimpleAction::new("open-link-new-tab", None);
+                    let url_for_tab = link_url.clone();
+                    let shared_for_tab = shared_for_ctx.clone();
+                    new_tab_action.connect_activate(move |_, _| {
+                        if let Some(ref shared) = shared_for_tab {
+                            shared.send_ui_event(
+                                crate::app::UiEvent::BrowserOpenInNewTab {
+                                    source_panel_id: panel_id,
+                                    url: url_for_tab.clone(),
+                                },
+                            );
+                        }
+                    });
+                    action_group.add_action(&new_tab_action);
+                    menu.prepend(&webkit6::ContextMenuItem::from_gaction(
+                        &new_tab_action,
+                        "Open Link in New Tab",
+                        None,
+                    ));
+
+                    // "Open in Default Browser"
+                    let ext_action =
+                        gio::SimpleAction::new("open-link-default-browser", None);
+                    let url_for_ext = link_url;
+                    ext_action.connect_activate(move |_, _| {
+                        let _ = gio::AppInfo::launch_default_for_uri(
+                            &url_for_ext,
+                            gio::AppLaunchContext::NONE,
+                        );
+                    });
+                    action_group.add_action(&ext_action);
+                    menu.append(&webkit6::ContextMenuItem::from_gaction(
+                        &ext_action,
+                        "Open in Default Browser",
+                        None,
+                    ));
+
+                    wv.insert_action_group("browser", Some(&action_group));
+                }
+            } else {
+                // Non-link context: add "Copy Page URL"
+                let page_url =
+                    wv.uri().map(|u| u.to_string()).unwrap_or_default();
                 if !page_url.is_empty() && page_url != "about:blank" {
                     let action_group = gio::SimpleActionGroup::new();
-                    let copy_url_action = gio::SimpleAction::new("copy-page-url", None);
+                    let copy_url_action =
+                        gio::SimpleAction::new("copy-page-url", None);
                     let url = page_url.clone();
                     copy_url_action.connect_activate(move |_, _| {
                         if let Some(display) = gdk4::Display::default() {
