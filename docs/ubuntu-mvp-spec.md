@@ -2,8 +2,7 @@
 
 ## Status
 
-This document defines the target for the `release/phase-1-mvp` PR stream.
-Until this MVP lands, changes should be evaluated against this scope first.
+**MVP scope exceeded.** This document originally defined the target for the `release/phase-1-mvp` PR stream. All MVP acceptance criteria have been met, and most items listed under "Explicit Non-Goals" are now implemented (in-app browser, PR metadata, listening ports, rich notification history, theming). The product thesis and core UX model below remain the guiding design principles.
 
 ## Product Thesis
 
@@ -82,20 +81,20 @@ Each workspace row should show the minimum context needed to make routing decisi
 - Scanability: the sidebar must remain readable with at least 8 workspaces
 - Native feel: the app should stay lightweight and terminal-first
 
-## Explicit Non-Goals For MVP
+## Original Non-Goals (now mostly implemented)
 
-The following are valuable, but not required for the MVP:
+The following were originally deferred but have since been implemented:
 
-- in-app browser,
-- pull request metadata,
-- listening ports,
-- advanced progress visualizations,
-- rich notification history UI,
-- drag-and-drop workspace management,
-- deep customization or theming,
-- fully automatic terminal escape-sequence notification capture.
+- ~~in-app browser~~ — WebKit6 browser panels with 100+ automation commands
+- ~~pull request metadata~~ — PR status, URL, check results in sidebar
+- ~~listening ports~~ — port scanning and display in sidebar
+- ~~advanced progress visualizations~~ — progress bars, status pills, log entries, markdown blocks
+- ~~rich notification history UI~~ — notification panel with history
+- ~~drag-and-drop workspace management~~ — workspace reordering via socket API
+- ~~deep customization or theming~~ — Omarchy themes, sidebar tint colors, browser theme mode
 
-If a feature does not improve the "notice -> identify -> jump" loop, it is probably out of scope for this phase.
+Still deferred:
+- fully automatic terminal escape-sequence notification capture (relies on OSC 9/777/99 from shell integration)
 
 ## Acceptance Criteria
 

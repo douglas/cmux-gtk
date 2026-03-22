@@ -138,24 +138,9 @@ Recommendation:
 - split the Ghostty renderer fix into its own branch/PR if it is not already isolated
 - make the `cmux-linux` PR explicitly depend on that Ghostty change
 
-### P2: UI event delivery still uses 33ms polling
+### ~~P2: UI event delivery still uses 33ms polling~~ (RESOLVED)
 
-[window.rs](../cmux/src/ui/window.rs) still uses:
-
-- `std::sync::mpsc`
-- `try_recv()`
-- `glib::timeout_add_local(Duration::from_millis(33), ...)`
-
-This is acceptable for MVP because the product value is already visible.
-It is still architectural debt:
-
-- avoidable idle polling
-- avoidable latency
-- extra glue around the GTK main loop
-
-Recommendation:
-
-- move to `glib::MainContext::channel()` or `gio`-native socket integration later
+**Resolved.** [window.rs](../cmux/src/ui/window.rs) now uses `glib::MainContext::default().spawn_local()` with async `recv().await` on a tokio mpsc channel. No more 33ms polling — events are delivered immediately when they arrive. The `try_recv()` is only used in a drain loop after the initial async wake to batch multiple pending events.
 
 ### P2: Focus recovery is intentionally heuristic
 
