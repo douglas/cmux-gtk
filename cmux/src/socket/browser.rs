@@ -1298,6 +1298,7 @@ fn handle_tab_new(id: Value, params: &Value, state: &Arc<SharedState>) -> Respon
             );
             if let Some(panel) = ws.panels.get_mut(&new_id) {
                 panel.browser_url = Some(url.to_string());
+                panel.directory = Some(url.to_string());
             }
             Some(new_id)
         } else {

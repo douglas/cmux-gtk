@@ -33,6 +33,8 @@ pub struct AppState {
     pub shared: Arc<SharedState>,
     pub ghostty_app: RefCell<Option<ghostty_gtk::app::GhosttyApp>>,
     pub terminal_cache: RefCell<HashMap<Uuid, ghostty_gtk::surface::GhosttyGlSurface>>,
+    /// Cached browser panel widgets — survive layout rebuilds (like terminal_cache).
+    pub browser_cache: RefCell<HashMap<Uuid, gtk4::Widget>>,
     /// Cached ghostty config values for UI decisions (background, opacity, etc.).
     pub ghostty_ui_config: RefCell<crate::ghostty_config::GhosttyUiConfig>,
     /// Stored to keep the callbacks alive for the lifetime of the app.
@@ -45,6 +47,7 @@ impl AppState {
             shared,
             ghostty_app: RefCell::new(None),
             terminal_cache: RefCell::new(HashMap::new()),
+            browser_cache: RefCell::new(HashMap::new()),
             ghostty_ui_config: RefCell::new(Default::default()),
             _callbacks: RefCell::new(None),
         }
@@ -188,12 +191,14 @@ impl AppState {
             tab_manager
                 .iter()
                 .flat_map(|workspace| workspace.panels.values())
-                .filter(|panel| panel.panel_type == crate::model::PanelType::Terminal)
                 .map(|panel| panel.id)
                 .collect()
         };
 
         self.terminal_cache
+            .borrow_mut()
+            .retain(|panel_id, _| live_panels.contains(panel_id));
+        self.browser_cache
             .borrow_mut()
             .retain(|panel_id, _| live_panels.contains(panel_id));
     }

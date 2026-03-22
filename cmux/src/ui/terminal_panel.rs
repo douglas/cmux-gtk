@@ -250,19 +250,25 @@ fn create_terminal_widget(
     overlay.upcast()
 }
 
-/// Create a browser panel with WebKitWebView.
+/// Create a browser panel with WebKitWebView (cached across layout rebuilds).
 fn create_browser_widget(
     panel: &Panel,
     is_attention_source: bool,
     state: &std::rc::Rc<crate::app::AppState>,
 ) -> gtk4::Widget {
-    super::browser_panel::create_browser_widget(
+    // Reuse cached browser widget if available (survives layout rebuilds).
+    if let Some(widget) = state.browser_cache.borrow().get(&panel.id) {
+        return widget.clone();
+    }
+    let widget = super::browser_panel::create_browser_widget(
         panel.id,
         panel.directory.as_deref(), // Reuse directory field as initial URL for browser panels
         is_attention_source,
         panel.pending_zoom,
         Some(state.shared.clone()),
-    )
+    );
+    state.browser_cache.borrow_mut().insert(panel.id, widget.clone());
+    widget
 }
 
 /// Create a markdown panel with WebView rendering.

@@ -14,6 +14,18 @@ use crate::settings;
 /// Number of suggestion rows shown in the dropdown.
 const MAX_SUGGESTIONS: usize = 8;
 
+/// Set the entry text without triggering the suggestion popover.
+/// Used by browser_panel's load-changed handler.
+pub fn set_url_quiet(entry: &gtk4::Entry, url: &str) {
+    unsafe { entry.set_data("cmux-suppress-suggestions", true) };
+    entry.set_text(url);
+    unsafe { entry.steal_data::<bool>("cmux-suppress-suggestions") };
+}
+
+fn is_externally_suppressed(entry: &gtk4::Entry) -> bool {
+    unsafe { entry.data::<bool>("cmux-suppress-suggestions") }.is_some()
+}
+
 /// Debounce delay for history queries (ms).
 const DEBOUNCE_MS: u64 = 120;
 
@@ -118,6 +130,12 @@ pub fn build_omnibar_full(
 
         entry.connect_changed(move |entry| {
             if suppress.get() {
+                return;
+            }
+            // Don't show suggestions when the entry text is updated
+            // programmatically (e.g. load-changed updating the URL bar).
+            // The external_suppress flag is set by set_url_quiet().
+            if is_externally_suppressed(entry) {
                 return;
             }
 
@@ -474,21 +492,24 @@ fn populate_suggestions(
                 Ok(results) if !results.is_empty() => {
                     let mut sug = state_suggestions.borrow_mut();
                     let insert_pos = sug.len().saturating_sub(1);
+                    let mut num_inserted = 0usize;
 
-                    for (i, text) in results.iter().take(5).enumerate() {
+                    for text in results.iter().take(5) {
                         let search_url = engine.search_url(text);
                         if sug.iter().any(|s| s.url == search_url) {
                             continue;
                         }
+                        let pos = (insert_pos + num_inserted).min(sug.len());
                         let row = build_search_suggestion_row(text);
-                        list_box.insert(&row, (insert_pos + i) as i32);
+                        list_box.insert(&row, pos as i32);
                         sug.insert(
-                            insert_pos + i,
+                            pos,
                             SuggestionItem {
                                 url: search_url,
                                 kind: SuggestionKind::SearchSuggestion,
                             },
                         );
+                        num_inserted += 1;
                     }
 
                     state_count.set(sug.len() as i32);

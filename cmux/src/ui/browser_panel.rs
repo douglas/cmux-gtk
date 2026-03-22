@@ -203,6 +203,16 @@ pub fn unregister_webview(panel_id: uuid::Uuid) {
     WEBVIEW_REGISTRY.with(|r| r.borrow_mut().remove(&panel_id));
 }
 
+/// Stop loading on all registered WebViews — call before shutdown to
+/// prevent WebProcess segfaults when active content is torn down.
+pub fn stop_all_webviews() {
+    WEBVIEW_REGISTRY.with(|r| {
+        for wv in r.borrow().values() {
+            wv.stop_loading();
+        }
+    });
+}
+
 /// Collect current zoom levels for all browser panels (for session snapshots).
 pub fn collect_webview_zoom_levels() -> HashMap<uuid::Uuid, f64> {
     WEBVIEW_REGISTRY.with(|r| {
@@ -1228,6 +1238,8 @@ pub fn create_browser_widget_with_profile(
         let shared_for_policy = shared.clone();
         let settings_for_policy = browser_settings.clone();
         web_view.connect_decide_policy(move |_wv, decision, decision_type| {
+            tracing::debug!(?decision_type, "decide_policy fired");
+
             // Response policy: convert non-displayable responses to downloads
             if decision_type == webkit6::PolicyDecisionType::Response {
                 if let Some(response_decision) =
@@ -1241,8 +1253,10 @@ pub fn create_browser_widget_with_profile(
                 return false;
             }
 
-            // Navigation action policy
-            if decision_type == webkit6::PolicyDecisionType::NavigationAction {
+            // New-window policy: intercept requests that would open a new
+            // browser window (e.g. target="_blank" redirects) and load them
+            // in the current WebView instead of the system browser.
+            if decision_type == webkit6::PolicyDecisionType::NewWindowAction {
                 if let Some(nav_decision) =
                     decision.downcast_ref::<webkit6::NavigationPolicyDecision>()
                 {
@@ -1250,78 +1264,130 @@ pub fn create_browser_widget_with_profile(
                         if let Some(request) = nav_action.request() {
                             if let Some(uri) = request.uri() {
                                 let url = uri.to_string();
+                                tracing::info!(%url, "decide_policy: NewWindowAction → loading in current view");
+                                decision.ignore();
+                                wv_policy.load_uri(&url);
+                                return true;
+                            }
+                        }
+                    }
+                }
+                decision.ignore();
+                return true;
+            }
 
-                                // Deep link / custom scheme handling (Gap 4):
-                                // hand off non-web schemes to xdg-open
-                                if let Some(scheme) = url.split("://").next().map(|s| s.to_lowercase()) {
-                                    if !matches!(
-                                        scheme.as_str(),
-                                        "http" | "https" | "file" | "about"
-                                            | "data" | "blob" | "javascript"
-                                    ) {
-                                        decision.ignore();
-                                        let _ = std::process::Command::new("xdg-open")
-                                            .arg(&url)
-                                            .spawn();
-                                        return true;
-                                    }
-                                }
+            // Navigation action policy
+            if decision_type == webkit6::PolicyDecisionType::NavigationAction {
+                if let Some(nav_decision) =
+                    decision.downcast_ref::<webkit6::NavigationPolicyDecision>()
+                {
+                    if let Some(nav_action) = nav_decision.navigation_action() {
+                        let nav_type = nav_action.navigation_type();
 
-                                // Insecure HTTP interstitial (Gap 2):
-                                // block http:// unless host is in allowlist
-                                if url.starts_with("http://") {
-                                    let host = extract_host(&url);
-                                    if !host.is_empty() {
-                                        let is_allowed = matches!(
-                                            host.as_str(),
-                                            "localhost"
-                                                | "127.0.0.1"
-                                                | "::1"
-                                                | "0.0.0.0"
-                                        ) || settings_for_policy
-                                            .http_allowlist
-                                            .iter()
-                                            .any(|pat| {
-                                                if let Some(suffix) =
-                                                    pat.strip_prefix("*.")
-                                                {
-                                                    host.ends_with(suffix)
-                                                        || host == suffix
-                                                } else {
-                                                    host == *pat
-                                                }
-                                            });
-                                        if !is_allowed {
+                        // Only apply custom policy to link clicks and "other"
+                        // navigations.  Reloads, back/forward, and form
+                        // submissions should always proceed normally.
+                        let needs_policy = matches!(
+                            nav_type,
+                            webkit6::NavigationType::LinkClicked
+                                | webkit6::NavigationType::Other
+                        );
+
+                        if let Some(request) = nav_action.request() {
+                            if let Some(uri) = request.uri() {
+                                tracing::info!(
+                                    url = %uri,
+                                    nav_type = ?nav_type,
+                                    needs_policy,
+                                    mouse_button = nav_action.mouse_button(),
+                                    "decide_policy: NavigationAction"
+                                );
+                            }
+                        }
+
+                        if needs_policy {
+                            if let Some(request) = nav_action.request() {
+                                if let Some(uri) = request.uri() {
+                                    let url = uri.to_string();
+
+                                    // Deep link / custom scheme → xdg-open
+                                    // Extract scheme: split on ":" (not "://")
+                                    // to handle both "https://..." and "about:blank".
+                                    if let Some(scheme) = url.split(':').next().map(|s| s.to_lowercase()) {
+                                        if !matches!(
+                                            scheme.as_str(),
+                                            "http" | "https" | "file"
+                                                | "about" | "data" | "blob"
+                                                | "javascript"
+                                        ) {
+                                            tracing::warn!(%url, %scheme, "decide_policy: deep link → xdg-open");
                                             decision.ignore();
-                                            let html =
-                                                insecure_http_interstitial(&url);
-                                            wv_policy
-                                                .load_html(&html, Some(&url));
+                                            let _ = std::process::Command::new("xdg-open")
+                                                .arg(&url)
+                                                .spawn();
                                             return true;
                                         }
                                     }
-                                }
 
-                                // Ctrl+click or middle-click → new tab (Gap 1)
-                                let mouse_button = nav_action.mouse_button();
-                                let modifiers = nav_action.modifiers();
-                                let ctrl_mask =
-                                    gdk4::ModifierType::CONTROL_MASK.bits();
-                                let is_ctrl_click =
-                                    (modifiers & ctrl_mask) != 0
-                                        && mouse_button == 1;
-                                let is_middle_click = mouse_button == 2;
+                                    // Insecure HTTP interstitial
+                                    if url.starts_with("http://") {
+                                        let host = extract_host(&url);
+                                        if !host.is_empty() {
+                                            let is_allowed = matches!(
+                                                host.as_str(),
+                                                "localhost"
+                                                    | "127.0.0.1"
+                                                    | "::1"
+                                                    | "0.0.0.0"
+                                            ) || settings_for_policy
+                                                .http_allowlist
+                                                .iter()
+                                                .any(|pat| {
+                                                    if let Some(suffix) =
+                                                        pat.strip_prefix("*.")
+                                                    {
+                                                        host.ends_with(suffix)
+                                                            || host == suffix
+                                                    } else {
+                                                        host == *pat
+                                                    }
+                                                });
+                                            if !is_allowed {
+                                                decision.ignore();
+                                                let html =
+                                                    insecure_http_interstitial(
+                                                        &url,
+                                                    );
+                                                wv_policy
+                                                    .load_html(&html, Some(&url));
+                                                return true;
+                                            }
+                                        }
+                                    }
 
-                                if is_ctrl_click || is_middle_click {
-                                    if let Some(ref shared) = shared_for_policy {
-                                        decision.ignore();
-                                        shared.send_ui_event(
-                                            crate::app::UiEvent::BrowserOpenInNewTab {
-                                                source_panel_id: panel_id,
-                                                url,
-                                            },
-                                        );
-                                        return true;
+                                    // Ctrl+click or middle-click → new tab
+                                    let mouse_button = nav_action.mouse_button();
+                                    let modifiers = nav_action.modifiers();
+                                    let ctrl_mask =
+                                        gdk4::ModifierType::CONTROL_MASK.bits();
+                                    let is_ctrl_click =
+                                        (modifiers & ctrl_mask) != 0
+                                            && mouse_button == 1;
+                                    let is_middle_click = mouse_button == 2;
+
+                                    if is_ctrl_click || is_middle_click {
+                                        if let Some(ref shared) =
+                                            shared_for_policy
+                                        {
+                                            decision.ignore();
+                                            shared.send_ui_event(
+                                                crate::app::UiEvent::BrowserOpenInNewTab {
+                                                    source_panel_id: panel_id,
+                                                    url,
+                                                },
+                                            );
+                                            return true;
+                                        }
                                     }
                                 }
                             }
@@ -1330,7 +1396,11 @@ pub fn create_browser_widget_with_profile(
                 }
             }
 
-            false
+            // Explicitly accept all navigations we didn't block above.
+            // Returning false would let WebKit GTK fall through to the
+            // system default handler (which opens Chrome/xdg-open).
+            decision.use_();
+            true
         });
     }
 
@@ -1436,28 +1506,60 @@ pub fn create_browser_widget_with_profile(
     }
 
     // ── Popup handling: window.open() / target="_blank" → open in new tab ──
+    //
+    // WebKit GTK opens the system browser when `create` returns None.
+    // To prevent this, we create a temporary off-screen WebView that
+    // absorbs the navigation, extract the URL, send it to our new-tab
+    // handler, and then destroy the temporary WebView.
     {
-        let wv = web_view.clone();
         let shared_for_create = shared.clone();
+        let network_session = web_view
+            .network_session()
+            .or_else(webkit6::NetworkSession::default);
         web_view.connect_create(move |_wv, nav_action| {
-            if let Some(request) = nav_action.request() {
-                if let Some(uri) = request.uri() {
-                    let url = uri.to_string();
-                    if let Some(ref shared) = shared_for_create {
-                        // Open in a new browser tab within the same pane
-                        shared.send_ui_event(
-                            crate::app::UiEvent::BrowserOpenInNewTab {
-                                source_panel_id: panel_id,
-                                url,
-                            },
-                        );
-                    } else {
-                        // Fallback: load in same WebView if no shared state
-                        wv.load_uri(&uri);
-                    }
+            // Extract URL before creating the related view — we'll handle
+            // it ourselves regardless.
+            let url = nav_action
+                .request()
+                .and_then(|r| r.uri())
+                .map(|u| u.to_string());
+
+            if let Some(url) = url.as_deref() {
+                tracing::info!(%url, "connect_create: intercepted popup → new tab");
+                if let Some(ref shared) = shared_for_create {
+                    shared.send_ui_event(
+                        crate::app::UiEvent::BrowserOpenInNewTab {
+                            source_panel_id: panel_id,
+                            url: url.to_string(),
+                        },
+                    );
                 }
             }
-            None::<gtk4::Widget>
+
+            // Return a temporary hidden WebView so WebKit doesn't fall
+            // through to the system browser.  It is never displayed;
+            // once WebKit finishes with it, GLib will drop the ref.
+            let mut builder = webkit6::WebView::builder();
+            if let Some(ref ns) = network_session {
+                builder = builder.network_session(ns);
+            }
+            let tmp = builder.build();
+            // Block ALL navigations in the temp view so it can't open
+            // the system browser via default decide_policy behavior.
+            tmp.connect_decide_policy(|_wv, decision, decision_type| {
+                tracing::warn!(
+                    ?decision_type,
+                    "TEMP WebView decide_policy → ignoring"
+                );
+                decision.ignore();
+                true
+            });
+            tmp.connect_create(|_wv, _nav| {
+                tracing::warn!("TEMP WebView connect_create → blocked");
+                None::<gtk4::Widget>
+            });
+            tmp.load_uri("about:blank");
+            Some(tmp.upcast::<gtk4::Widget>())
         });
     }
 
@@ -1515,6 +1617,7 @@ pub fn create_browser_widget_with_profile(
         let engine = browser_settings.search_engine;
         url_entry.connect_activate(move |entry| {
             let url = normalize_url(&entry.text(), engine);
+            tracing::info!(%url, "Browser URL bar: loading URI");
             wv.load_uri(&url);
         });
     }
@@ -1551,7 +1654,7 @@ pub fn create_browser_widget_with_profile(
             }
 
             if let Some(uri) = wv.uri() {
-                entry.set_text(&uri);
+                super::omnibar::set_url_quiet(&entry, &uri);
             }
         });
     }
@@ -1576,7 +1679,7 @@ pub fn create_browser_widget_with_profile(
         let entry = url_entry;
         web_view.connect_uri_notify(move |wv| {
             if let Some(uri) = wv.uri() {
-                entry.set_text(&uri);
+                super::omnibar::set_url_quiet(&entry, &uri);
             }
         });
     }

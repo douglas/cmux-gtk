@@ -205,6 +205,11 @@ pub fn create_window(
         window.connect_close_request(move |window| {
             let wid = uuid::Uuid::parse_str(&window.widget_name()).ok();
 
+            // Stop all browser WebViews to prevent WebProcess segfault
+            // during shutdown (active content like YouTube embeds can
+            // crash if torn down abruptly).
+            super::browser_panel::stop_all_webviews();
+
             // Clean up per-window state
             if let Some(ref wid) = wid {
                 state.shared.remove_ui_event_sender(wid);
@@ -279,15 +284,21 @@ pub fn create_window(
 /// solves it with a two-phase approach: orphan all surfaces first, then
 /// rebuild in an idle callback once GTK has fully processed the unparent.
 pub fn rebuild_content(content_box: &gtk4::Box, state: &Rc<AppState>) {
-    // Unparent cached GL surfaces first — they may be nested inside
-    // intermediate containers (Paned, Box) that we're about to remove.
-    // Doing this before removing content_box children avoids double-
-    // unrealize cascades on the GL surfaces.
+    // Unparent cached GL surfaces and browser widgets first — they may be
+    // nested inside intermediate containers (Paned, Box, Stack) that we're
+    // about to remove.  Doing this before removing content_box children
+    // avoids double-unrealize cascades on the GL surfaces and keeps WebViews
+    // alive across layout rebuilds.
     for surface in state.terminal_cache.borrow().values() {
         if let Some(parent) = surface.parent() {
             if let Ok(parent_box) = parent.downcast::<gtk4::Box>() {
                 parent_box.remove(surface);
             }
+        }
+    }
+    for browser_widget in state.browser_cache.borrow().values() {
+        if browser_widget.parent().is_some() {
+            browser_widget.unparent();
         }
     }
 
@@ -654,7 +665,8 @@ fn bind_shared_state_updates(
                             if let Some(ws) = tm.selected_mut() {
                                 let mut panel =
                                     crate::model::panel::Panel::new_browser();
-                                panel.browser_url = Some(url);
+                                panel.browser_url = Some(url.clone());
+                                panel.directory = Some(url);
                                 let panel_id = panel.id;
                                 ws.panels.insert(panel_id, panel);
                                 ws.layout.add_panel_to_pane(
@@ -671,6 +683,7 @@ fn bind_shared_state_updates(
                         // Check link routing — external patterns open in system browser
                         let settings = crate::settings::load();
                         if settings.link_routing.should_open_externally(&url) {
+                            tracing::warn!(%url, "OpenUrlInBrowser → launching in system browser");
                             let _ = gio::AppInfo::launch_default_for_uri(
                                 &url,
                                 gio::AppLaunchContext::NONE,
