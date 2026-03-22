@@ -203,6 +203,9 @@ pub struct BrowserSettings {
     pub home_url: String,
     /// Show remote search suggestions in the omnibar.
     pub search_suggestions: bool,
+    /// Hosts allowed to load over insecure HTTP without warning.
+    #[serde(default)]
+    pub http_allowlist: Vec<String>,
 }
 
 impl Default for BrowserSettings {
@@ -211,6 +214,7 @@ impl Default for BrowserSettings {
             search_engine: SearchEngine::DuckDuckGo,
             home_url: "https://duckduckgo.com".to_string(),
             search_suggestions: true,
+            http_allowlist: Vec::new(),
         }
     }
 }

@@ -94,15 +94,60 @@ pub fn create_sidebar(state: &Rc<AppState>) -> SidebarWidgets {
     scrolled.set_child(Some(&list_box));
     sidebar_box.append(&scrolled);
 
-    // Footer with version label
-    let footer = gtk4::Label::new(Some(&format!("cmux v{}", env!("CARGO_PKG_VERSION"))));
-    footer.add_css_class("dim-label");
-    footer.add_css_class("caption");
-    footer.set_margin_top(4);
-    footer.set_margin_bottom(4);
-    footer.set_halign(gtk4::Align::Center);
-    footer.set_opacity(0.5);
-    sidebar_box.append(&footer);
+    // Footer with help menu button
+    let footer_btn = gtk4::MenuButton::new();
+    footer_btn.set_label(&format!("cmux v{}", env!("CARGO_PKG_VERSION")));
+    footer_btn.add_css_class("flat");
+    footer_btn.add_css_class("dim-label");
+    footer_btn.add_css_class("caption");
+    footer_btn.set_margin_top(2);
+    footer_btn.set_margin_bottom(2);
+    footer_btn.set_halign(gtk4::Align::Center);
+    footer_btn.set_direction(gtk4::ArrowType::Up);
+
+    let help_popover = gtk4::Popover::new();
+    let help_box = gtk4::Box::new(gtk4::Orientation::Vertical, 4);
+    help_box.set_margin_start(8);
+    help_box.set_margin_end(8);
+    help_box.set_margin_top(8);
+    help_box.set_margin_bottom(8);
+
+    let welcome_btn = gtk4::Button::with_label("Welcome");
+    welcome_btn.add_css_class("flat");
+    {
+        let state = state.clone();
+        let help_popover = help_popover.clone();
+        welcome_btn.connect_clicked(move |_| {
+            help_popover.popdown();
+            state.shared.notify_ui_refresh();
+        });
+    }
+    help_box.append(&welcome_btn);
+
+    let shortcuts_btn = gtk4::Button::with_label("Keyboard Shortcuts");
+    shortcuts_btn.add_css_class("flat");
+    {
+        let state = state.clone();
+        let help_popover = help_popover.clone();
+        shortcuts_btn.connect_clicked(move |_| {
+            help_popover.popdown();
+            state.shared.send_ui_event(crate::app::UiEvent::OpenSettings);
+        });
+    }
+    help_box.append(&shortcuts_btn);
+
+    let version_label = gtk4::Label::new(Some(&format!(
+        "GTK4 + libadwaita\nGhostty terminal engine\nv{}",
+        env!("CARGO_PKG_VERSION")
+    )));
+    version_label.add_css_class("dim-label");
+    version_label.add_css_class("caption");
+    version_label.set_margin_top(4);
+    help_box.append(&version_label);
+
+    help_popover.set_child(Some(&help_box));
+    footer_btn.set_popover(Some(&help_popover));
+    sidebar_box.append(&footer_btn);
 
     SidebarWidgets {
         root: sidebar_box,

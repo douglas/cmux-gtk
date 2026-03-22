@@ -625,6 +625,7 @@ pub fn show_settings(parent: &adw::ApplicationWindow, on_close: impl Fn() + 'sta
                     search_engine: SearchEngine::from_index(engine_row.selected()),
                     home_url,
                     search_suggestions: suggestions_row.is_active(),
+                    http_allowlist: current_settings.browser.http_allowlist.clone(),
                 },
                 pane_attention_ring: attention_ring_row.is_active(),
                 pane_flash_enabled: flash_row.is_active(),

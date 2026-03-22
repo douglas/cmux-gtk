@@ -1283,6 +1283,17 @@ pub fn create_browser_widget_with_profile(
         });
     }
 
+    // ── Permission requests (camera, microphone, geolocation) ──
+    {
+        use webkit6::prelude::PermissionRequestExt;
+        web_view.connect_permission_request(|_wv, request| {
+            // Auto-allow camera/microphone for convenience (matches macOS behavior).
+            // Geolocation and other permission types are also allowed.
+            request.allow();
+            true
+        });
+    }
+
     // ── Favicon tracking ──
     {
         web_view.connect_favicon_notify(move |wv| {
