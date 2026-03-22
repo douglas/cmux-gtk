@@ -112,6 +112,44 @@ impl Default for ShortcutConfig {
             Keybinding::ctrl_shift("bracketright"),
         );
 
+        // Pane directional focus
+        bindings.insert(
+            "pane.focus_left".into(),
+            Keybinding {
+                key: "Left".to_string(),
+                ctrl: false,
+                shift: false,
+                alt: true,
+            },
+        );
+        bindings.insert(
+            "pane.focus_right".into(),
+            Keybinding {
+                key: "Right".to_string(),
+                ctrl: false,
+                shift: false,
+                alt: true,
+            },
+        );
+        bindings.insert(
+            "pane.focus_up".into(),
+            Keybinding {
+                key: "Up".to_string(),
+                ctrl: false,
+                shift: false,
+                alt: true,
+            },
+        );
+        bindings.insert(
+            "pane.focus_down".into(),
+            Keybinding {
+                key: "Down".to_string(),
+                ctrl: false,
+                shift: false,
+                alt: true,
+            },
+        );
+
         // UI toggles
         bindings.insert(
             "find".into(),

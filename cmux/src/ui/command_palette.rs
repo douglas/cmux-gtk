@@ -175,6 +175,10 @@ fn shortcut_for_action(
         "pane.split_vertical" => "pane.split_vertical",
         "pane.focus_next" => "pane.focus_next",
         "pane.focus_prev" => "pane.focus_prev",
+        "pane.focus_left" => "pane.focus_left",
+        "pane.focus_right" => "pane.focus_right",
+        "pane.focus_up" => "pane.focus_up",
+        "pane.focus_down" => "pane.focus_down",
         "settings.open" => "settings",
         "config.reload" => "config.reload",
         "notifications.toggle" => "notifications.toggle",
@@ -215,6 +219,10 @@ fn build_actions(state: &Rc<AppState>) -> Rc<Vec<PaletteAction>> {
         cmd("config.reload", "Reload Ghostty Config"),
         cmd("pane.focus_next", "Focus Next Pane"),
         cmd("pane.focus_prev", "Focus Previous Pane"),
+        cmd("pane.focus_left", "Focus Pane Left"),
+        cmd("pane.focus_right", "Focus Pane Right"),
+        cmd("pane.focus_up", "Focus Pane Up"),
+        cmd("pane.focus_down", "Focus Pane Down"),
         cmd("pane.last", "Focus Last Pane"),
         cmd("pane.break", "Break Pane to New Workspace"),
         cmd("pane.join", "Join Pane from Other Workspace"),
@@ -490,6 +498,23 @@ fn execute_action(name: &str, state: &Rc<AppState>, on_refresh: &Rc<dyn Fn()>) {
                 if let Some(current) = ws.focused_panel_id {
                     if let Some(prev) = ws.layout.prev_panel_id(current) {
                         ws.focus_panel(prev);
+                    }
+                }
+            }
+        }
+        name @ ("pane.focus_left" | "pane.focus_right"
+              | "pane.focus_up" | "pane.focus_down") => {
+            use crate::model::panel::Direction;
+            let dir = match name {
+                "pane.focus_left" => Direction::Left,
+                "pane.focus_right" => Direction::Right,
+                "pane.focus_up" => Direction::Up,
+                _ => Direction::Down,
+            };
+            if let Some(ws) = lock_or_recover(&state.shared.tab_manager).selected_mut() {
+                if let Some(current) = ws.focused_panel_id {
+                    if let Some(neighbor) = ws.layout.neighbor(current, dir) {
+                        ws.focus_panel(neighbor);
                     }
                 }
             }
