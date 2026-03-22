@@ -315,6 +315,7 @@ struct SuggestionItem {
 enum SuggestionKind {
     History,
     SwitchToTab,
+    SearchSuggestion,
     Search,
 }
 
@@ -449,6 +450,144 @@ fn populate_suggestions(
     } else {
         popover.popdown();
     }
+
+    // ── Async remote search suggestions ──
+    // Fetch in background, insert before the search fallback row when ready
+    if settings::load().browser.search_suggestions && trimmed.len() >= 2 {
+        let query = trimmed.to_string();
+
+        // Spawn thread for HTTP fetch only — no Rc/RefCell captured
+        let (tx, rx) = std::sync::mpsc::channel::<Vec<String>>();
+        std::thread::spawn(move || {
+            let results = fetch_search_suggestions(&query, engine);
+            let _ = tx.send(results);
+        });
+
+        // Poll for results on the GTK main thread
+        let list_box = list_box.clone();
+        let popover = popover.clone();
+        let entry = entry.clone();
+        let state_suggestions = state.suggestions.clone();
+        let state_count = state.suggestion_count.clone();
+        glib::timeout_add_local(std::time::Duration::from_millis(50), move || {
+            match rx.try_recv() {
+                Ok(results) if !results.is_empty() => {
+                    let mut sug = state_suggestions.borrow_mut();
+                    let insert_pos = sug.len().saturating_sub(1);
+
+                    for (i, text) in results.iter().take(5).enumerate() {
+                        let search_url = engine.search_url(text);
+                        if sug.iter().any(|s| s.url == search_url) {
+                            continue;
+                        }
+                        let row = build_search_suggestion_row(text);
+                        list_box.insert(&row, (insert_pos + i) as i32);
+                        sug.insert(
+                            insert_pos + i,
+                            SuggestionItem {
+                                url: search_url,
+                                kind: SuggestionKind::SearchSuggestion,
+                            },
+                        );
+                    }
+
+                    state_count.set(sug.len() as i32);
+                    let width = entry.allocated_width();
+                    if width > 0 {
+                        popover.set_size_request(width, -1);
+                    }
+                    glib::ControlFlow::Break
+                }
+                Err(std::sync::mpsc::TryRecvError::Empty) => glib::ControlFlow::Continue,
+                _ => glib::ControlFlow::Break,
+            }
+        });
+    }
+}
+
+/// Build a row for a remote search suggestion.
+fn build_search_suggestion_row(text: &str) -> gtk4::ListBoxRow {
+    let row_box = gtk4::Box::new(gtk4::Orientation::Horizontal, 6);
+    row_box.set_margin_start(6);
+    row_box.set_margin_end(6);
+    row_box.set_margin_top(3);
+    row_box.set_margin_bottom(3);
+
+    let icon = gtk4::Image::from_icon_name("system-search-symbolic");
+    icon.set_pixel_size(14);
+    icon.add_css_class("dim-label");
+    row_box.append(&icon);
+
+    let label = gtk4::Label::new(Some(text));
+    label.set_xalign(0.0);
+    label.set_ellipsize(gtk4::pango::EllipsizeMode::End);
+    row_box.append(&label);
+
+    let row = gtk4::ListBoxRow::new();
+    row.set_child(Some(&row_box));
+    row
+}
+
+/// Fetch search suggestions from the search engine's suggestion API.
+fn fetch_search_suggestions(
+    query: &str,
+    engine: settings::SearchEngine,
+) -> Vec<String> {
+    let url = match engine {
+        settings::SearchEngine::Google => format!(
+            "https://suggestqueries.google.com/complete/search?client=firefox&q={}",
+            urlencoded(query)
+        ),
+        settings::SearchEngine::DuckDuckGo => format!(
+            "https://duckduckgo.com/ac/?q={}&type=list",
+            urlencoded(query)
+        ),
+        settings::SearchEngine::Bing => format!(
+            "https://api.bing.com/osjson.aspx?query={}",
+            urlencoded(query)
+        ),
+        _ => return Vec::new(), // Kagi/Startpage don't have public suggestion APIs
+    };
+
+    // Simple HTTP GET using a child process (no HTTP crate dependency)
+    let output = std::process::Command::new("curl")
+        .args(["-s", "-m", "2", "--compressed", &url])
+        .output();
+
+    let body = match output {
+        Ok(out) if out.status.success() => String::from_utf8_lossy(&out.stdout).to_string(),
+        _ => return Vec::new(),
+    };
+
+    // Parse OpenSearch JSON: ["query", ["suggestion1", "suggestion2", ...]]
+    let parsed: Result<serde_json::Value, _> = serde_json::from_str(&body);
+    match parsed {
+        Ok(serde_json::Value::Array(arr)) if arr.len() >= 2 => {
+            if let Some(serde_json::Value::Array(suggestions)) = arr.get(1) {
+                suggestions
+                    .iter()
+                    .filter_map(|v| v.as_str().map(String::from))
+                    .take(5)
+                    .collect()
+            } else {
+                Vec::new()
+            }
+        }
+        _ => Vec::new(),
+    }
+}
+
+/// Percent-encode a query string for URL use.
+fn urlencoded(s: &str) -> String {
+    s.bytes()
+        .map(|b| match b {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+                format!("{}", b as char)
+            }
+            b' ' => "+".to_string(),
+            _ => format!("%{:02X}", b),
+        })
+        .collect()
 }
 
 fn build_suggestion_row(title: &str, url: &str) -> gtk4::ListBoxRow {

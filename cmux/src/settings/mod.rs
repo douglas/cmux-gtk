@@ -201,6 +201,8 @@ pub struct BrowserSettings {
     pub search_engine: SearchEngine,
     /// Home page URL (shown when clicking home button).
     pub home_url: String,
+    /// Show remote search suggestions in the omnibar.
+    pub search_suggestions: bool,
 }
 
 impl Default for BrowserSettings {
@@ -208,6 +210,7 @@ impl Default for BrowserSettings {
         Self {
             search_engine: SearchEngine::DuckDuckGo,
             home_url: "https://duckduckgo.com".to_string(),
+            search_suggestions: true,
         }
     }
 }

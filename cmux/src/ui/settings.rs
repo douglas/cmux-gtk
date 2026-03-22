@@ -284,6 +284,12 @@ pub fn show_settings(parent: &adw::ApplicationWindow, on_close: impl Fn() + 'sta
     home_row.set_text(&current_settings.browser.home_url);
     browser_group.add(&home_row);
 
+    let suggestions_row = adw::SwitchRow::new();
+    suggestions_row.set_title("Search Suggestions");
+    suggestions_row.set_subtitle("Show live search suggestions from the search engine");
+    suggestions_row.set_active(current_settings.browser.search_suggestions);
+    browser_group.add(&suggestions_row);
+
     browser_page.add(&browser_group);
     window.add(&browser_page);
 
@@ -539,6 +545,7 @@ pub fn show_settings(parent: &adw::ApplicationWindow, on_close: impl Fn() + 'sta
         let focus_style_row = focus_style_row.clone();
         let engine_row = engine_row.clone();
         let home_row = home_row.clone();
+        let suggestions_row = suggestions_row.clone();
         let shortcuts_state = shortcuts_state.clone();
         let sound_preset_row = sound_preset_row.clone();
         window.connect_close_request(move |_| {
@@ -617,6 +624,7 @@ pub fn show_settings(parent: &adw::ApplicationWindow, on_close: impl Fn() + 'sta
                 browser: BrowserSettings {
                     search_engine: SearchEngine::from_index(engine_row.selected()),
                     home_url,
+                    search_suggestions: suggestions_row.is_active(),
                 },
                 pane_attention_ring: attention_ring_row.is_active(),
                 pane_flash_enabled: flash_row.is_active(),
