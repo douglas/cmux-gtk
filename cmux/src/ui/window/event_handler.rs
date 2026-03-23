@@ -72,23 +72,27 @@ pub(super) fn bind_shared_state_updates(
                         }
                         if let Some(surface) = state.terminal_cache.borrow().get(&panel_id) {
                             let widget = surface.clone().upcast::<gtk4::Widget>();
-                            // Two-phase pulse: on → off → on → off
+                            // Two-phase pulse: on → off → on → off (with weak ref guards)
                             widget.add_css_class("flash-panel");
-                            let w = widget.clone();
+                            let weak1 = widget.downgrade();
                             glib::timeout_add_local_once(
                                 std::time::Duration::from_millis(200),
                                 move || {
+                                    let Some(w) = weak1.upgrade() else { return };
                                     w.remove_css_class("flash-panel");
-                                    let w2 = w.clone();
+                                    let weak2 = w.downgrade();
                                     glib::timeout_add_local_once(
                                         std::time::Duration::from_millis(150),
                                         move || {
-                                            w2.add_css_class("flash-panel");
-                                            let w3 = w2.clone();
+                                            let Some(w) = weak2.upgrade() else { return };
+                                            w.add_css_class("flash-panel");
+                                            let weak3 = w.downgrade();
                                             glib::timeout_add_local_once(
                                                 std::time::Duration::from_millis(200),
                                                 move || {
-                                                    w3.remove_css_class("flash-panel");
+                                                    if let Some(w) = weak3.upgrade() {
+                                                        w.remove_css_class("flash-panel");
+                                                    }
                                                 },
                                             );
                                         },

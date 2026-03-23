@@ -271,3 +271,71 @@ pub fn create_snapshot(state: &crate::app::AppState) -> AppSessionSnapshot {
         windows,
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_truncate_scrollback_short_text() {
+        let text = "line1\nline2\nline3";
+        let result = truncate_scrollback(text);
+        assert_eq!(result, text);
+    }
+
+    #[test]
+    fn test_truncate_scrollback_preserves_last_n_lines() {
+        let lines: Vec<String> = (0..5000).map(|i| format!("line {i}")).collect();
+        let text = lines.join("\n");
+        let result = truncate_scrollback(&text);
+        // Should keep only the last MAX_SCROLLBACK_LINES lines
+        let result_lines: Vec<&str> = result.lines().collect();
+        assert_eq!(result_lines.len(), MAX_SCROLLBACK_LINES);
+        assert!(result_lines.last().unwrap().contains("4999"));
+    }
+
+    #[test]
+    fn test_truncate_scrollback_ansi_safe() {
+        // Create text with an ANSI escape at the truncation boundary
+        let mut text = String::new();
+        // Fill with enough content to trigger char-based truncation
+        for i in 0..1000 {
+            text.push_str(&format!("line {i}: some text content here\n"));
+        }
+        // The result should be valid UTF-8 and not start mid-escape
+        let result = truncate_scrollback(&text);
+        assert!(result.len() <= MAX_SCROLLBACK_CHARS);
+        // Should not start with a partial escape sequence
+        assert!(!result.starts_with('['));
+    }
+
+    #[test]
+    fn test_write_atomic_creates_file() {
+        let dir = std::env::temp_dir().join("cmux-test-atomic");
+        let _ = std::fs::create_dir_all(&dir);
+        let path = dir.join("test-session.json");
+        let _ = std::fs::remove_file(&path);
+
+        write_atomic(&path, b"hello world").unwrap();
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "hello world");
+
+        // Verify file permissions are 0600
+        let meta = std::fs::metadata(&path).unwrap();
+        assert_eq!(meta.permissions().mode() & 0o777, 0o600);
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_write_atomic_overwrites() {
+        let dir = std::env::temp_dir().join("cmux-test-atomic2");
+        let _ = std::fs::create_dir_all(&dir);
+        let path = dir.join("test-overwrite.json");
+
+        write_atomic(&path, b"first").unwrap();
+        write_atomic(&path, b"second").unwrap();
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "second");
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+}

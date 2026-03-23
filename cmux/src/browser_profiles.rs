@@ -37,7 +37,7 @@ fn profiles_data_dir() -> PathBuf {
 
 /// Initialize the profile store. Creates a "Default" profile if none exist.
 pub fn init() {
-    let mut guard = STORE.lock().unwrap_or_else(|e| e.into_inner());
+    let mut guard = crate::app::lock_or_recover(&STORE);
     if guard.is_some() {
         return;
     }
@@ -71,7 +71,7 @@ fn save_store(store: &ProfileStore) {
 
 /// List all profiles.
 pub fn list() -> Vec<BrowserProfile> {
-    let guard = STORE.lock().unwrap_or_else(|e| e.into_inner());
+    let guard = crate::app::lock_or_recover(&STORE);
     guard
         .as_ref()
         .map(|s| s.profiles.clone())
@@ -80,7 +80,7 @@ pub fn list() -> Vec<BrowserProfile> {
 
 /// Get the default profile name.
 pub fn default_profile_name() -> String {
-    let guard = STORE.lock().unwrap_or_else(|e| e.into_inner());
+    let guard = crate::app::lock_or_recover(&STORE);
     guard
         .as_ref()
         .and_then(|s| s.profiles.iter().find(|p| p.is_default))
@@ -91,7 +91,7 @@ pub fn default_profile_name() -> String {
 /// Create a new profile. Returns false if name already exists.
 #[allow(dead_code)]
 pub fn create(name: &str) -> bool {
-    let mut guard = STORE.lock().unwrap_or_else(|e| e.into_inner());
+    let mut guard = crate::app::lock_or_recover(&STORE);
     let store = guard.get_or_insert_with(ProfileStore::default);
 
     if store.profiles.iter().any(|p| p.name == name) {
@@ -109,7 +109,7 @@ pub fn create(name: &str) -> bool {
 /// Rename a profile. Returns false if old name not found or new name already exists.
 #[allow(dead_code)]
 pub fn rename(old_name: &str, new_name: &str) -> bool {
-    let mut guard = STORE.lock().unwrap_or_else(|e| e.into_inner());
+    let mut guard = crate::app::lock_or_recover(&STORE);
     let store = guard.get_or_insert_with(ProfileStore::default);
 
     if store.profiles.iter().any(|p| p.name == new_name) {
@@ -135,7 +135,7 @@ pub fn rename(old_name: &str, new_name: &str) -> bool {
 /// Delete a profile. Cannot delete the default profile.
 #[allow(dead_code)]
 pub fn delete(name: &str) -> bool {
-    let mut guard = STORE.lock().unwrap_or_else(|e| e.into_inner());
+    let mut guard = crate::app::lock_or_recover(&STORE);
     let store = guard.get_or_insert_with(ProfileStore::default);
 
     let idx = store.profiles.iter().position(|p| p.name == name);
@@ -161,7 +161,7 @@ pub fn delete(name: &str) -> bool {
 /// Set which profile is the default.
 #[allow(dead_code)]
 pub fn set_default(name: &str) -> bool {
-    let mut guard = STORE.lock().unwrap_or_else(|e| e.into_inner());
+    let mut guard = crate::app::lock_or_recover(&STORE);
     let store = guard.get_or_insert_with(ProfileStore::default);
 
     if !store.profiles.iter().any(|p| p.name == name) {

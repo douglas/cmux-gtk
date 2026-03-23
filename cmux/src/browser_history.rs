@@ -136,7 +136,7 @@ impl BrowserHistoryStore {
 
 /// Initialize the global store (loads from disk). Call once at startup.
 pub fn init() {
-    let mut guard = STORE.lock().unwrap_or_else(|e| e.into_inner());
+    let mut guard = crate::app::lock_or_recover(&STORE);
     if guard.is_none() {
         *guard = Some(BrowserHistoryStore::load_from_disk());
     }
@@ -149,7 +149,7 @@ pub fn record_visit(url: &str, title: &str) {
         return;
     }
 
-    let mut guard = STORE.lock().unwrap_or_else(|e| e.into_inner());
+    let mut guard = crate::app::lock_or_recover(&STORE);
     let store = guard.get_or_insert_with(BrowserHistoryStore::load_from_disk);
 
     let now = now_secs();
@@ -179,7 +179,7 @@ pub fn record_visit(url: &str, title: &str) {
 
 /// Search history entries matching a query string. Returns results sorted by frecency (descending).
 pub fn search(query: &str, limit: usize) -> Vec<HistoryEntry> {
-    let guard = STORE.lock().unwrap_or_else(|e| e.into_inner());
+    let guard = crate::app::lock_or_recover(&STORE);
     let Some(store) = guard.as_ref() else {
         return Vec::new();
     };
@@ -230,7 +230,7 @@ pub fn search(query: &str, limit: usize) -> Vec<HistoryEntry> {
 
 /// Flush dirty entries to disk. Call periodically or on shutdown.
 pub fn flush() {
-    let mut guard = STORE.lock().unwrap_or_else(|e| e.into_inner());
+    let mut guard = crate::app::lock_or_recover(&STORE);
     if let Some(store) = guard.as_mut() {
         store.flush();
     }
@@ -239,7 +239,7 @@ pub fn flush() {
 /// Total number of history entries.
 #[allow(dead_code)]
 pub fn entry_count() -> usize {
-    let guard = STORE.lock().unwrap_or_else(|e| e.into_inner());
+    let guard = crate::app::lock_or_recover(&STORE);
     guard.as_ref().map(|s| s.entries.len()).unwrap_or(0)
 }
 
