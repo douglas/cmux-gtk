@@ -1,5 +1,33 @@
 # Changelog
 
+## [0.62.0-alpha.2] - 2026-03-23
+
+### Changed
+
+- Browser permissions (camera, microphone, geolocation) are now denied by default instead of auto-allowed
+
+### Fixed
+
+- Fix self-deadlock when opening sidebar context menu with multiple windows (caused socket commands to hang permanently)
+- Fix stale socket preventing app restart after crash — PID lockfile detects dead processes automatically
+- CLI retries transient connection failures (EAGAIN, ECONNREFUSED) with backoff instead of failing immediately
+- Fix HTTP allowlist wildcard matching — `*.example.com` no longer incorrectly matches `notexample.com`
+- Fix search URL parameter injection — special characters (`&`, `#`) now properly percent-encoded
+- Prevent shell injection in SSH workspace creation and notification custom commands
+- Prevent XSS in HTTP insecurity interstitial via single-quote escaping
+- Prevent download filename path traversal via absolute paths
+- Prevent browser profile name path traversal in create/rename/delete
+- Browser eval and action-with-reply commands now time out after 30 seconds instead of hanging indefinitely
+- Scrollback temp files moved to `~/.cache/cmux/scrollback/` with restrictive permissions (0o600) and symlink protection
+- Browser history file written with 0o600 permissions (no longer world-readable)
+- WebKit profile data/cache directories set to 0o700 permissions
+- XDG_RUNTIME_DIR validation no longer follows symlinks
+- Socket handler inputs hardened: ports array capped, TTY/directory strings truncated, priority cast uses safe conversion
+- Console messages truncated to 64KB per entry, browser history capped to 50,000 entries on load
+- URLs passed to xdg-open sanitized (control characters stripped, length capped)
+- Weak HMAC in relay auth replaced with openssl HMAC-SHA256 (fail-closed)
+- Remote module shell injection prevented at 5 sites via shell-escape
+
 ## [0.62.0-alpha.1] - 2026-03-22
 
 First public release of cmux-gtk — the Linux port of cmux, a terminal multiplexer for AI coding agents. Built with Rust, GTK4/libadwaita, and Ghostty.
