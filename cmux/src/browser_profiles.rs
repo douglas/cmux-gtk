@@ -151,9 +151,13 @@ pub fn rename(old_name: &str, new_name: &str) -> bool {
     }
 }
 
-/// Delete a profile. Cannot delete the default profile.
+/// Delete a profile. Cannot delete the default profile or invalid names.
 #[allow(dead_code)]
 pub fn delete(name: &str) -> bool {
+    if !is_valid_profile_name(name) {
+        return false;
+    }
+
     let mut guard = crate::app::lock_or_recover(&STORE);
     let store = guard.get_or_insert_with(ProfileStore::default);
 
