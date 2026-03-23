@@ -21,11 +21,11 @@ cargo build --release # Release build
 ## Features
 
 - **Terminal multiplexer** — workspaces, split panes, tab management, directional focus
-- **Integrated browser** — WebKit6 panels with 100+ automation commands (Playwright-style API)
+- **Integrated browser** — WebKit6 panels with 120+ automation commands (Playwright-style API)
 - **Shell integration** — auto-injected via ZDOTDIR/BASH_ENV; CWD, git branch, PR polling, semantic prompts
 - **Remote SSH workspaces** — `cmux ssh user@host` with auto-bootstrap daemon, SOCKS5 proxy tunnel for browser traffic, CLI relay for remote cmux commands, sidebar connection indicators
 - **Session persistence** — scrollback, geometry, zoom, URLs, browser back/forward history restored on restart
-- **Socket API** — V1 text (95+ commands) + V2 JSON protocol (180+ methods) for automation
+- **Socket API** — V1 text (60 commands) + V2 JSON-RPC protocol (210+ methods) for automation
 - **CLI wrapper** — `cmux/bin/cmux` shell script for quick socket interaction
 - **Claude Code wrapper** — `cmux/bin/claude` injects hooks for status/notifications in sidebar
 - **URL routing** — `cmux/bin/xdg-open` intercepts HTTP(S) URLs to cmux in-app browser
@@ -90,9 +90,9 @@ Features: CWD reporting, fast git HEAD resolution (no fork), async git branch de
 
 Unix socket at `$XDG_RUNTIME_DIR/cmux.sock` (falls back to `/tmp/cmux-$UID.sock`).
 
-**V1 text protocol** — 95+ line-delimited text commands for shell integration and CLI use.
-**V2 JSON protocol** — 180+ JSON-RPC methods for programmatic automation.
-**Browser automation** — 100+ `browser.*` commands (Playwright-style API).
+**V1 text protocol** — 60 line-delimited text commands for shell integration and CLI use.
+**V2 JSON-RPC protocol** — 210+ methods for programmatic automation.
+**Browser automation** — 120+ `browser.*` commands (Playwright-style API).
 
 Use the CLI wrapper: `cmux/bin/cmux <command> [args...]`
 

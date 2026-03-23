@@ -9,7 +9,7 @@
     <p>
       cmux-gtk is a GTK4/libadwaita terminal multiplexer built with Rust and
       Ghostty. It combines terminal workspaces, an integrated WebKit browser
-      with 100+ automation commands, and a rich socket API for AI agent control.
+      with 120+ automation commands, and a rich socket API for AI agent control.
     </p>
     <p>Features include:</p>
     <ul>
@@ -19,7 +19,7 @@
       <li>Remote SSH workspaces with auto-bootstrap and SOCKS5 proxy</li>
       <li>Session persistence (scrollback, geometry, browser history)</li>
       <li>Command palette with 50+ commands and fuzzy search</li>
-      <li>V1 text and V2 JSON-RPC socket protocols (210+ methods)</li>
+      <li>V1 text (60 commands) and V2 JSON-RPC (210+ methods) socket protocols</li>
     </ul>
   </description>
   <url type="homepage">https://github.com/douglas/cmux-gtk</url>

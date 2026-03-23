@@ -7,7 +7,7 @@ First public release of cmux-gtk — the Linux port of cmux, a terminal multiple
 ### Added
 
 - **Terminal multiplexer** — workspaces, split panes (horizontal/vertical), tabbed surfaces, directional focus (Alt+Arrow), pane zoom, drag-and-drop reordering
-- **Integrated browser** — WebKit6 panels with 100+ automation commands (Playwright-style API: click, fill, type, find, wait, snapshot, eval, cookies, storage, network interception)
+- **Integrated browser** — WebKit6 panels with 120+ automation commands (Playwright-style API: click, fill, type, find, wait, snapshot, eval, cookies, storage, network interception)
 - **Shell integration** — auto-injected for zsh and bash; reports CWD, git branch, PR status, listening ports, and semantic prompt markers
 - **Remote SSH workspaces** — `cmux ssh user@host` with auto-bootstrap daemon, SOCKS5 proxy tunnel for browser traffic, CLI relay, sidebar connection indicators
 - **Session persistence** — terminal scrollback, window geometry, pane layout, browser URLs and back/forward history all restored on restart
