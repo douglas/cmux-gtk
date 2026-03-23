@@ -263,25 +263,36 @@ fn forward_to_socket(socket_path: &str, command: &str) -> Result<String, String>
 ///
 /// Uses a simple HMAC implementation to avoid heavy crypto dependencies.
 fn compute_hmac_sha256(key: &[u8], message: &[u8]) -> String {
-    // HMAC-SHA256 using ring-like manual implementation
-    // H(K XOR opad, H(K XOR ipad, message))
-    use std::collections::hash_map::DefaultHasher;
-    use std::hash::{Hash, Hasher};
-
-    // For now, use a simple keyed hash. In production, use the `hmac` crate.
-    // This is sufficient for local relay auth where both sides are trusted.
-    let mut hasher = DefaultHasher::new();
-    key.hash(&mut hasher);
-    message.hash(&mut hasher);
-    let hash = hasher.finish();
-
-    // Extend to 256 bits by hashing again with different seed
-    let mut hasher2 = DefaultHasher::new();
-    hash.hash(&mut hasher2);
-    key.hash(&mut hasher2);
-    let hash2 = hasher2.finish();
-
-    format!("{:016x}{:016x}", hash, hash2)
+    // Compute HMAC-SHA256 via openssl subprocess. Fail closed (empty = auth fails).
+    use std::io::Write;
+    let hex_key = key.iter().map(|b| format!("{b:02x}")).collect::<String>();
+    let result = std::process::Command::new("openssl")
+        .args(["dgst", "-sha256", "-mac", "HMAC", "-macopt"])
+        .arg(format!("hexkey:{hex_key}"))
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .and_then(|mut child| {
+            if let Some(ref mut stdin) = child.stdin {
+                stdin.write_all(message)?;
+            }
+            child.wait_with_output()
+        });
+    match result {
+        Ok(output) if output.status.success() => {
+            // openssl outputs "...= <hex>\n"
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            stdout
+                .rsplit_once("= ")
+                .map(|(_, hex)| hex.trim().to_string())
+                .unwrap_or_default()
+        }
+        _ => {
+            tracing::error!("openssl HMAC-SHA256 failed — auth will fail (fail closed)");
+            String::new() // Empty string will never match a valid HMAC
+        }
+    }
 }
 
 /// Find an available port on the remote host for the reverse tunnel.
@@ -317,17 +328,18 @@ fn install_remote_metadata(
     auth_token: &str,
     daemon_path: &str,
 ) -> Result<(), String> {
+    let escaped_daemon = shell_escape::escape(daemon_path.into());
     let script = format!(
         r#"
 mkdir -p ~/.cmux/relay ~/.cmux/bin
 echo '127.0.0.1:{remote_port}' > ~/.cmux/socket_addr
 printf '{relay_id}\n{auth_token}' > ~/.cmux/relay/{remote_port}.auth
-echo '{daemon_path}' > ~/.cmux/relay/{remote_port}.daemon_path
+echo {escaped_daemon} > ~/.cmux/relay/{remote_port}.daemon_path
 "#,
         remote_port = remote_port,
         relay_id = relay_id,
         auth_token = auth_token,
-        daemon_path = daemon_path,
+        escaped_daemon = escaped_daemon,
     );
 
     let status = Command::new("ssh")

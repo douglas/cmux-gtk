@@ -125,10 +125,16 @@ pub(super) fn handle_notification_create(
 fn play_notification_sound(settings: &crate::settings::NotificationSettings) {
     // Use custom command if set, otherwise fall back to paplay with a freedesktop sound
     if let Some(ref cmd) = settings.custom_command {
-        let cmd = cmd.clone();
+        // Split into program + args to avoid shell injection (no sh -c).
+        let parts: Vec<&str> = cmd.split_whitespace().collect();
+        if parts.is_empty() {
+            return;
+        }
+        let program = parts[0].to_string();
+        let args: Vec<String> = parts[1..].iter().map(|s| s.to_string()).collect();
         std::thread::spawn(move || {
-            let _ = std::process::Command::new("sh")
-                .args(["-c", &cmd])
+            let _ = std::process::Command::new(&program)
+                .args(&args)
                 .stdout(std::process::Stdio::null())
                 .stderr(std::process::Stdio::null())
                 .status();

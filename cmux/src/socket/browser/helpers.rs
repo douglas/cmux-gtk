@@ -9,6 +9,14 @@ use crate::ui::browser_panel::BrowserActionKind;
 
 use super::Response;
 
+/// Maximum length for user-supplied text in browser commands (1 MB).
+pub(super) const MAX_BROWSER_INPUT_LEN: usize = 1024 * 1024;
+
+/// Truncate a browser input string to prevent memory exhaustion.
+pub(super) fn truncate_browser_input(s: &str) -> &str {
+    crate::model::workspace::truncate_str(s, MAX_BROWSER_INPUT_LEN)
+}
+
 /// JSON-encode a value for embedding in JavaScript. Infallible for types
 /// that are always representable as JSON (strings, numbers, bools).
 pub(crate) fn js<T: serde::Serialize + ?Sized>(v: &T) -> String {

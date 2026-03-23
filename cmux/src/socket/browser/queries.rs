@@ -693,6 +693,7 @@ pub(super) fn handle_inject_script(
     let Some(script) = params.get("script").and_then(|v| v.as_str()) else {
         return Response::error(id, "invalid_params", "Provide 'script'");
     };
+    let script = truncate_browser_input(script);
     let panel_id = match require_panel_id(&id, params) {
         Ok(v) => v,
         Err(e) => return e,
@@ -710,6 +711,7 @@ pub(super) fn handle_inject_style(id: Value, params: &Value, state: &Arc<SharedS
     let Some(css) = params.get("css").and_then(|v| v.as_str()) else {
         return Response::error(id, "invalid_params", "Provide 'css'");
     };
+    let css = truncate_browser_input(css);
     let panel_id = match require_panel_id(&id, params) {
         Ok(v) => v,
         Err(e) => return e,

@@ -238,17 +238,23 @@ pub(super) fn panel_id_for_webview(wv: &webkit6::WebView) -> Option<uuid::Uuid> 
 }
 
 /// Pick a unique download path in `dir`, appending " (1)", " (2)", etc. if needed.
+/// Sanitizes the filename to prevent path traversal (absolute paths, `..` components).
 pub(super) fn unique_download_path(dir: &Path, filename: &str) -> std::path::PathBuf {
-    let path = dir.join(filename);
+    // Extract just the filename component to prevent path traversal
+    let safe_filename = Path::new(filename)
+        .file_name()
+        .unwrap_or_else(|| std::ffi::OsStr::new("download"));
+    let filename = safe_filename.to_string_lossy();
+    let path = dir.join(safe_filename);
     if !path.exists() {
         return path;
     }
-    let stem = Path::new(filename)
+    let stem = Path::new(filename.as_ref())
         .file_stem()
         .unwrap_or_default()
         .to_string_lossy()
         .to_string();
-    let ext = Path::new(filename)
+    let ext = Path::new(filename.as_ref())
         .extension()
         .map(|e| format!(".{}", e.to_string_lossy()))
         .unwrap_or_default();

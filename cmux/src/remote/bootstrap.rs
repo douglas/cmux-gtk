@@ -68,7 +68,10 @@ pub fn check_remote_binary(ssh_args: &[String], remote_path: &str) -> bool {
     let output = Command::new("ssh")
         .args(["-T", "-S", "none", "-o", "ConnectTimeout=6"])
         .args(ssh_args)
-        .arg(format!("test -x {} && echo OK", remote_path))
+        .arg(format!(
+            "test -x {} && echo OK",
+            shell_escape::escape(remote_path.into())
+        ))
         .output();
 
     match output {
@@ -125,7 +128,7 @@ pub fn upload_daemon(
     let mkdir_status = Command::new("ssh")
         .args(["-T", "-S", "none", "-o", "ConnectTimeout=6"])
         .args(ssh_args)
-        .arg(format!("mkdir -p {}", dir))
+        .arg(format!("mkdir -p {}", shell_escape::escape(dir.into())))
         .status()
         .map_err(|e| format!("Failed to create remote directory: {}", e))?;
 
@@ -176,7 +179,10 @@ pub fn upload_daemon(
     let chmod_status = Command::new("ssh")
         .args(["-T", "-S", "none", "-o", "ConnectTimeout=6"])
         .args(ssh_args)
-        .arg(format!("chmod +x {}", remote_path))
+        .arg(format!(
+            "chmod +x {}",
+            shell_escape::escape(remote_path.into())
+        ))
         .status()
         .map_err(|e| format!("chmod failed: {}", e))?;
 

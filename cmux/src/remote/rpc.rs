@@ -83,7 +83,10 @@ impl RemoteRpcClient {
                 "StrictHostKeyChecking=accept-new",
             ])
             .args(ssh_args)
-            .arg(format!("sh -c 'exec {} serve --stdio'", remote_daemon_path))
+            .arg(format!(
+                "sh -c 'exec {} serve --stdio'",
+                shell_escape::escape(remote_daemon_path.into())
+            ))
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::null());

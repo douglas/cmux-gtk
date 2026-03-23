@@ -38,7 +38,8 @@ pub(super) fn insecure_http_interstitial(url: &str) -> String {
         .replace('&', "&amp;")
         .replace('<', "&lt;")
         .replace('>', "&gt;")
-        .replace('"', "&quot;");
+        .replace('"', "&quot;")
+        .replace('\'', "&#39;");
     format!(
         r#"<!DOCTYPE html>
 <html><head><meta charset="utf-8">

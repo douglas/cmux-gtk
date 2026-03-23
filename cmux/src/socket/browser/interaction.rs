@@ -66,6 +66,7 @@ pub(super) fn handle_type(id: Value, params: &Value, state: &Arc<SharedState>) -
     let Some(text) = params.get("text").and_then(|v| v.as_str()) else {
         return Response::error(id, "invalid_params", "Provide 'text'");
     };
+    let text = truncate_browser_input(text);
     let js = format!(
         r#"(function(){{ var el = document.querySelector({sel}); if(!el) return 'ERROR:not_found'; el.focus(); var text = {text}; for(var i=0;i<text.length;i++){{ var ch=text[i]; el.dispatchEvent(new KeyboardEvent('keydown',{{key:ch,bubbles:true}})); el.dispatchEvent(new KeyboardEvent('keypress',{{key:ch,bubbles:true}})); if(el.value!==undefined) el.value+=ch; el.dispatchEvent(new KeyboardEvent('keyup',{{key:ch,bubbles:true}})); }} el.dispatchEvent(new Event('input',{{bubbles:true}})); return 'ok'; }})()"#,
         sel = js(&selector),
@@ -82,6 +83,7 @@ pub(super) fn handle_fill(id: Value, params: &Value, state: &Arc<SharedState>) -
     let Some(value) = params.get("value").and_then(|v| v.as_str()) else {
         return Response::error(id, "invalid_params", "Provide 'value'");
     };
+    let value = truncate_browser_input(value);
     let js = format!(
         r#"(function(){{ var el = document.querySelector({sel}); if(!el) return 'ERROR:not_found'; el.focus(); el.value = {val}; el.dispatchEvent(new Event('input',{{bubbles:true}})); el.dispatchEvent(new Event('change',{{bubbles:true}})); return 'ok'; }})()"#,
         sel = js(&selector),

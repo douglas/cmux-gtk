@@ -148,15 +148,15 @@ pub(super) fn handle_workspace_create_ssh(
         .and_then(|v| v.as_str())
         .map(String::from);
 
-    // Build SSH command
+    // Build SSH command (shell-escape user-supplied values to prevent injection)
     let mut ssh_cmd = "ssh".to_string();
     if let Some(p) = port {
         ssh_cmd += &format!(" -p {}", p);
     }
     if let Some(ref i) = identity {
-        ssh_cmd += &format!(" -i {}", i);
+        ssh_cmd += &format!(" -i {}", shell_escape::escape(i.into()));
     }
-    ssh_cmd += &format!(" {}", destination);
+    ssh_cmd += &format!(" {}", shell_escape::escape(destination.into()));
 
     // Build remote config
     let remote_config = crate::remote::session::RemoteConfig {

@@ -32,3 +32,4 @@ libc = "0.2"
 base64 = "0.22"
 webkit6 = { workspace = true }
 pulldown-cmark = { workspace = true }
+shell-escape = "0.1.5"

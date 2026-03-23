@@ -47,6 +47,18 @@ pub fn load_session() -> anyhow::Result<Option<AppSessionSnapshot>> {
         return Ok(None);
     }
 
+    // Warn if session file has overly permissive permissions
+    if let Ok(meta) = std::fs::metadata(&path) {
+        let mode = meta.permissions().mode() & 0o777;
+        if mode & 0o077 != 0 {
+            tracing::warn!(
+                "Session file {} has permissions {:o} (expected 600) — may be world-readable",
+                path.display(),
+                mode
+            );
+        }
+    }
+
     let json = std::fs::read_to_string(&path)?;
     let snapshot: AppSessionSnapshot = match serde_json::from_str(&json) {
         Ok(snapshot) => snapshot,
