@@ -176,7 +176,13 @@ pub fn refresh_sidebar(list_box: &gtk4::ListBox, state: &Rc<AppState>) {
             .enumerate()
             .map(|(index, workspace)| {
                 let row = create_workspace_row(workspace, index, &sidebar_settings);
-                setup_row_context_menu(&row, index, workspace.is_pinned, state);
+                setup_row_context_menu(
+                    &row,
+                    index,
+                    workspace.is_pinned,
+                    workspace.window_id,
+                    state,
+                );
                 setup_row_close_button(&row, index, state);
                 row
             })
@@ -661,6 +667,7 @@ fn setup_row_context_menu(
     row: &gtk4::ListBoxRow,
     index: usize,
     is_pinned: bool,
+    window_id: Option<uuid::Uuid>,
     state: &Rc<AppState>,
 ) {
     let menu = gtk4::gio::Menu::new();
@@ -728,12 +735,8 @@ fn setup_row_context_menu(
         .collect();
     if window_ids.len() > 1 {
         let window_menu = gtk4::gio::Menu::new();
-        let current_window_id = {
-            let tm = lock_or_recover(&state.shared.tab_manager);
-            tm.get(index).and_then(|ws| ws.window_id)
-        };
         for (i, wid) in window_ids.iter().enumerate() {
-            let is_current = current_window_id == Some(*wid);
+            let is_current = window_id == Some(*wid);
             let label = if is_current {
                 format!("Window {} (current)", i + 1)
             } else {

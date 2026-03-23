@@ -558,15 +558,15 @@ fn restore_session(state: &Rc<AppState>) -> Vec<Uuid> {
         );
     }
 
-    let mut tab_manager = lock_or_recover(&state.shared.tab_manager);
-    *tab_manager = TabManager::empty();
-
-    // Restore each window's workspaces and geometry
+    // Build restored TabManager outside the lock to avoid blocking socket
+    // handlers that need to read workspace state during startup.
+    let mut restored_tm = TabManager::empty();
     let mut window_ids: Vec<Uuid> = Vec::new();
+
     for window_snapshot in &live_windows {
         let window_id = Uuid::new_v4();
 
-        // Restore window geometry
+        // Restore window geometry (separate lock, brief)
         if let Some(frame) = &window_snapshot.frame {
             let w = frame.width as i32;
             let h = frame.height as i32;
@@ -637,17 +637,21 @@ fn restore_session(state: &Rc<AppState>) -> Vec<Uuid> {
             workspace.layout = layout;
             workspace.panels = panels;
             workspace.focused_panel_id = ws_snapshot.focused_panel_id;
-            tab_manager.add_workspace(workspace);
+            restored_tm.add_workspace(workspace);
         }
     }
 
     tracing::info!(
         "Restored {} workspaces across {} windows from session",
-        tab_manager.len(),
+        restored_tm.len(),
         window_ids.len(),
     );
 
+    // Swap into shared state — lock held only for the assignment
+    let mut tab_manager = lock_or_recover(&state.shared.tab_manager);
+    *tab_manager = restored_tm;
     drop(tab_manager);
+
     window_ids
 }
 

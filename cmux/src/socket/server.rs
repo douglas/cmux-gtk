@@ -226,6 +226,7 @@ async fn handle_client(
         }
 
         // Dispatch: detect V1 (plain text) vs V2 (JSON) protocol
+        tracing::debug!("Dispatching request ({} bytes)", trimmed.len());
         let state_clone = state.clone();
         let trimmed_owned = trimmed.to_string();
         if super::v1::is_v1(&trimmed_owned) {
