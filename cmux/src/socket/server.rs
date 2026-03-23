@@ -62,6 +62,7 @@ pub async fn run_socket_server(state: Arc<SharedState>) -> anyhow::Result<()> {
     }
 
     let path = socket_path();
+    let pid_path = format!("{}.pid", path);
 
     // Check if an existing socket is live before removing
     let socket_path = std::path::Path::new(&path);
@@ -69,11 +70,15 @@ pub async fn run_socket_server(state: Arc<SharedState>) -> anyhow::Result<()> {
         // Only remove if it's actually a Unix socket, not a regular file
         let metadata = std::fs::symlink_metadata(socket_path)?;
         if metadata.file_type().is_socket() {
-            if std::os::unix::net::UnixStream::connect(&path).is_ok() {
+            // Check PID lockfile first — faster and more reliable than connect()
+            let stale = is_stale_socket(&pid_path);
+            if !stale && std::os::unix::net::UnixStream::connect(&path).is_ok() {
                 anyhow::bail!("Another cmux instance is already running on {}", path);
             }
             // Socket is stale — safe to remove
+            tracing::info!("Removing stale socket at {}", path);
             let _ = std::fs::remove_file(&path);
+            let _ = std::fs::remove_file(&pid_path);
         } else {
             anyhow::bail!(
                 "Path {} exists but is not a socket — refusing to overwrite",
@@ -81,6 +86,10 @@ pub async fn run_socket_server(state: Arc<SharedState>) -> anyhow::Result<()> {
             );
         }
     }
+
+    // Write PID lockfile so future instances can detect stale sockets
+    // without a potentially-blocking connect().
+    write_pid_file(&pid_path);
 
     // Restrict socket permissions: set umask before bind so the socket is
     // created with 0o600 from the start, then restore the original umask.
@@ -245,7 +254,41 @@ async fn handle_client(
     Ok(())
 }
 
-/// Clean up the socket file on shutdown.
+/// Clean up the socket and PID files on shutdown.
 pub fn cleanup() {
-    let _ = std::fs::remove_file(socket_path());
+    let path = socket_path();
+    let _ = std::fs::remove_file(&path);
+    let _ = std::fs::remove_file(format!("{}.pid", path));
+}
+
+/// Check if a PID lockfile refers to a dead process (i.e., the socket is stale).
+/// Returns `true` if the lockfile is missing, unreadable, or the PID is not alive.
+fn is_stale_socket(pid_path: &str) -> bool {
+    let content = match std::fs::read_to_string(pid_path) {
+        Ok(c) => c,
+        Err(_) => return true, // No lockfile → treat as stale
+    };
+    let pid: u32 = match content.trim().parse() {
+        Ok(p) => p,
+        Err(_) => return true, // Corrupt lockfile → stale
+    };
+    // Check if process is alive via kill(pid, 0)
+    let alive = unsafe { libc::kill(pid as libc::pid_t, 0) } == 0;
+    !alive
+}
+
+/// Write the current PID to a lockfile next to the socket.
+fn write_pid_file(pid_path: &str) {
+    use std::io::Write;
+    use std::os::unix::fs::OpenOptionsExt;
+    let result = std::fs::OpenOptions::new()
+        .create(true)
+        .truncate(true)
+        .write(true)
+        .mode(0o600)
+        .open(pid_path)
+        .and_then(|mut f| write!(f, "{}", std::process::id()));
+    if let Err(e) = result {
+        tracing::warn!("Failed to write PID file {}: {}", pid_path, e);
+    }
 }

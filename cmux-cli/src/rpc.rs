@@ -10,9 +10,11 @@ const MAX_RESPONSE_LEN: usize = 1024 * 1024;
 static REQUEST_ID: AtomicU64 = AtomicU64::new(1);
 
 /// Send a v2 request to the cmux socket and return the response.
+///
+/// Retries transient connection failures (EAGAIN, ECONNREFUSED) up to 3 times
+/// with 100ms backoff to handle startup races and momentary unavailability.
 pub fn send_request(socket_path: &str, method: &str, params: Value) -> anyhow::Result<Value> {
-    let mut stream = UnixStream::connect(socket_path)
-        .map_err(|e| anyhow::anyhow!("Cannot connect to cmux at {}: {}", socket_path, e))?;
+    let mut stream = connect_with_retry(socket_path)?;
     stream.set_read_timeout(Some(IO_TIMEOUT))?;
     stream.set_write_timeout(Some(IO_TIMEOUT))?;
 
@@ -41,6 +43,32 @@ pub fn send_request(socket_path: &str, method: &str, params: Value) -> anyhow::R
 
     let response: Value = serde_json::from_str(line.trim())?;
     Ok(response)
+}
+
+/// Connect to the cmux socket, retrying transient errors.
+fn connect_with_retry(socket_path: &str) -> anyhow::Result<UnixStream> {
+    let mut last_err = None;
+    for attempt in 0..3 {
+        match UnixStream::connect(socket_path) {
+            Ok(stream) => return Ok(stream),
+            Err(e) => {
+                let retryable = matches!(
+                    e.kind(),
+                    std::io::ErrorKind::ConnectionRefused | std::io::ErrorKind::WouldBlock
+                );
+                last_err = Some(e);
+                if !retryable || attempt == 2 {
+                    break;
+                }
+                std::thread::sleep(std::time::Duration::from_millis(100));
+            }
+        }
+    }
+    Err(anyhow::anyhow!(
+        "Cannot connect to cmux at {}: {}",
+        socket_path,
+        last_err.unwrap()
+    ))
 }
 
 pub fn default_socket_path() -> String {
