@@ -647,8 +647,14 @@ pub fn create_browser_widget_with_profile(
                                                     if let Some(suffix) =
                                                         pat.strip_prefix("*.")
                                                     {
-                                                        host.ends_with(suffix)
-                                                            || host == suffix
+                                                        // *.example.com must match
+                                                        // sub.example.com and
+                                                        // example.com, but NOT
+                                                        // notexample.com.
+                                                        host == suffix
+                                                            || host.ends_with(
+                                                                &format!(".{suffix}"),
+                                                            )
                                                     } else {
                                                         host == *pat
                                                     }
@@ -860,9 +866,9 @@ pub fn create_browser_widget_with_profile(
     {
         use webkit6::prelude::PermissionRequestExt;
         web_view.connect_permission_request(|_wv, request| {
-            // Auto-allow camera/microphone for convenience (matches macOS behavior).
-            // Geolocation and other permission types are also allowed.
-            request.allow();
+            // Deny all permission requests by default. Granting camera, microphone,
+            // or geolocation to arbitrary web pages is a security/privacy risk.
+            request.deny();
             true
         });
     }

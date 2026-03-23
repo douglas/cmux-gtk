@@ -319,7 +319,7 @@ pub enum SearchEngine {
 impl SearchEngine {
     /// Return the search URL template (query appended after).
     pub fn search_url(self, query: &str) -> String {
-        let encoded = query.replace(' ', "+");
+        let encoded = urlencoded(query);
         match self {
             Self::Google => format!("https://www.google.com/search?q={encoded}"),
             Self::DuckDuckGo => format!("https://duckduckgo.com/?q={encoded}"),
@@ -605,4 +605,19 @@ fn load_main_settings() -> AppSettings {
         }),
         Err(_) => AppSettings::default(),
     }
+}
+
+/// Percent-encode a string for safe embedding in URL query parameters.
+/// Unreserved characters (RFC 3986) pass through; spaces become `+`;
+/// everything else is percent-encoded.
+pub(crate) fn urlencoded(s: &str) -> String {
+    s.bytes()
+        .map(|b| match b {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+                format!("{}", b as char)
+            }
+            b' ' => "+".to_string(),
+            _ => format!("%{:02X}", b),
+        })
+        .collect()
 }

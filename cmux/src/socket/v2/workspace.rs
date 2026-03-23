@@ -798,7 +798,11 @@ pub(super) fn handle_workspace_report_meta(
     let icon = params.get("icon").and_then(|v| v.as_str());
     let color = params.get("color").and_then(|v| v.as_str());
     let url = params.get("url").and_then(|v| v.as_str());
-    let priority = params.get("priority").and_then(|v| v.as_i64()).unwrap_or(0) as i32;
+    let priority = params
+        .get("priority")
+        .and_then(|v| v.as_i64())
+        .and_then(|n| i32::try_from(n).ok())
+        .unwrap_or(0);
     let format = match params.get("format").and_then(|v| v.as_str()) {
         Some("markdown") => crate::model::workspace::MetadataFormat::Markdown,
         _ => crate::model::workspace::MetadataFormat::Plain,
@@ -922,7 +926,11 @@ pub(super) fn handle_workspace_report_meta_block(
     let (Some(key), Some(content)) = (key, content) else {
         return Response::error(id, "invalid_params", "Provide 'key' and 'content'");
     };
-    let priority = params.get("priority").and_then(|v| v.as_i64()).unwrap_or(0) as i32;
+    let priority = params
+        .get("priority")
+        .and_then(|v| v.as_i64())
+        .and_then(|n| i32::try_from(n).ok())
+        .unwrap_or(0);
 
     let updated = {
         let mut tm = lock_or_recover(&state.tab_manager);
@@ -1286,7 +1294,7 @@ pub(super) fn handle_workspace_report_pwd(
     state: &Arc<SharedState>,
 ) -> Response {
     let directory = match params.get("directory").and_then(|v| v.as_str()) {
-        Some(d) => d.to_string(),
+        Some(d) => truncate_str(d, MAX_DIRECTORY_LEN).to_string(),
         None => return Response::error(id, "invalid_params", "Provide 'directory'"),
     };
 
@@ -1348,6 +1356,7 @@ pub(super) fn handle_workspace_report_ports(
         Some(arr) => arr
             .iter()
             .filter_map(|v| v.as_u64().and_then(|n| u16::try_from(n).ok()))
+            .take(256)
             .collect(),
         None => return Response::error(id, "invalid_params", "Provide 'ports' array"),
     };
@@ -1425,7 +1434,7 @@ pub(super) fn handle_workspace_report_tty(
     state: &Arc<SharedState>,
 ) -> Response {
     let tty = match params.get("tty").and_then(|v| v.as_str()) {
-        Some(t) => t.to_string(),
+        Some(t) => truncate_str(t, 256).to_string(),
         None => return Response::error(id, "invalid_params", "Provide 'tty'"),
     };
 

@@ -31,10 +31,14 @@ pub fn socket_path() -> String {
     if let Ok(dir) = std::env::var("XDG_RUNTIME_DIR") {
         let path = std::path::Path::new(&dir);
         if path.is_absolute() {
-            if let Ok(meta) = std::fs::metadata(path) {
+            if let Ok(meta) = std::fs::symlink_metadata(path) {
                 use std::os::unix::fs::MetadataExt;
                 let my_uid = unsafe { libc::getuid() };
-                if meta.is_dir() && meta.uid() == my_uid && (meta.mode() & 0o777) == 0o700 {
+                if meta.is_dir()
+                    && !meta.file_type().is_symlink()
+                    && meta.uid() == my_uid
+                    && (meta.mode() & 0o777) == 0o700
+                {
                     return format!("{}/cmux.sock", dir);
                 }
             }

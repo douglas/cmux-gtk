@@ -599,15 +599,7 @@ fn fetch_search_suggestions(query: &str, engine: settings::SearchEngine) -> Vec<
 
 /// Percent-encode a query string for URL use.
 fn urlencoded(s: &str) -> String {
-    s.bytes()
-        .map(|b| match b {
-            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
-                format!("{}", b as char)
-            }
-            b' ' => "+".to_string(),
-            _ => format!("%{:02X}", b),
-        })
-        .collect()
+    crate::settings::urlencoded(s)
 }
 
 fn build_suggestion_row(title: &str, url: &str) -> gtk4::ListBoxRow {

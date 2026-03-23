@@ -88,9 +88,23 @@ pub fn default_profile_name() -> String {
         .unwrap_or_else(|| "Default".to_string())
 }
 
-/// Create a new profile. Returns false if name already exists.
+/// Validate a profile name: must be non-empty, at most 64 chars, and free
+/// of path traversal characters (`/`, `\`, `..`).
+fn is_valid_profile_name(name: &str) -> bool {
+    !name.is_empty()
+        && name.len() <= 64
+        && !name.contains('/')
+        && !name.contains('\\')
+        && !name.contains("..")
+}
+
+/// Create a new profile. Returns false if name already exists or is invalid.
 #[allow(dead_code)]
 pub fn create(name: &str) -> bool {
+    if !is_valid_profile_name(name) {
+        return false;
+    }
+
     let mut guard = crate::app::lock_or_recover(&STORE);
     let store = guard.get_or_insert_with(ProfileStore::default);
 
@@ -106,9 +120,14 @@ pub fn create(name: &str) -> bool {
     true
 }
 
-/// Rename a profile. Returns false if old name not found or new name already exists.
+/// Rename a profile. Returns false if old name not found, new name already
+/// exists, or new name is invalid.
 #[allow(dead_code)]
 pub fn rename(old_name: &str, new_name: &str) -> bool {
+    if !is_valid_profile_name(new_name) {
+        return false;
+    }
+
     let mut guard = crate::app::lock_or_recover(&STORE);
     let store = guard.get_or_insert_with(ProfileStore::default);
 

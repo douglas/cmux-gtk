@@ -729,15 +729,40 @@ fn shell_injection_env_vars(
 
 /// Write scrollback text to a temp file for session restore.
 /// Returns the file path on success, or `None` if writing fails.
+///
+/// Uses `~/.cache/cmux/scrollback/` (user-private) instead of `/tmp/` to
+/// avoid symlink attacks and information disclosure.  Files are created with
+/// `O_CREAT|O_EXCL` (mode 0600) so a pre-existing symlink causes a clean
+/// failure rather than writing through it.
 fn write_scrollback_temp_file(panel_id: Uuid, text: &str) -> Option<String> {
-    let dir = std::env::temp_dir().join("cmux-scrollback");
+    use std::fs::OpenOptions;
+    use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+
+    let dir = dirs::cache_dir()
+        .or_else(|| dirs::home_dir().map(|h| h.join(".cache")))
+        .unwrap_or_else(std::env::temp_dir)
+        .join("cmux/scrollback");
+
     if std::fs::create_dir_all(&dir).is_err() {
         return None;
     }
+    // Ensure the directory is user-private (0700).
+    let _ = std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700));
+
     let path = dir.join(format!("{panel_id}.txt"));
-    if std::fs::write(&path, text).is_err() {
-        return None;
-    }
+
+    // O_CREAT | O_EXCL: fail if path already exists (prevents symlink attacks).
+    // If file exists from a previous session, remove it first.
+    let _ = std::fs::remove_file(&path);
+    let mut file = OpenOptions::new()
+        .create_new(true)
+        .write(true)
+        .mode(0o600)
+        .open(&path)
+        .ok()?;
+
+    use std::io::Write;
+    file.write_all(text.as_bytes()).ok()?;
     path.to_str().map(|s| s.to_string())
 }
 
