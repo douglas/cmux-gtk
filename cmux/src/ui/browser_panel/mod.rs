@@ -374,7 +374,10 @@ pub fn create_browser_widget_with_profile(
         ucm.add_script(&console_script);
 
         ucm.connect_script_message_received(Some("cmux_console"), move |_ucm, value| {
-            let message = value.to_str().to_string();
+            // Truncate individual messages to prevent memory exhaustion from
+            // malicious pages that log enormous strings.
+            let raw = value.to_str();
+            let message = crate::model::workspace::truncate_str(&raw, 65536).to_string();
             registry::CONSOLE_BUFFERS.with(|bufs| {
                 let mut map = bufs.borrow_mut();
                 let buf = map.entry(panel_id).or_insert_with(Vec::new);
@@ -623,8 +626,15 @@ pub fn create_browser_widget_with_profile(
                                         ) {
                                             tracing::warn!(%url, %scheme, "decide_policy: deep link \u{2192} xdg-open");
                                             decision.ignore();
+                                            // Sanitize: strip control chars and cap length
+                                            // to prevent handler abuse.
+                                            let safe_url: String = url
+                                                .chars()
+                                                .filter(|c| !c.is_control())
+                                                .take(4096)
+                                                .collect();
                                             let _ = std::process::Command::new("xdg-open")
-                                                .arg(&url)
+                                                .arg(&safe_url)
                                                 .spawn();
                                             return true;
                                         }

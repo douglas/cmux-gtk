@@ -2,6 +2,7 @@
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::os::unix::fs::OpenOptionsExt;
 use std::path::PathBuf;
 use std::sync::Mutex;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -96,6 +97,9 @@ impl BrowserHistoryStore {
         }
     }
 
+    /// Maximum number of history entries to keep in memory / on disk.
+    const MAX_ENTRIES: usize = 50_000;
+
     fn load_from_disk() -> Self {
         let path = data_path();
         match std::fs::read_to_string(&path) {
@@ -107,6 +111,7 @@ impl BrowserHistoryStore {
                     });
                 let map: HashMap<String, HistoryEntry> = entries
                     .into_iter()
+                    .take(Self::MAX_ENTRIES)
                     .map(|e| (canonical_url(&e.url), e))
                     .collect();
                 Self {
@@ -119,16 +124,31 @@ impl BrowserHistoryStore {
     }
 
     fn flush(&mut self) {
+        use std::os::unix::fs::PermissionsExt;
+
         if !self.dirty {
             return;
         }
         let path = data_path();
         if let Some(parent) = path.parent() {
             let _ = std::fs::create_dir_all(parent);
+            let _ = std::fs::set_permissions(parent, std::fs::Permissions::from_mode(0o700));
         }
         let entries: Vec<&HistoryEntry> = self.entries.values().collect();
         if let Ok(json) = serde_json::to_string_pretty(&entries) {
-            let _ = std::fs::write(&path, json);
+            // Write with restrictive permissions (0o600) to prevent other users
+            // from reading browsing history.
+            use std::io::Write;
+            let result = std::fs::OpenOptions::new()
+                .create(true)
+                .truncate(true)
+                .write(true)
+                .mode(0o600)
+                .open(&path)
+                .and_then(|mut f| f.write_all(json.as_bytes()));
+            if let Err(e) = result {
+                tracing::warn!("Failed to write browser history: {e}");
+            }
         }
         self.dirty = false;
     }

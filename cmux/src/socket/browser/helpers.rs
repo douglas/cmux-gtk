@@ -1,6 +1,7 @@
 //! Shared helpers for browser automation handlers.
 
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 use serde_json::Value;
 
@@ -8,6 +9,9 @@ use crate::app::{SharedState, UiEvent};
 use crate::ui::browser_panel::BrowserActionKind;
 
 use super::Response;
+
+/// Maximum time to wait for a browser action reply before returning a timeout error.
+const BROWSER_ACTION_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// Maximum length for user-supplied text in browser commands (1 MB).
 pub(super) const MAX_BROWSER_INPUT_LEN: usize = 1024 * 1024;
@@ -37,6 +41,29 @@ pub(super) fn send_action(
     Response::success(id.clone(), serde_json::json!({"ok": true}))
 }
 
+/// Poll a tokio oneshot receiver with a timeout to prevent indefinite blocking
+/// (e.g., from a browser page running an infinite loop).
+fn recv_with_timeout<T>(
+    mut rx: tokio::sync::oneshot::Receiver<T>,
+    timeout: Duration,
+) -> Result<T, &'static str> {
+    let deadline = Instant::now() + timeout;
+    loop {
+        match rx.try_recv() {
+            Ok(value) => return Ok(value),
+            Err(tokio::sync::oneshot::error::TryRecvError::Closed) => {
+                return Err("channel closed");
+            }
+            Err(tokio::sync::oneshot::error::TryRecvError::Empty) => {
+                if Instant::now() >= deadline {
+                    return Err("timeout");
+                }
+                std::thread::sleep(Duration::from_millis(50));
+            }
+        }
+    }
+}
+
 pub(super) fn send_action_with_reply(
     id: &Value,
     params: &Value,
@@ -52,7 +79,7 @@ pub(super) fn send_action_with_reply(
     let (tx, rx) = tokio::sync::oneshot::channel();
     let action = make_action(tx);
     state.send_ui_event(UiEvent::BrowserAction { panel_id, action });
-    match rx.blocking_recv() {
+    match recv_with_timeout(rx, BROWSER_ACTION_TIMEOUT) {
         Ok(Ok(value)) => Response::success(id.clone(), value),
         Ok(Err(e)) => Response::error(id.clone(), error_code, &e),
         Err(_) => Response::error(id.clone(), "timeout", error_msg),
@@ -77,7 +104,7 @@ pub(super) fn send_eval_action(
             reply: tx,
         },
     });
-    match rx.blocking_recv() {
+    match recv_with_timeout(rx, BROWSER_ACTION_TIMEOUT) {
         Ok(Ok(val)) => {
             let s = val.as_str().unwrap_or("");
             if let Some(code) = s.strip_prefix("ERROR:") {
@@ -87,7 +114,7 @@ pub(super) fn send_eval_action(
             }
         }
         Ok(Err(e)) => Response::error(id.clone(), "execution_failed", &e),
-        Err(_) => Response::error(id.clone(), "timeout", "UI event channel closed"),
+        Err(_) => Response::error(id.clone(), "timeout", "Browser operation timed out"),
     }
 }
 

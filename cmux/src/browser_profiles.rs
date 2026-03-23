@@ -222,6 +222,11 @@ pub fn network_session_for(profile_name: &str) -> webkit6::NetworkSession {
         let (data_dir, cache_dir) = profile_dirs(profile_name);
         let _ = std::fs::create_dir_all(&data_dir);
         let _ = std::fs::create_dir_all(&cache_dir);
+        // Restrict WebKit data/cache directories to owner-only (0o700) to prevent
+        // other local users from reading cookies, localStorage, or cached pages.
+        use std::os::unix::fs::PermissionsExt;
+        let _ = std::fs::set_permissions(&data_dir, std::fs::Permissions::from_mode(0o700));
+        let _ = std::fs::set_permissions(&cache_dir, std::fs::Permissions::from_mode(0o700));
 
         let session = webkit6::NetworkSession::new(
             Some(data_dir.to_str().unwrap_or("")),
