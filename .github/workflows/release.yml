@@ -1,0 +1,178 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libgtk-4-dev \
+            libadwaita-1-dev \
+            libwebkitgtk-6.0-dev
+
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Test
+        run: cargo test --workspace
+
+      - name: Clippy
+        run: cargo clippy --workspace -- -D warnings
+
+  build:
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libgtk-4-dev \
+            libadwaita-1-dev \
+            libwebkitgtk-6.0-dev
+
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Build release
+        run: cargo build --release
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: cmux-gtk-linux-amd64
+          path: |
+            target/release/cmux-app
+            target/release/cmux
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: cmux-gtk-linux-amd64
+          path: artifacts
+
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+          REPO: ${{ github.repository }}
+        run: |
+          chmod +x artifacts/cmux-app artifacts/cmux
+          gh release create "$TAG" \
+            --title "$TAG" \
+            --notes "See [CHANGELOG.md](https://github.com/${REPO}/blob/main/CHANGELOG.md) for details." \
+            artifacts/cmux-app \
+            artifacts/cmux
+
+  aur:
+    needs: release
+    runs-on: ubuntu-latest
+    steps:
+      - name: Extract version from tag
+        id: version
+        env:
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          raw="${REF_NAME#v}"
+          # AUR pkgver: replace hyphens with dots (0.62.0-alpha.2 -> 0.62.0.alpha.2)
+          aur_ver="${raw//-/.}"
+          echo "version=$raw" >> "$GITHUB_OUTPUT"
+          echo "aur_version=$aur_ver" >> "$GITHUB_OUTPUT"
+
+      - name: Compute source tarball sha256
+        id: sha256
+        env:
+          REPO: ${{ github.repository }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          sha=$(curl -sL "https://github.com/${REPO}/archive/${TAG}.tar.gz" | sha256sum | cut -d' ' -f1)
+          echo "sha256=$sha" >> "$GITHUB_OUTPUT"
+
+      - name: Setup SSH for AUR
+        env:
+          AUR_SSH_KEY: ${{ secrets.AUR_SSH_KEY }}
+        run: |
+          mkdir -p ~/.ssh
+          echo "$AUR_SSH_KEY" > ~/.ssh/aur
+          chmod 600 ~/.ssh/aur
+          ssh-keyscan aur.archlinux.org >> ~/.ssh/known_hosts 2>/dev/null
+          printf 'Host aur.archlinux.org\n  IdentityFile ~/.ssh/aur\n  User aur\n' >> ~/.ssh/config
+
+      - name: Clone AUR repo
+        run: git clone ssh://aur@aur.archlinux.org/cmux-gtk.git aur-cmux-gtk
+
+      - name: Update PKGBUILD and .SRCINFO
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+          AUR_VERSION: ${{ steps.version.outputs.aur_version }}
+          SHA256: ${{ steps.sha256.outputs.sha256 }}
+        run: |
+          cd aur-cmux-gtk
+          sed -i "s/^pkgver=.*/pkgver=${AUR_VERSION}/" PKGBUILD
+          # Update the tarball sha256 (first entry); ghostty git source stays SKIP
+          sed -i "s/^    '[0-9a-f]\{64\}'/    '${SHA256}'/" PKGBUILD
+
+          # Generate .SRCINFO (deterministic format, no makepkg needed)
+          printf '%s\n' \
+            "pkgbase = cmux-gtk" \
+            "	pkgdesc = Terminal multiplexer for AI coding agents (GTK4/libadwaita)" \
+            "	pkgver = ${AUR_VERSION}" \
+            "	pkgrel = 1" \
+            "	url = https://github.com/douglas/cmux-gtk" \
+            "	arch = x86_64" \
+            "	license = AGPL-3.0-or-later" \
+            "	makedepends = rust" \
+            "	makedepends = cargo" \
+            "	makedepends = zig" \
+            "	makedepends = ncurses" \
+            "	makedepends = gcc" \
+            "	makedepends = patchelf" \
+            "	makedepends = git" \
+            "	depends = gtk4" \
+            "	depends = libadwaita" \
+            "	depends = webkitgtk-6.0" \
+            "	depends = glib2" \
+            "	depends = opengl-driver" \
+            "	provides = cmux" \
+            "	conflicts = cmux" \
+            "	conflicts = cmux-git" \
+            "	source = cmux-gtk-${VERSION}.tar.gz::https://github.com/douglas/cmux-gtk/archive/v${VERSION}.tar.gz" \
+            "	source = ghostty::git+https://github.com/manaflow-ai/ghostty.git" \
+            "	sha256sums = ${SHA256}" \
+            "	sha256sums = SKIP" \
+            "" \
+            "pkgname = cmux-gtk" > .SRCINFO
+
+      - name: Push to AUR
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          cd aur-cmux-gtk
+          git config user.name "Douglas Soares de Andrade"
+          git config user.email "contato@douglasandrade.com"
+          git add PKGBUILD .SRCINFO
+          git diff --cached --quiet && echo "No changes to push" && exit 0
+          git commit -m "Update to ${VERSION}"
+          git push

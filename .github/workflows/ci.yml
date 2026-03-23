@@ -38,6 +38,15 @@ jobs:
       - name: Clippy
         run: cargo clippy --workspace -- -D warnings
 
+  audit:
+    name: Security Audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: rustsec/audit-check@v2
+        with:
+          token: ${{ github.token }}
+
   fmt:
     name: Format
     runs-on: ubuntu-latest
