@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.62.0-alpha.3] - 2026-03-23
+
+### Added
+
+- GitHub Actions release workflow with automated AUR publishing on tag push
+- `cargo-audit` security check in CI pipeline
+
 ## [0.62.0-alpha.2] - 2026-03-23
 
 ### Changed
