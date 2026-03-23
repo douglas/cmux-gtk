@@ -11,7 +11,7 @@ First public release of cmux-gtk — the Linux port of cmux, a terminal multiple
 - **Shell integration** — auto-injected for zsh and bash; reports CWD, git branch, PR status, listening ports, and semantic prompt markers
 - **Remote SSH workspaces** — `cmux ssh user@host` with auto-bootstrap daemon, SOCKS5 proxy tunnel for browser traffic, CLI relay, sidebar connection indicators
 - **Session persistence** — terminal scrollback, window geometry, pane layout, browser URLs and back/forward history all restored on restart
-- **Socket API** — V1 text protocol (95+ commands) and V2 JSON-RPC protocol (210+ methods) for full automation
+- **Socket API** — V1 text protocol (60 commands) and V2 JSON-RPC protocol (210+ methods) for full automation
 - **Browser automation** — element finding (by text, role, label, placeholder, test ID), waiting, screenshots, dialog handling, frame selection, console capture, network interception, geolocation/offline spoofing
 - **Command palette** — 50+ commands with fuzzy search, workspace switcher, shortcut hints, editor integration (VS Code, Cursor, Zed, Neovim, etc.)
 - **Omnibar** — frecency-scored browser history autocomplete, inline ghost text completion, switch-to-tab suggestions, remote search suggestions

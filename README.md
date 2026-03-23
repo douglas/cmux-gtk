@@ -39,7 +39,7 @@ cargo build --release # Release build
 - **Browser history** — frecency-scored history with omnibar autocomplete
 - **Browser navigation** — window.open/target=_blank → new tab, Ctrl+click/middle-click → new tab, deep link handling (custom URI schemes → xdg-open), insecure HTTP interstitial with allowlist
 - **Browser theme mode** — separate System/Light/Dark override with toolbar toggle and settings
-- **Browser security** — user agent override (Safari-compatible), camera/mic permission auto-allow, context menu customization
+- **Browser security** — user agent override (Safari-compatible), camera/mic/geo permission denial by default, context menu customization, input sanitization
 - **Link routing** — configurable URL patterns for system vs cmux browser, HTTP allowlist
 - **Keyboard copy mode** — Ghostty vi-style navigation with vim badge indicator
 - **Ghostty config** — reads `~/.config/ghostty/config` for themes, fonts, colors, background opacity, unfocused split opacity, and split divider color; live reload via Ctrl+Shift+,
