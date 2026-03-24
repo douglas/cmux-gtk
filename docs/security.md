@@ -84,12 +84,15 @@ All socket inputs are truncated to prevent resource exhaustion:
 
 ## SSH / Remote Workspace Security
 
+- **Disabled by default**: Remote SSH workspaces require `remote_ssh_enabled = true` in settings. This is off by default to minimize attack surface.
 - **No shell wrapping**: Remote daemon paths are passed as direct SSH arguments, not embedded in `sh -c` strings.
 - **Shell escaping**: All user-supplied values in SSH commands use `shell-escape` crate.
 - **Host key policy**: `StrictHostKeyChecking=accept-new` (TOFU — trusts new keys, rejects changed keys).
 - **SSH option validation**: Options restored from session files must be `Key=Value` format (no flag injection).
+- **Relay authentication**: HMAC-SHA256 challenge-response with per-session tokens (UUIDv4 from CSPRNG).
 - **Proxy tunnel**: Binds to `127.0.0.1` only, 32-connection limit, panic-guarded handler.
 - **SSH stderr logging**: Captured and logged (not discarded) so host key warnings are visible.
+- **Daemon bootstrap**: Remote daemon binary uploaded via SCP with verified path. Versioned at `~/.cmux/bin/cmuxd-remote/{version}/`.
 
 ## FFI Safety
 

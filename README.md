@@ -162,6 +162,17 @@ All shortcuts are configurable via `~/.config/cmux/shortcuts.json`.
 | `CMUX_SOCKET` | Override socket path |
 | `CMUX_DISABLE_SESSION_RESTORE` | Set to `1` to skip session restore |
 
+## Remote SSH Workspaces
+
+Connect to remote hosts via SSH with a full cmux workspace (terminal + browser via proxy tunnel).
+
+1. **Enable in Settings** — Remote SSH is disabled by default. Toggle "Remote SSH Workspaces" in Settings > Behavior.
+2. **Create via Command Palette** — `Ctrl+Shift+P` → "New SSH Workspace..." → enter `user@host`.
+3. **Or via socket API** — `workspace.create_ssh {"destination": "user@host"}`.
+4. **Sidebar shows connection state** — icons indicate Connecting, Connected, Disconnected, or Error.
+
+The remote daemon (`cmuxd-remote`) is bootstrapped automatically on the remote host. It provides a SOCKS5 proxy tunnel for browser traffic and a JSON-RPC API for workspace control.
+
 ## Security
 
 See [docs/security.md](docs/security.md) for the full security architecture.
