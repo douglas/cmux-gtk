@@ -5,6 +5,14 @@
 //! - Connects keyboard, mouse, scroll, and IME event controllers
 //! - Forwards all events to the ghostty surface via FFI
 //! - Manages the ghostty_surface_t lifecycle
+//!
+//! # Safety
+//!
+//! All ghostty FFI calls require:
+//! - The `ghostty_surface_t` pointer is non-null (stored in `Cell`, checked before each call).
+//! - Calls happen on the GTK main thread (enforced by GtkGLArea signal handlers).
+//! - `mem::zeroed()` is used for `#[repr(C)]` config structs where all-zeros is valid.
+//! - `from_raw_parts()` trusts length values from ghostty (FFI contract).
 
 use ghostty_sys::*;
 use glib::translate::IntoGlib;

@@ -33,6 +33,7 @@ pub fn socket_path() -> String {
         if path.is_absolute() {
             if let Ok(meta) = std::fs::symlink_metadata(path) {
                 use std::os::unix::fs::MetadataExt;
+                // SAFETY: getuid() is always safe.
                 let my_uid = unsafe { libc::getuid() };
                 if meta.is_dir()
                     && !meta.file_type().is_symlink()
@@ -48,6 +49,7 @@ pub fn socket_path() -> String {
             );
         }
     }
+    // SAFETY: getuid() is always safe.
     format!("/tmp/cmux-{}.sock", unsafe { libc::getuid() })
 }
 
@@ -102,6 +104,8 @@ pub async fn run_socket_server(state: Arc<SharedState>) -> anyhow::Result<()> {
     // The umask window is brief (just the bind syscall) and the only side
     // effect on concurrent file creates is MORE restrictive permissions.
     let listener = {
+        // SAFETY: umask() is always safe. We set 0o177 to create the socket
+        // with 0o600 permissions, then restore the previous umask immediately.
         let old_umask = unsafe { libc::umask(0o177) };
         let result = UnixListener::bind(&path);
         unsafe { libc::umask(old_umask) };
@@ -279,7 +283,7 @@ fn is_stale_socket(pid_path: &str) -> bool {
         Ok(p) => p,
         Err(_) => return true, // Corrupt lockfile → stale
     };
-    // Check if process is alive via kill(pid, 0)
+    // SAFETY: kill(pid, 0) is safe — signal 0 checks process existence without sending a signal.
     let alive = unsafe { libc::kill(pid as libc::pid_t, 0) } == 0;
     !alive
 }

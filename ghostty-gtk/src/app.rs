@@ -1,4 +1,12 @@
 //! Safe wrapper around ghostty_app_t lifecycle.
+//!
+//! # Safety
+//!
+//! All ghostty FFI calls in this module require:
+//! - The `ghostty_app_t` pointer is non-null (checked at construction, nulled on drop).
+//! - The `ghostty_config_t` pointer is non-null (checked immediately after creation).
+//! - Calls happen on the GTK main thread (ghostty is single-threaded).
+//! - `RuntimeCallbacks` outlives the app (enforced by `GhosttyApp` owning both).
 
 use ghostty_sys::*;
 use std::ptr;

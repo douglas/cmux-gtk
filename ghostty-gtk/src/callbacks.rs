@@ -8,6 +8,15 @@
 //! surface userdata for those, not the application userdata. We therefore
 //! dispatch them directly to `GhosttyGlSurface` instead of routing them
 //! through the application-level handler trait.
+//!
+//! # Safety
+//!
+//! All `extern "C"` trampolines are called by ghostty's C code. They:
+//! - Wrap their body in `catch_unwind` to prevent panics from unwinding across FFI (UB).
+//! - Check userdata pointers for null before dereferencing.
+//! - Use `glib::SendWeakRef` for surface callbacks to safely handle destroyed widgets.
+//! - The `userdata` parameter is always a pointer created by `Box::into_raw` in
+//!   `RuntimeCallbacks::new()` and is valid for the lifetime of the ghostty app.
 
 use ghostty_sys::*;
 use gtk4::glib;

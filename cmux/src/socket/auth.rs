@@ -27,6 +27,7 @@ pub fn authenticate_peer(stream: &tokio::net::UnixStream) -> io::Result<PeerInfo
 
 /// Check if the peer is the same user as the cmux process.
 pub fn is_same_user(peer: &PeerInfo) -> bool {
+    // SAFETY: getuid() is always safe — no failure mode, no arguments.
     peer.uid == unsafe { libc::getuid() }
 }
 

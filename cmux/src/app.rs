@@ -797,7 +797,8 @@ static SIGUSR2_RECEIVED: AtomicBool = AtomicBool::new(false);
 
 /// Install a SIGUSR2 signal handler that triggers Omarchy theme reload.
 fn install_sigusr2_theme_reload() {
-    // Register the signal handler (async-signal-safe: only sets an atomic)
+    // SAFETY: libc::signal is always safe to call. The handler function only
+    // writes to an AtomicBool, which is async-signal-safe.
     unsafe {
         libc::signal(
             libc::SIGUSR2,
@@ -1008,6 +1009,8 @@ impl ghostty_gtk::callbacks::GhosttyCallbackHandler for CmuxCallbackHandler {
             }
 
             #[cfg(feature = "link-ghostty")]
+            // SAFETY: app_ptr is initialized once at startup and lives for the
+            // process lifetime. ghostty_app_tick is called on the main thread.
             unsafe {
                 ghostty_app_tick(app_ptr.get());
             }
@@ -1021,6 +1024,8 @@ impl ghostty_gtk::callbacks::GhosttyCallbackHandler for CmuxCallbackHandler {
             ghostty_action_tag_e::GHOSTTY_ACTION_RENDER => {
                 // The target surface wants a re-render.
                 if target.tag == ghostty_target_tag_e::GHOSTTY_TARGET_SURFACE {
+                    // SAFETY: tag == GHOSTTY_TARGET_SURFACE guarantees the union
+                    // contains a valid surface pointer (ghostty FFI contract).
                     let surface_ptr = unsafe { target.target.surface };
                     if !surface_ptr.is_null() {
                         #[cfg(feature = "link-ghostty")]
@@ -1034,8 +1039,13 @@ impl ghostty_gtk::callbacks::GhosttyCallbackHandler for CmuxCallbackHandler {
             }
             ghostty_action_tag_e::GHOSTTY_ACTION_SET_TITLE => {
                 if target.tag == ghostty_target_tag_e::GHOSTTY_TARGET_SURFACE {
+                    // SAFETY: tag == GHOSTTY_TARGET_SURFACE guarantees the union
+                    // contains a valid surface pointer (ghostty FFI contract).
                     let surface_ptr = unsafe { target.target.surface };
                     if !surface_ptr.is_null() {
+                        // SAFETY: action tag is SET_TITLE so the union contains
+                        // set_title. The title pointer is null-checked before
+                        // CStr::from_ptr. Ghostty guarantees NUL-terminated strings.
                         let title = unsafe {
                             let cstr = action.action.set_title.title;
                             if cstr.is_null() {
@@ -1059,8 +1069,12 @@ impl ghostty_gtk::callbacks::GhosttyCallbackHandler for CmuxCallbackHandler {
             }
             ghostty_action_tag_e::GHOSTTY_ACTION_PWD => {
                 if target.tag == ghostty_target_tag_e::GHOSTTY_TARGET_SURFACE {
+                    // SAFETY: tag == GHOSTTY_TARGET_SURFACE guarantees the union
+                    // contains a valid surface pointer (ghostty FFI contract).
                     let surface_ptr = unsafe { target.target.surface };
                     if !surface_ptr.is_null() {
+                        // SAFETY: action tag is PWD so the union contains pwd.
+                        // Pointer is null-checked. Ghostty guarantees NUL-terminated strings.
                         let pwd = unsafe {
                             let cstr = action.action.pwd.pwd;
                             if cstr.is_null() {
@@ -1108,6 +1122,9 @@ impl ghostty_gtk::callbacks::GhosttyCallbackHandler for CmuxCallbackHandler {
                 true
             }
             ghostty_action_tag_e::GHOSTTY_ACTION_OPEN_URL => {
+                // SAFETY: action tag is OPEN_URL so the union contains open_url.
+                // Pointer and length are null/zero-checked. from_raw_parts requires
+                // the pointer to be valid for `len` bytes — guaranteed by ghostty.
                 let url = unsafe {
                     let open_url = &action.action.open_url;
                     if open_url.url.is_null() || open_url.len == 0 {
@@ -1124,7 +1141,8 @@ impl ghostty_gtk::callbacks::GhosttyCallbackHandler for CmuxCallbackHandler {
                 true
             }
             ghostty_action_tag_e::GHOSTTY_ACTION_DESKTOP_NOTIFICATION => {
-                // OSC 9 / OSC 777 desktop notification from terminal output
+                // SAFETY: action tag is DESKTOP_NOTIFICATION so the union contains
+                // desktop_notification. Pointers are null-checked before CStr::from_ptr.
                 let (title, body) = unsafe {
                     let notif = &action.action.desktop_notification;
                     let title = if notif.title.is_null() {
@@ -1145,6 +1163,8 @@ impl ghostty_gtk::callbacks::GhosttyCallbackHandler for CmuxCallbackHandler {
                 };
 
                 if target.tag == ghostty_target_tag_e::GHOSTTY_TARGET_SURFACE {
+                    // SAFETY: tag == GHOSTTY_TARGET_SURFACE guarantees the union
+                    // contains a valid surface pointer (ghostty FFI contract).
                     let surface_ptr = unsafe { target.target.surface };
                     if !surface_ptr.is_null() {
                         self.shared.send_ui_event(UiEvent::DesktopNotification {

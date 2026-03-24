@@ -15,6 +15,7 @@ use crate::session::snapshot::*;
 fn session_path() -> PathBuf {
     let data_dir = dirs::data_dir()
         .or_else(|| dirs::home_dir().map(|home| home.join(".local/share")))
+        // SAFETY: getuid() is always safe.
         .unwrap_or_else(|| std::env::temp_dir().join(format!("cmux-{}", unsafe { libc::getuid() })))
         .join("cmux");
     data_dir.join("session.json")
