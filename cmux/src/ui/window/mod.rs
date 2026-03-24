@@ -214,6 +214,7 @@ pub fn create_window(
             // Stop all browser WebViews to prevent WebProcess segfault
             // during shutdown (active content like YouTube embeds can
             // crash if torn down abruptly).
+            #[cfg(feature = "webkit")]
             super::browser_panel::stop_all_webviews();
 
             // Clean up per-window state

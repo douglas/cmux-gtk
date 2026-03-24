@@ -98,6 +98,7 @@ pub(super) fn handle_capabilities(id: Value) -> Response {
         "window.focus",
         "window.close",
     ];
+    #[cfg(feature = "webkit")]
     methods.extend_from_slice(&crate::socket::browser::method_names());
     Response::success(id, serde_json::json!({"methods": methods}))
 }

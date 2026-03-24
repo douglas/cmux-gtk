@@ -85,6 +85,7 @@ pub(super) fn setup_shortcuts(
 
         // Ctrl+Alt combinations (no shift)
         if ctrl && alt && !shift {
+            #[cfg(feature = "webkit")]
             match keyval {
                 // Ctrl+Alt+D: Split browser horizontal
                 gdk4::Key::d => {
@@ -594,6 +595,7 @@ pub(super) fn setup_shortcuts(
                 };
                 if let Some((panel_id, panel_type)) = info {
                     if panel_type == PanelType::Browser {
+                        #[cfg(feature = "webkit")]
                         state
                             .shared
                             .send_ui_event(crate::app::UiEvent::BrowserAction {
@@ -617,6 +619,7 @@ pub(super) fn setup_shortcuts(
                 };
                 if let Some((panel_id, panel_type)) = info {
                     if panel_type == PanelType::Browser {
+                        #[cfg(feature = "webkit")]
                         state
                             .shared
                             .send_ui_event(crate::app::UiEvent::BrowserAction {
@@ -640,6 +643,7 @@ pub(super) fn setup_shortcuts(
                 };
                 if let Some((panel_id, panel_type)) = info {
                     if panel_type == PanelType::Browser {
+                        #[cfg(feature = "webkit")]
                         state
                             .shared
                             .send_ui_event(crate::app::UiEvent::BrowserAction {

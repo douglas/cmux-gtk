@@ -235,11 +235,16 @@ pub fn dispatch(json_line: &str, state: &Arc<SharedState>) -> Response {
         "notification.clear" => notification::handle_notification_clear(id, state),
 
         // Browser automation commands — delegated to socket::browser module
+        #[cfg(feature = "webkit")]
         method if method.starts_with("browser.") => {
             match super::browser::dispatch(method, id.clone(), &req.params, state) {
                 Some(resp) => resp,
                 None => Response::error(id, "unknown_method", &format!("Unknown method: {method}")),
             }
+        }
+        #[cfg(not(feature = "webkit"))]
+        method if method.starts_with("browser.") => {
+            Response::error(id, "not_compiled", "browser support not compiled (build with --features webkit)")
         }
 
         // Markdown commands

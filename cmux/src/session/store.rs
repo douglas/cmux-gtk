@@ -182,12 +182,22 @@ pub fn create_snapshot(state: &crate::app::AppState) -> AppSessionSnapshot {
         .collect();
 
     // Capture browser state from WebView registry (GTK main thread)
+    #[cfg(feature = "webkit")]
     let browser_zoom_map: std::collections::HashMap<uuid::Uuid, f64> =
         crate::ui::browser_panel::collect_webview_zoom_levels();
+    #[cfg(feature = "webkit")]
     let browser_url_map: std::collections::HashMap<uuid::Uuid, String> =
         crate::ui::browser_panel::collect_webview_urls();
+    #[cfg(feature = "webkit")]
     let browser_history_map: std::collections::HashMap<uuid::Uuid, (Vec<String>, Vec<String>)> =
         crate::ui::browser_panel::collect_webview_histories();
+    #[cfg(not(feature = "webkit"))]
+    let browser_zoom_map: std::collections::HashMap<uuid::Uuid, f64> = Default::default();
+    #[cfg(not(feature = "webkit"))]
+    let browser_url_map: std::collections::HashMap<uuid::Uuid, String> = Default::default();
+    #[cfg(not(feature = "webkit"))]
+    let browser_history_map: std::collections::HashMap<uuid::Uuid, (Vec<String>, Vec<String>)> =
+        Default::default();
 
     let tm = lock_or_recover(&state.shared.tab_manager);
     let now = std::time::SystemTime::now()

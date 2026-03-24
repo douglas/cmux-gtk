@@ -260,6 +260,7 @@ pub enum UiEvent {
         url: String,
     },
     OpenMarkdownFile,
+    #[cfg(feature = "webkit")]
     BrowserAction {
         panel_id: Uuid,
         action: crate::ui::browser_panel::BrowserActionKind,
@@ -432,6 +433,7 @@ fn activate(app: &adw::Application, state: &Rc<AppState>) {
 
     // Initialize browser history and profiles (loads from disk)
     crate::browser_history::init();
+    #[cfg(feature = "webkit")]
     crate::browser_profiles::init();
 
     // Register SIGUSR2 handler for Omarchy live theme switching.
@@ -606,8 +608,12 @@ fn restore_session(state: &Rc<AppState>) -> Vec<Uuid> {
             let mut panels = std::collections::HashMap::new();
             for panel_snapshot in &ws_snapshot.panels {
                 let panel_type = match panel_snapshot.panel_type.as_str() {
+                    #[cfg(feature = "webkit")]
                     "browser" => crate::model::PanelType::Browser,
+                    #[cfg(feature = "webkit")]
                     "markdown" => crate::model::PanelType::Markdown,
+                    #[cfg(not(feature = "webkit"))]
+                    "browser" | "markdown" => continue, // skip browser panels when webkit disabled
                     _ => crate::model::PanelType::Terminal,
                 };
                 let panel = crate::model::panel::Panel {

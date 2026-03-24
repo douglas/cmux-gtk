@@ -60,8 +60,15 @@ pub fn create_panel_widget(
         PanelType::Terminal => {
             create_terminal_widget(panel, is_attention_source, is_focused, state)
         }
+        #[cfg(feature = "webkit")]
         PanelType::Browser => create_browser_widget(panel, is_attention_source, state),
+        #[cfg(feature = "webkit")]
         PanelType::Markdown => create_markdown_widget(panel, is_attention_source),
+        #[cfg(not(feature = "webkit"))]
+        PanelType::Browser | PanelType::Markdown => {
+            let label = gtk4::Label::new(Some("Browser support not compiled"));
+            label.upcast()
+        }
     }
 }
 
@@ -250,6 +257,7 @@ fn create_terminal_widget(
     overlay.upcast()
 }
 
+#[cfg(feature = "webkit")]
 /// Create a browser panel with WebKitWebView (cached across layout rebuilds).
 fn create_browser_widget(
     panel: &Panel,
@@ -271,6 +279,7 @@ fn create_browser_widget(
     widget
 }
 
+#[cfg(feature = "webkit")]
 /// Create a markdown panel with WebView rendering.
 fn create_markdown_widget(panel: &Panel, is_attention_source: bool) -> gtk4::Widget {
     super::markdown_panel::create_markdown_widget(

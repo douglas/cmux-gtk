@@ -593,6 +593,7 @@ fn execute_action(name: &str, state: &Rc<AppState>, on_refresh: &Rc<dyn Fn()>) {
             }
             return; // Don't refresh — external command
         }
+        #[cfg(feature = "webkit")]
         "pane.new_browser" => {
             if let Some(ws) = lock_or_recover(&state.shared.tab_manager).selected_mut() {
                 ws.split(SplitOrientation::Vertical, PanelType::Browser);
@@ -731,11 +732,13 @@ fn execute_action(name: &str, state: &Rc<AppState>, on_refresh: &Rc<dyn Fn()>) {
                 }
             }
         }
+        #[cfg(feature = "webkit")]
         "pane.split_browser_h" => {
             if let Some(ws) = lock_or_recover(&state.shared.tab_manager).selected_mut() {
                 ws.split(SplitOrientation::Horizontal, PanelType::Browser);
             }
         }
+        #[cfg(feature = "webkit")]
         "pane.split_browser_v" => {
             if let Some(ws) = lock_or_recover(&state.shared.tab_manager).selected_mut() {
                 ws.split(SplitOrientation::Vertical, PanelType::Browser);
@@ -751,6 +754,7 @@ fn execute_action(name: &str, state: &Rc<AppState>, on_refresh: &Rc<dyn Fn()>) {
             };
             if let Some((panel_id, panel_type)) = info {
                 if panel_type == PanelType::Browser {
+                    #[cfg(feature = "webkit")]
                     state
                         .shared
                         .send_ui_event(crate::app::UiEvent::BrowserAction {
@@ -773,6 +777,7 @@ fn execute_action(name: &str, state: &Rc<AppState>, on_refresh: &Rc<dyn Fn()>) {
             };
             if let Some((panel_id, panel_type)) = info {
                 if panel_type == PanelType::Browser {
+                    #[cfg(feature = "webkit")]
                     state
                         .shared
                         .send_ui_event(crate::app::UiEvent::BrowserAction {
@@ -795,6 +800,7 @@ fn execute_action(name: &str, state: &Rc<AppState>, on_refresh: &Rc<dyn Fn()>) {
             };
             if let Some((panel_id, panel_type)) = info {
                 if panel_type == PanelType::Browser {
+                    #[cfg(feature = "webkit")]
                     state
                         .shared
                         .send_ui_event(crate::app::UiEvent::BrowserAction {

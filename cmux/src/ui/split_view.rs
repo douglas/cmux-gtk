@@ -298,16 +298,18 @@ fn build_tab_button(
     tab.set_margin_bottom(2);
 
     // Panel type icon (use favicon for browser panels if available)
-    let icon = if panel_type == PanelType::Browser {
-        if let Some(texture) = super::browser_panel::get_favicon(panel_id) {
-            let img = gtk4::Image::from_paintable(Some(&texture));
-            img.set_pixel_size(14);
-            img
-        } else {
-            let img = gtk4::Image::from_icon_name("globe-symbolic");
-            img.set_pixel_size(14);
-            img
-        }
+    #[cfg(feature = "webkit")]
+    let browser_favicon = if panel_type == PanelType::Browser {
+        super::browser_panel::get_favicon(panel_id)
+    } else {
+        None
+    };
+    #[cfg(not(feature = "webkit"))]
+    let browser_favicon: Option<gdk4::Texture> = None;
+    let icon = if let Some(texture) = browser_favicon {
+        let img = gtk4::Image::from_paintable(Some(&texture));
+        img.set_pixel_size(14);
+        img
     } else {
         let icon_name = match panel_type {
             PanelType::Terminal => "utilities-terminal-symbolic",

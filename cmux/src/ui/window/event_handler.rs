@@ -354,6 +354,7 @@ pub(super) fn bind_shared_state_updates(
                         });
                         dialog.show();
                     }
+                    #[cfg(feature = "webkit")]
                     UiEvent::BrowserAction { panel_id, action } => {
                         crate::ui::browser_panel::execute_action(panel_id, action);
                     }
