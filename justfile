@@ -35,3 +35,23 @@ ci: test lint fmt-check
 install:
     cargo install --path cmux --features link-ghostty
     cargo install --path cmux-cli
+
+# Cross-compile cmuxd-remote for all supported platforms
+build-daemon VERSION=(env_var_or_default("CARGO_PKG_VERSION", "dev")):
+    #!/usr/bin/env bash
+    set -euo pipefail
+    LDFLAGS="-X main.version={{VERSION}}"
+    mkdir -p artifacts
+    for TARGET in linux-amd64 linux-arm64 darwin-amd64 darwin-arm64; do
+        GOOS="${TARGET%-*}" GOARCH="${TARGET#*-}" CGO_ENABLED=0 \
+            go build -ldflags "${LDFLAGS}" \
+            -o "artifacts/cmuxd-remote-${TARGET}" \
+            ./daemon/remote/cmd/cmuxd-remote
+        echo "Built artifacts/cmuxd-remote-${TARGET}"
+    done
+    cd artifacts && sha256sum cmuxd-remote-* > checksums-sha256.txt
+    echo "Checksums written to artifacts/checksums-sha256.txt"
+
+# Run Go tests for the remote daemon
+test-daemon:
+    cd daemon/remote && go test ./...

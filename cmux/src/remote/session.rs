@@ -7,6 +7,7 @@ use std::sync::{Arc, Mutex};
 use serde::{Deserialize, Serialize};
 
 use super::proxy::ProxyTunnel;
+use super::relay::RelayServer;
 use super::rpc::RemoteRpcClient;
 
 /// Remote workspace configuration.
@@ -80,6 +81,10 @@ pub struct RemoteSessionController {
     pub state: RemoteState,
     rpc: Option<Arc<RemoteRpcClient>>,
     proxy: Option<ProxyTunnel>,
+    /// CLI relay server — enables `cmux` commands from within the remote
+    /// terminal to reach the local instance. Non-critical: relay failure
+    /// does not prevent the session from being Connected.
+    relay: Option<RelayServer>,
 }
 
 impl RemoteSessionController {
@@ -89,6 +94,7 @@ impl RemoteSessionController {
             state: RemoteState::Disconnected,
             rpc: None,
             proxy: None,
+            relay: None,
         }
     }
 
@@ -148,18 +154,48 @@ impl RemoteSessionController {
         let proxy_port = proxy.port();
         tracing::info!(proxy_port, "Proxy tunnel started");
 
+        // Start CLI relay so remote terminals can run `cmux` commands locally.
+        // Non-critical: relay failure does not block the session.
+        let local_socket = crate::socket::server::socket_path();
+        let relay = match RelayServer::start(&local_socket) {
+            Ok(mut relay) => {
+                match relay.start_reverse_tunnel(&ssh_args, &daemon_path) {
+                    Ok(remote_port) => {
+                        tracing::info!(
+                            remote_port,
+                            relay_id = %relay.relay_id(),
+                            "CLI relay tunnel established"
+                        );
+                        Some(relay)
+                    }
+                    Err(e) => {
+                        tracing::warn!("CLI relay tunnel failed (non-fatal): {e}");
+                        None
+                    }
+                }
+            }
+            Err(e) => {
+                tracing::warn!("CLI relay server failed to start (non-fatal): {e}");
+                None
+            }
+        };
+
         self.state = RemoteState::Connected {
             proxy_port,
             daemon_version: hello.version,
         };
         self.rpc = Some(rpc);
         self.proxy = Some(proxy);
+        self.relay = relay;
 
         Ok(())
     }
 
     /// Disconnect from the remote daemon and stop the proxy.
     pub fn stop(&mut self) {
+        if let Some(mut relay) = self.relay.take() {
+            relay.stop();
+        }
         if let Some(proxy) = self.proxy.take() {
             proxy.stop();
         }

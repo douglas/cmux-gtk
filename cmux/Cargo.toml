@@ -37,3 +37,4 @@ pulldown-cmark = { workspace = true, optional = true }
 shell-escape = "0.1.5"
 hmac = { workspace = true }
 sha2 = { workspace = true }
+ureq = "3"

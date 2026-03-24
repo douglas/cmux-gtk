@@ -62,8 +62,39 @@ jobs:
             target/release/cmux-app
             target/release/cmux
 
+  build-daemon:
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
+          cache-dependency-path: daemon/remote/go.mod
+
+      - name: Cross-compile cmuxd-remote for all platforms
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          VERSION="${TAG#v}"
+          LDFLAGS="-X main.version=${VERSION}"
+          cd daemon/remote
+          for TARGET in linux-amd64 linux-arm64 darwin-amd64 darwin-arm64; do
+            GOOS="${TARGET%-*}" GOARCH="${TARGET#*-}" CGO_ENABLED=0 \
+              go build -ldflags "${LDFLAGS}" -o "../../artifacts/cmuxd-remote-${TARGET}" \
+              ./cmd/cmuxd-remote
+          done
+          cd ../../artifacts
+          sha256sum cmuxd-remote-* > checksums-sha256.txt
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: cmuxd-remote-binaries
+          path: artifacts/
+
   release:
-    needs: build
+    needs: [build, build-daemon]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -73,22 +104,30 @@ jobs:
           name: cmux-gtk-linux-amd64
           path: artifacts
 
+      - uses: actions/download-artifact@v4
+        with:
+          name: cmuxd-remote-binaries
+          path: artifacts
+
       - name: Create GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ github.ref_name }}
           REPO: ${{ github.repository }}
         run: |
-          chmod +x artifacts/cmux-app artifacts/cmux
+          chmod +x artifacts/cmux-app artifacts/cmux artifacts/cmuxd-remote-*
           # Upload to existing release if it was created manually, otherwise create new
           if gh release view "$TAG" &>/dev/null; then
-            gh release upload "$TAG" artifacts/cmux-app artifacts/cmux --clobber
+            gh release upload "$TAG" artifacts/cmux-app artifacts/cmux \
+              artifacts/cmuxd-remote-* artifacts/checksums-sha256.txt --clobber
           else
             gh release create "$TAG" \
               --title "$TAG" \
               --notes "See [CHANGELOG.md](https://github.com/${REPO}/blob/main/CHANGELOG.md) for details." \
               artifacts/cmux-app \
-              artifacts/cmux
+              artifacts/cmux \
+              artifacts/cmuxd-remote-* \
+              artifacts/checksums-sha256.txt
           fi
 
   aur:

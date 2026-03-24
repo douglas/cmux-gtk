@@ -3,7 +3,12 @@
 //! Flow:
 //! 1. SSH probe: detect remote OS/arch via `uname`
 //! 2. Check if daemon binary exists at versioned path on remote
-//! 3. If missing: build locally from Go source (or use pre-built), upload via scp
+//! 3. If missing: find/download/build locally, then upload via scp
+//!    Priority order for obtaining the binary:
+//!    a. CMUX_REMOTE_DAEMON_BINARY env var
+//!    b. Pre-built binary in XDG cache
+//!    c. Download from GitHub Releases
+//!    d. Build from Go source (developer fallback)
 //! 4. Verify: start daemon, run hello handshake
 
 use std::process::Command;
@@ -246,31 +251,152 @@ fn find_or_build_local_binary(platform: &RemotePlatform) -> Result<String, Strin
         }
     }
 
-    // Priority 3: Build from Go source
+    // Priority 3: Download from GitHub Releases
+    let version = daemon_version();
+    match download_from_github_releases(&version, platform) {
+        Ok(path) => return Ok(path),
+        Err(e) => tracing::warn!("GitHub Releases download failed (non-fatal): {e}"),
+    }
+
+    // Priority 4: Build from Go source (developer fallback)
     let go_source = find_go_source_dir()?;
     build_daemon_locally(platform, &go_source)
 }
 
+/// Download the daemon binary for the target platform from GitHub Releases.
+///
+/// On success, writes to the XDG cache directory (same path that Priority 2
+/// checks), so subsequent runs avoid the download entirely.
+fn download_from_github_releases(
+    version: &str,
+    platform: &RemotePlatform,
+) -> Result<String, String> {
+    let asset_name = format!("cmuxd-remote-{}-{}", platform.go_os, platform.go_arch);
+    let url = format!(
+        "https://github.com/manaflow-ai/cmux-gtk/releases/download/v{version}/{asset_name}"
+    );
+
+    tracing::info!(%url, "Downloading cmuxd-remote from GitHub Releases");
+
+    let response = ureq::get(&url)
+        .call()
+        .map_err(|e| format!("HTTP GET {url}: {e}"))?;
+
+    let body = response
+        .into_body()
+        .read_to_vec()
+        .map_err(|e| format!("Failed to read response body: {e}"))?;
+
+    if body.is_empty() {
+        return Err("Downloaded binary is empty".to_string());
+    }
+
+    tracing::info!(bytes = body.len(), "Downloaded {asset_name}");
+
+    // Verify SHA-256 against the release manifest (best-effort).
+    if let Err(e) = verify_sha256(version, &asset_name, &body) {
+        tracing::warn!("SHA-256 verification skipped or failed: {e}");
+    }
+
+    // Write to cache so subsequent runs hit Priority 2 instead.
+    let cache_dir = dirs::cache_dir()
+        .ok_or("Cannot determine XDG cache directory")?
+        .join("cmux")
+        .join("remote-daemons")
+        .join(version)
+        .join(format!("{}-{}", platform.go_os, platform.go_arch));
+
+    std::fs::create_dir_all(&cache_dir)
+        .map_err(|e| format!("Cannot create cache dir: {e}"))?;
+
+    let final_path = cache_dir.join("cmuxd-remote");
+    let tmp_path = cache_dir.join("cmuxd-remote.tmp");
+
+    {
+        use std::io::Write;
+        use std::os::unix::fs::OpenOptionsExt;
+        let mut f = std::fs::OpenOptions::new()
+            .create(true)
+            .truncate(true)
+            .write(true)
+            .mode(0o755)
+            .open(&tmp_path)
+            .map_err(|e| format!("Cannot write temp file: {e}"))?;
+        f.write_all(&body)
+            .map_err(|e| format!("Cannot write binary data: {e}"))?;
+    }
+
+    std::fs::rename(&tmp_path, &final_path)
+        .map_err(|e| format!("Cannot rename temp to final: {e}"))?;
+
+    tracing::info!(path = %final_path.display(), "Cached cmuxd-remote binary");
+    Ok(final_path.to_string_lossy().to_string())
+}
+
+/// Verify the binary against the SHA-256 manifest published with the release.
+fn verify_sha256(version: &str, asset_name: &str, data: &[u8]) -> Result<(), String> {
+    let manifest_url = format!(
+        "https://github.com/manaflow-ai/cmux-gtk/releases/download/v{version}/checksums-sha256.txt"
+    );
+
+    let response = ureq::get(&manifest_url)
+        .call()
+        .map_err(|e| format!("Failed to fetch checksums manifest: {e}"))?;
+
+    let body = response
+        .into_body()
+        .read_to_string()
+        .map_err(|e| format!("Failed to read manifest: {e}"))?;
+
+    for line in body.lines() {
+        // Format: "<sha256>  <filename>"
+        let mut parts = line.splitn(2, |c: char| c.is_whitespace());
+        let hash = parts.next().unwrap_or("").trim();
+        let name = parts.next().unwrap_or("").trim();
+        if name == asset_name {
+            use sha2::Digest;
+            let actual = sha2::Sha256::digest(data)
+                .iter()
+                .map(|b| format!("{b:02x}"))
+                .collect::<String>();
+            if actual != hash {
+                return Err(format!(
+                    "SHA-256 mismatch for {asset_name}: expected {hash}, got {actual}"
+                ));
+            }
+            tracing::info!("SHA-256 verified for {asset_name}");
+            return Ok(());
+        }
+    }
+
+    Err(format!(
+        "{asset_name} not found in checksums manifest for v{version}"
+    ))
+}
+
 /// Find the Go source directory for cmuxd-remote.
 fn find_go_source_dir() -> Result<String, String> {
-    // Check relative to the cmux-gtk project
-    let candidates = [
-        // Sibling directory (~/src/cmux/daemon/remote)
+    let candidates: &[std::path::PathBuf] = &[
+        // 1. Vendored source in this repository (daemon/remote/ at repo root).
+        //    CARGO_MANIFEST_DIR is cmux-gtk/cmux at compile time, so go up two levels.
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../daemon/remote"),
+        // 2. Legacy sibling repo location (~/src/cmux/daemon/remote).
         dirs::home_dir()
             .map(|h| h.join("src/cmux/daemon/remote"))
             .unwrap_or_default(),
     ];
 
-    for candidate in &candidates {
-        let go_mod = candidate.join("go.mod");
-        if go_mod.exists() {
+    for candidate in candidates {
+        if candidate.join("go.mod").exists() {
             return Ok(candidate.to_string_lossy().to_string());
         }
     }
 
     Err(
-        "Cannot find cmuxd-remote Go source. Set CMUX_REMOTE_DAEMON_BINARY or \
-         ensure ~/src/cmux/daemon/remote/ exists with go.mod"
+        "Cannot find cmuxd-remote Go source. Set CMUX_REMOTE_DAEMON_BINARY, \
+         ensure daemon/remote/ exists in the repository, or connect to the internet \
+         so the binary can be downloaded from GitHub Releases."
             .to_string(),
     )
 }

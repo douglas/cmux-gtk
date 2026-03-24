@@ -347,6 +347,7 @@ pub fn rebuild_content(content_box: &gtk4::Box, state: &Rc<AppState>) {
 
 fn refresh_ui(list_box: &gtk4::ListBox, content_box: &gtk4::Box, state: &Rc<AppState>) {
     state.prune_terminal_cache();
+    state.shared.cleanup_stale_remote_sessions();
     sidebar::refresh_sidebar(list_box, state);
     rebuild_content(content_box, state);
 

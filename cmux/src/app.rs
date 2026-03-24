@@ -388,6 +388,45 @@ impl SharedState {
     pub fn pop_closed_browser_url(&self) -> Option<String> {
         lock_or_recover(&self.closed_browser_urls).pop()
     }
+
+    /// Stop and remove remote sessions whose workspace no longer exists.
+    ///
+    /// Called during UI refresh so all workspace removal paths (sidebar close,
+    /// socket close, close-others/above/below, keyboard shortcuts) are covered
+    /// by a single check-point rather than requiring explicit dispatch at each
+    /// call site.
+    pub fn cleanup_stale_remote_sessions(&self) {
+        // Collect live workspace IDs, then release the lock before touching
+        // remote_sessions to avoid holding two locks simultaneously.
+        let live_ids: HashSet<Uuid> = {
+            let tm = lock_or_recover(&self.tab_manager);
+            tm.iter().map(|ws| ws.id).collect()
+        };
+
+        let stale: Vec<(Uuid, crate::remote::session::SharedRemoteSession)> = {
+            let mut sessions = lock_or_recover(&self.remote_sessions);
+            if sessions.is_empty() {
+                return;
+            }
+            let stale_keys: Vec<Uuid> = sessions
+                .keys()
+                .filter(|id| !live_ids.contains(id))
+                .copied()
+                .collect();
+            if stale_keys.is_empty() {
+                return;
+            }
+            stale_keys
+                .into_iter()
+                .filter_map(|id| sessions.remove(&id).map(|s| (id, s)))
+                .collect()
+        };
+
+        for (ws_id, session) in stale {
+            lock_or_recover(&session).stop();
+            tracing::info!(%ws_id, "Cleaned up orphaned remote session");
+        }
+    }
 }
 
 /// Run the GTK application. Returns the exit code.
@@ -430,6 +469,13 @@ pub fn run() -> i32 {
             let snapshot = session::store::create_snapshot(&state);
             if let Err(e) = session::store::save_session(&snapshot) {
                 tracing::error!("Failed to save session on shutdown: {}", e);
+            }
+
+            // Drain all remote sessions so SSH processes are killed before exit.
+            let sessions: Vec<_> =
+                lock_or_recover(&state.shared.remote_sessions).drain().collect();
+            for (_ws_id, session) in sessions {
+                lock_or_recover(&session).stop();
             }
 
             if let Ok(mut ptr) = GHOSTTY_APP_PTR.lock() {
