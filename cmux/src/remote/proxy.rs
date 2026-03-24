@@ -62,8 +62,22 @@ impl ProxyTunnel {
                         let rpc = Arc::clone(&rpc);
                         let active_clone = Arc::clone(&active);
                         std::thread::spawn(move || {
-                            if let Err(e) = handle_proxy_connection(stream, &rpc) {
-                                tracing::debug!("Proxy connection error: {}", e);
+                            // Wrap in catch_unwind so a panic doesn't leak the
+                            // active connection counter (which would block future
+                            // connections at the MAX_PROXY_CONNECTIONS limit).
+                            let result = std::panic::catch_unwind(
+                                std::panic::AssertUnwindSafe(|| {
+                                    handle_proxy_connection(stream, &rpc)
+                                }),
+                            );
+                            match result {
+                                Ok(Err(e)) => {
+                                    tracing::debug!("Proxy connection error: {}", e);
+                                }
+                                Err(_) => {
+                                    tracing::warn!("Proxy connection handler panicked");
+                                }
+                                _ => {}
                             }
                             active_clone
                                 .fetch_sub(1, std::sync::atomic::Ordering::Relaxed);
