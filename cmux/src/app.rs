@@ -279,6 +279,21 @@ pub enum UiEvent {
     CreateWindow,
     /// Reload ghostty configuration from disk.
     ReloadConfig,
+    /// Show the SSH workspace creation dialog.
+    OpenSshDialog,
+    /// Connect a remote SSH workspace.
+    RemoteConnect {
+        workspace_id: Uuid,
+    },
+    /// Disconnect a remote SSH workspace.
+    RemoteDisconnect {
+        workspace_id: Uuid,
+    },
+    /// Remote connection state changed (from background thread).
+    RemoteStateChanged {
+        workspace_id: Uuid,
+        state: crate::remote::session::RemoteState,
+    },
 }
 
 /// Wrapper to send a raw ghostty_surface_t across threads.
@@ -309,6 +324,9 @@ pub struct SharedState {
     pub window_sizes: Mutex<HashMap<Uuid, (i32, i32)>>,
     /// Per-window UI event senders.
     ui_event_txs: Mutex<HashMap<Uuid, UnboundedSender<UiEvent>>>,
+    /// Active remote SSH sessions keyed by workspace ID.
+    pub remote_sessions:
+        Mutex<HashMap<Uuid, crate::remote::session::SharedRemoteSession>>,
 }
 
 impl SharedState {
@@ -319,6 +337,7 @@ impl SharedState {
             closed_browser_urls: Mutex::new(Vec::new()),
             window_sizes: Mutex::new(HashMap::new()),
             ui_event_txs: Mutex::new(HashMap::new()),
+            remote_sessions: Mutex::new(HashMap::new()),
         }
     }
 

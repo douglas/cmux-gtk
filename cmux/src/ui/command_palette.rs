@@ -256,6 +256,17 @@ fn build_actions(state: &Rc<AppState>) -> Rc<Vec<PaletteAction>> {
         cmd("font.reset", "Reset Font Size"),
     ];
 
+    // Add SSH workspace command if enabled in settings
+    if crate::settings::load().remote_ssh_enabled {
+        actions.push(PaletteAction {
+            name: "workspace.new_ssh".into(),
+            label: "New SSH Workspace...".into(),
+            shortcut: None,
+            is_workspace: false,
+            is_search_result: false,
+        });
+    }
+
     // Add "Open in..." commands for installed editors
     for (binary, label) in [
         ("code", "Open in VS Code"),
@@ -699,6 +710,14 @@ fn execute_action(name: &str, state: &Rc<AppState>, on_refresh: &Rc<dyn Fn()>) {
                 .shared
                 .send_ui_event(crate::app::UiEvent::OpenFolderAsWorkspace);
             return; // UiEvent handled
+        }
+        "workspace.new_ssh" => {
+            // Handled by the command palette UI layer — dispatch via custom event.
+            // The palette dialog will call show_ssh_dialog after closing itself.
+            state
+                .shared
+                .send_ui_event(crate::app::UiEvent::OpenSshDialog);
+            return;
         }
         "terminal.copy_mode" => {
             if let Some(ws) = lock_or_recover(&state.shared.tab_manager).selected() {

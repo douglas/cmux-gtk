@@ -189,10 +189,16 @@ pub(super) fn handle_workspace_create_ssh(
             .and_then(|v| v.as_str())
         {
             if let Ok(ws_id) = Uuid::parse_str(ws_id_str) {
-                let mut tm = lock_or_recover(&state.tab_manager);
-                if let Some(ws) = tm.workspace_mut(ws_id) {
-                    ws.remote_config = Some(remote_config);
+                {
+                    let mut tm = lock_or_recover(&state.tab_manager);
+                    if let Some(ws) = tm.workspace_mut(ws_id) {
+                        ws.remote_config = Some(remote_config);
+                    }
                 }
+                // Trigger remote connection
+                state.send_ui_event(crate::app::UiEvent::RemoteConnect {
+                    workspace_id: ws_id,
+                });
             }
         }
     }

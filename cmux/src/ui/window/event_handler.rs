@@ -423,6 +423,88 @@ pub(super) fn bind_shared_state_updates(
 
                         needs_refresh = true;
                     }
+                    UiEvent::OpenSshDialog => {
+                        if let Some(window) = window_weak.upgrade() {
+                            super::dialogs::show_ssh_dialog(&window, &state);
+                        }
+                    }
+                    UiEvent::RemoteConnect { workspace_id } => {
+                        if !crate::settings::load().remote_ssh_enabled {
+                            tracing::warn!("Remote SSH disabled in settings — ignoring connect request");
+                        } else {
+                            let config = {
+                                let tm = lock_or_recover(&state.shared.tab_manager);
+                                tm.workspace(workspace_id)
+                                    .and_then(|ws| ws.remote_config.clone())
+                            };
+                            if let Some(config) = config {
+                                let shared = state.shared.clone();
+                                let ws_id = workspace_id;
+                                // Update state to Connecting immediately
+                                {
+                                    let mut tm = lock_or_recover(&shared.tab_manager);
+                                    if let Some(ws) = tm.workspace_mut(ws_id) {
+                                        ws.remote_state =
+                                            Some(crate::remote::session::RemoteState::Connecting);
+                                    }
+                                }
+                                needs_refresh = true;
+                                // Spawn connection in background
+                                std::thread::spawn(move || {
+                                    let controller =
+                                        crate::remote::session::RemoteSessionController::new(
+                                            config,
+                                        );
+                                    let session: crate::remote::session::SharedRemoteSession =
+                                        std::sync::Arc::new(std::sync::Mutex::new(controller));
+                                    let result = {
+                                        let mut ctrl = session.lock().unwrap_or_else(|p| p.into_inner());
+                                        ctrl.start()
+                                    };
+                                    let new_state = {
+                                        let ctrl = session.lock().unwrap_or_else(|p| p.into_inner());
+                                        ctrl.state.clone()
+                                    };
+                                    // Store session if connected
+                                    if result.is_ok() {
+                                        lock_or_recover(&shared.remote_sessions)
+                                            .insert(ws_id, session);
+                                    }
+                                    shared.send_ui_event(UiEvent::RemoteStateChanged {
+                                        workspace_id: ws_id,
+                                        state: new_state,
+                                    });
+                                });
+                            }
+                        }
+                    }
+                    UiEvent::RemoteDisconnect { workspace_id } => {
+                        let session = lock_or_recover(&state.shared.remote_sessions)
+                            .remove(&workspace_id);
+                        if let Some(session) = session {
+                            let mut ctrl = session.lock().unwrap_or_else(|p| p.into_inner());
+                            ctrl.stop();
+                        }
+                        {
+                            let mut tm = lock_or_recover(&state.shared.tab_manager);
+                            if let Some(ws) = tm.workspace_mut(workspace_id) {
+                                ws.remote_state =
+                                    Some(crate::remote::session::RemoteState::Disconnected);
+                            }
+                        }
+                        needs_refresh = true;
+                    }
+                    UiEvent::RemoteStateChanged {
+                        workspace_id,
+                        state: remote_state,
+                    } => {
+                        let mut tm = lock_or_recover(&state.shared.tab_manager);
+                        if let Some(ws) = tm.workspace_mut(workspace_id) {
+                            ws.remote_state = Some(remote_state);
+                        }
+                        drop(tm);
+                        needs_refresh = true;
+                    }
                     // directly via its own callbacks.
                     UiEvent::StartSearch
                     | UiEvent::EndSearch

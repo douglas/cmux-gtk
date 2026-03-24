@@ -1,6 +1,6 @@
 //! Main application window using AdwNavigationSplitView.
 
-mod dialogs;
+pub(crate) mod dialogs;
 mod event_handler;
 mod shortcuts;
 mod styling;

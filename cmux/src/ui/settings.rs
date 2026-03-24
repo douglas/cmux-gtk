@@ -102,6 +102,14 @@ pub fn show_settings(parent: &adw::ApplicationWindow, on_close: impl Fn() + 'sta
     flash_row.set_active(current_settings.pane_flash_enabled);
     behavior_group.add(&flash_row);
 
+    let remote_ssh_row = adw::SwitchRow::new();
+    remote_ssh_row.set_title("Remote SSH Workspaces");
+    remote_ssh_row.set_subtitle(
+        "Enable SSH workspace connections (bootstraps daemon on remote host)",
+    );
+    remote_ssh_row.set_active(current_settings.remote_ssh_enabled);
+    behavior_group.add(&remote_ssh_row);
+
     appearance_page.add(&behavior_group);
 
     // ── Sidebar display group ──
@@ -651,6 +659,7 @@ pub fn show_settings(parent: &adw::ApplicationWindow, on_close: impl Fn() + 'sta
                 pane_attention_ring: attention_ring_row.is_active(),
                 pane_flash_enabled: flash_row.is_active(),
                 link_routing: settings::load().link_routing,
+                remote_ssh_enabled: remote_ssh_row.is_active(),
                 shortcuts: shortcuts_state.borrow().clone(),
             };
 

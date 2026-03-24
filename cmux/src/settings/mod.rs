@@ -33,6 +33,8 @@ pub struct AppSettings {
     pub pane_flash_enabled: bool,
     /// Link routing — which links open in cmux browser vs system browser.
     pub link_routing: LinkRoutingSettings,
+    /// Enable remote SSH workspaces (off by default for security).
+    pub remote_ssh_enabled: bool,
     /// Keyboard shortcuts.
     #[serde(skip)]
     pub shortcuts: shortcuts::ShortcutConfig,
@@ -530,6 +532,7 @@ impl Default for AppSettings {
             pane_attention_ring: true,
             pane_flash_enabled: true,
             link_routing: LinkRoutingSettings::default(),
+            remote_ssh_enabled: false,
             shortcuts: shortcuts::ShortcutConfig::default(),
         }
     }

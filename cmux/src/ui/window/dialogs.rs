@@ -152,3 +152,85 @@ pub fn show_rename_tab_dialog(
     entry.grab_focus();
     entry.select_region(0, -1);
 }
+
+/// Show a dialog to create a new SSH workspace.
+pub fn show_ssh_dialog(window: &adw::ApplicationWindow, state: &Rc<AppState>) {
+    let dialog = adw::MessageDialog::new(
+        Some(window),
+        Some("New SSH Workspace"),
+        Some("Connect to a remote host via SSH"),
+    );
+
+    let group = adw::PreferencesGroup::new();
+
+    let dest_row = adw::EntryRow::new();
+    dest_row.set_title("Destination");
+    dest_row.set_text("user@host");
+    group.add(&dest_row);
+
+    let port_row = adw::EntryRow::new();
+    port_row.set_title("Port (optional)");
+    group.add(&port_row);
+
+    let identity_row = adw::EntryRow::new();
+    identity_row.set_title("Identity file (optional)");
+    identity_row.set_text("");
+    group.add(&identity_row);
+
+    dialog.set_extra_child(Some(&group));
+
+    dialog.add_response("cancel", "Cancel");
+    dialog.add_response("connect", "Connect");
+    dialog.set_default_response(Some("connect"));
+    dialog.set_response_appearance("connect", adw::ResponseAppearance::Suggested);
+
+    let state = state.clone();
+    dialog.connect_response(None, move |_dialog, response| {
+        if response != "connect" {
+            return;
+        }
+        let destination = dest_row.text().to_string();
+        if destination.is_empty() {
+            return;
+        }
+        let port: Option<u16> = port_row
+            .text()
+            .to_string()
+            .parse()
+            .ok()
+            .filter(|&p: &u16| p > 0);
+        let identity = {
+            let text = identity_row.text().to_string();
+            if text.is_empty() { None } else { Some(text) }
+        };
+
+        let remote_config = crate::remote::session::RemoteConfig {
+            destination: destination.clone(),
+            port,
+            identity,
+            ssh_options: Vec::new(),
+            remote_daemon_path: None,
+        };
+
+        let mut ws = crate::model::Workspace::new();
+        ws.custom_title = Some(destination.clone());
+        ws.remote_config = Some(remote_config);
+        let ws_id = ws.id;
+
+        {
+            let placement = crate::settings::load().new_workspace_placement;
+            let mut tm = lock_or_recover(&state.shared.tab_manager);
+            tm.add_workspace_with_placement(ws, placement);
+            tm.select_by_id(ws_id);
+        }
+
+        state
+            .shared
+            .send_ui_event(crate::app::UiEvent::RemoteConnect {
+                workspace_id: ws_id,
+            });
+        state.shared.notify_ui_refresh();
+    });
+
+    dialog.present();
+}
