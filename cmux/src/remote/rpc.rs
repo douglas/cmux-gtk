@@ -157,7 +157,10 @@ impl RemoteRpcClient {
                 // Check if this is a response (has "id") or a push event
                 if let Some(id) = msg.get("id").and_then(|v| v.as_u64()) {
                     // Response to a pending call
-                    let sender = pending_clone.lock().expect("mutex poisoned").remove(&id);
+                    let sender = pending_clone
+                        .lock()
+                        .unwrap_or_else(|p| p.into_inner())
+                        .remove(&id);
                     if let Some(tx) = sender {
                         let result = if msg.get("ok").and_then(|v| v.as_bool()).unwrap_or(false) {
                             Ok(msg.get("result").cloned().unwrap_or(Value::Null))
@@ -210,7 +213,7 @@ impl RemoteRpcClient {
                                 _ => continue,
                             };
 
-                            let subs = subs_clone.lock().expect("mutex poisoned");
+                            let subs = subs_clone.lock().unwrap_or_else(|p| p.into_inner());
                             if let Some(tx) = subs.get(&stream_id) {
                                 let _ = tx.send(event);
                             }
@@ -253,13 +256,21 @@ impl RemoteRpcClient {
         });
 
         let (tx, rx) = std::sync::mpsc::channel();
-        self.pending.lock().expect("mutex poisoned").insert(id, tx);
+        self.pending.lock().unwrap_or_else(|p| p.into_inner()).insert(id, tx);
 
         {
-            let mut stdin = self.stdin.lock().expect("mutex poisoned");
+            // stdin poison means a partial write corrupted the protocol — treat as fatal.
+            let mut stdin = match self.stdin.lock() {
+                Ok(guard) => guard,
+                Err(_) => {
+                    self.alive.store(false, Ordering::Release);
+                    self.pending.lock().unwrap_or_else(|p| p.into_inner()).remove(&id);
+                    return Err("RPC connection corrupted (stdin mutex poisoned)".to_string());
+                }
+            };
             let line = serde_json::to_string(&request).expect("RPC request JSON");
             if let Err(e) = writeln!(stdin, "{}", line) {
-                self.pending.lock().expect("mutex poisoned").remove(&id);
+                self.pending.lock().unwrap_or_else(|p| p.into_inner()).remove(&id);
                 return Err(format!("Failed to write RPC request: {}", e));
             }
             let _ = stdin.flush();
@@ -269,7 +280,7 @@ impl RemoteRpcClient {
             Ok(Ok(result)) => Ok(result),
             Ok(Err(rpc_err)) => Err(format!("RPC error: {}", rpc_err)),
             Err(_) => {
-                self.pending.lock().expect("mutex poisoned").remove(&id);
+                self.pending.lock().unwrap_or_else(|p| p.into_inner()).remove(&id);
                 Err("RPC call timed out".to_string())
             }
         }
@@ -343,7 +354,7 @@ impl RemoteRpcClient {
         let _ = self.call("proxy.close", serde_json::json!({"stream_id": stream_id}));
         self.stream_subs
             .lock()
-            .expect("mutex poisoned")
+            .unwrap_or_else(|p| p.into_inner())
             .remove(&stream_id);
         Ok(())
     }
@@ -360,7 +371,7 @@ impl RemoteRpcClient {
         let (tx, rx) = mpsc::channel();
         self.stream_subs
             .lock()
-            .expect("mutex poisoned")
+            .unwrap_or_else(|p| p.into_inner())
             .insert(stream_id, tx);
         Ok(rx)
     }

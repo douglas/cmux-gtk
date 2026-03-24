@@ -22,6 +22,41 @@ import (
 
 var version = "dev"
 
+// blockedCIDRs are destination addresses blocked by default in proxy.open to
+// prevent SSRF attacks from malicious pages loaded in the browser panel.
+// Set CMUXD_PROXY_ALLOW_PRIVATE=1 to permit connections to private/loopback
+// addresses (e.g., to proxy a dev server running on the remote host).
+var blockedCIDRs = func() []*net.IPNet {
+	cidrs := []string{
+		"127.0.0.0/8",        // IPv4 loopback
+		"::1/128",            // IPv6 loopback
+		"169.254.0.0/16",     // IPv4 link-local (incl. cloud metadata 169.254.169.254)
+		"fe80::/10",          // IPv6 link-local
+		"10.0.0.0/8",         // RFC 1918 private
+		"172.16.0.0/12",      // RFC 1918 private
+		"192.168.0.0/16",     // RFC 1918 private
+		"fc00::/7",            // IPv6 unique-local (fd00::/8 and fc00::/8)
+	}
+	var nets []*net.IPNet
+	for _, cidr := range cidrs {
+		_, ipnet, err := net.ParseCIDR(cidr)
+		if err == nil {
+			nets = append(nets, ipnet)
+		}
+	}
+	return nets
+}()
+
+// isBlockedAddr returns true if ip matches any of the blocked CIDRs.
+func isBlockedAddr(ip net.IP) bool {
+	for _, cidr := range blockedCIDRs {
+		if cidr.Contains(ip) {
+			return true
+		}
+	}
+	return false
+}
+
 type rpcRequest struct {
 	ID     any            `json:"id"`
 	Method string         `json:"method"`
@@ -412,6 +447,35 @@ func (s *rpcServer) handleProxyOpen(req rpcRequest) rpcResponse {
 		}
 	}
 	s.mu.Unlock()
+
+	// SSRF denylist: resolve the host and reject private/loopback/link-local
+	// destinations unless the operator has explicitly opted in.
+	if os.Getenv("CMUXD_PROXY_ALLOW_PRIVATE") != "1" {
+		addrs, err := net.LookupHost(host)
+		if err != nil {
+			return rpcResponse{
+				ID: req.ID,
+				OK: false,
+				Error: &rpcError{
+					Code:    "resolve_failed",
+					Message: fmt.Sprintf("cannot resolve host %q: %v", host, err),
+				},
+			}
+		}
+		for _, addr := range addrs {
+			ip := net.ParseIP(addr)
+			if ip != nil && isBlockedAddr(ip) {
+				return rpcResponse{
+					ID: req.ID,
+					OK: false,
+					Error: &rpcError{
+						Code:    "blocked",
+						Message: fmt.Sprintf("proxy.open: destination %q resolves to a blocked address (%s); set CMUXD_PROXY_ALLOW_PRIVATE=1 to allow", host, addr),
+					},
+				}
+			}
+		}
+	}
 
 	conn, err := net.DialTimeout(
 		"tcp",

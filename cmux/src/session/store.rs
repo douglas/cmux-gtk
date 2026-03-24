@@ -171,18 +171,24 @@ fn truncate_scrollback(text: &str) -> String {
 
 /// Create a snapshot from the current application state.
 pub fn create_snapshot(state: &crate::app::AppState) -> AppSessionSnapshot {
-    // Capture scrollback text for all terminal panels before locking tab_manager
-    let scrollback_map: std::collections::HashMap<uuid::Uuid, String> = state
-        .terminal_cache
-        .borrow()
-        .iter()
-        .filter_map(|(&panel_id, surface)| {
-            surface
-                .read_scrollback_text()
-                .filter(|t| !t.is_empty())
-                .map(|text| (panel_id, truncate_scrollback(&text)))
-        })
-        .collect();
+    // Capture scrollback text for all terminal panels before locking tab_manager.
+    // Skipped when persist_scrollback=false to avoid persisting sensitive data.
+    let persist_scrollback = crate::settings::load().persist_scrollback;
+    let scrollback_map: std::collections::HashMap<uuid::Uuid, String> = if persist_scrollback {
+        state
+            .terminal_cache
+            .borrow()
+            .iter()
+            .filter_map(|(&panel_id, surface)| {
+                surface
+                    .read_scrollback_text()
+                    .filter(|t| !t.is_empty())
+                    .map(|text| (panel_id, truncate_scrollback(&text)))
+            })
+            .collect()
+    } else {
+        Default::default()
+    };
 
     // Capture browser state from WebView registry (GTK main thread)
     #[cfg(feature = "webkit")]

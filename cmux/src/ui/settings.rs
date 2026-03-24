@@ -660,6 +660,7 @@ pub fn show_settings(parent: &adw::ApplicationWindow, on_close: impl Fn() + 'sta
                 pane_flash_enabled: flash_row.is_active(),
                 link_routing: settings::load().link_routing,
                 remote_ssh_enabled: remote_ssh_row.is_active(),
+                persist_scrollback: current_settings.persist_scrollback,
                 shortcuts: shortcuts_state.borrow().clone(),
             };
 

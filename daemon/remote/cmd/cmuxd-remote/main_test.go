@@ -256,6 +256,9 @@ func TestRunStdioSessionResizeFlow(t *testing.T) {
 }
 
 func TestProxyStreamRoundTrip(t *testing.T) {
+	// Allow private/loopback addresses so the test server can connect to the
+	// loopback listener without hitting the SSRF denylist.
+	t.Setenv("CMUXD_PROXY_ALLOW_PRIVATE", "1")
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatalf("listen failed: %v", err)
@@ -751,5 +754,117 @@ func asInt(t *testing.T, value any, field string) int {
 	default:
 		t.Fatalf("%s has unexpected type %T (%v)", field, value, value)
 		return 0
+	}
+}
+
+func TestIsBlockedAddr(t *testing.T) {
+	blocked := []string{
+		"127.0.0.1",
+		"127.0.0.2",
+		"::1",
+		"169.254.169.254", // AWS/GCP/Azure metadata
+		"169.254.0.1",
+		"fe80::1",
+		"10.0.0.1",
+		"172.16.0.1",
+		"172.31.255.255",
+		"192.168.1.1",
+		"fd00::1",
+		"fc00::1",
+	}
+	for _, addr := range blocked {
+		ip := net.ParseIP(addr)
+		if ip == nil {
+			t.Fatalf("failed to parse test IP %q", addr)
+		}
+		if !isBlockedAddr(ip) {
+			t.Errorf("expected %q to be blocked", addr)
+		}
+	}
+
+	allowed := []string{
+		"1.1.1.1",
+		"8.8.8.8",
+		"2606:4700:4700::1111", // Cloudflare DNS IPv6
+		"93.184.216.34",        // example.com
+	}
+	for _, addr := range allowed {
+		ip := net.ParseIP(addr)
+		if ip == nil {
+			t.Fatalf("failed to parse test IP %q", addr)
+		}
+		if isBlockedAddr(ip) {
+			t.Errorf("expected %q to be allowed", addr)
+		}
+	}
+}
+
+func newTestServer() *rpcServer {
+	return &rpcServer{
+		nextStreamID:  1,
+		nextSessionID: 1,
+		streams:       map[string]*streamState{},
+		sessions:      map[string]*sessionState{},
+	}
+}
+
+func TestProxyOpenBlockedLoopback(t *testing.T) {
+	t.Setenv("CMUXD_PROXY_ALLOW_PRIVATE", "0")
+
+	server := newTestServer()
+	defer server.closeAll()
+
+	resp := server.handleRequest(rpcRequest{
+		ID:     1,
+		Method: "proxy.open",
+		Params: map[string]any{"host": "127.0.0.1", "port": 80},
+	})
+	if resp.OK {
+		t.Fatal("expected proxy.open to be blocked for 127.0.0.1")
+	}
+	if resp.Error == nil || resp.Error.Code != "blocked" {
+		t.Errorf("expected error code 'blocked', got %+v", resp.Error)
+	}
+}
+
+func TestProxyOpenBlockedMetadata(t *testing.T) {
+	t.Setenv("CMUXD_PROXY_ALLOW_PRIVATE", "0")
+
+	server := newTestServer()
+	defer server.closeAll()
+
+	// 169.254.169.254 is a literal IP — resolved directly, should be blocked.
+	resp := server.handleRequest(rpcRequest{
+		ID:     1,
+		Method: "proxy.open",
+		Params: map[string]any{"host": "169.254.169.254", "port": 80},
+	})
+	if resp.OK {
+		t.Fatal("expected proxy.open to be blocked for cloud metadata IP")
+	}
+	if resp.Error == nil || resp.Error.Code != "blocked" {
+		t.Errorf("expected error code 'blocked', got %+v", resp.Error)
+	}
+}
+
+func TestProxyOpenAllowPrivateEnvOverride(t *testing.T) {
+	// With CMUXD_PROXY_ALLOW_PRIVATE=1, connections to private IPs skip the
+	// denylist and are attempted — they'll fail with open_failed (connection
+	// refused) not "blocked".
+	t.Setenv("CMUXD_PROXY_ALLOW_PRIVATE", "1")
+
+	server := newTestServer()
+	defer server.closeAll()
+
+	resp := server.handleRequest(rpcRequest{
+		ID:     1,
+		Method: "proxy.open",
+		Params: map[string]any{"host": "127.0.0.1", "port": 1, "timeout_ms": 500},
+	})
+	if resp.OK {
+		t.Fatal("expected proxy.open to fail (nothing listens on port 1)")
+	}
+	if resp.Error != nil && resp.Error.Code == "blocked" {
+		t.Errorf("CMUXD_PROXY_ALLOW_PRIVATE=1 should bypass the block, got 'blocked'")
 	}
 }

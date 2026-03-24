@@ -35,6 +35,9 @@ pub struct AppSettings {
     pub link_routing: LinkRoutingSettings,
     /// Enable remote SSH workspaces (off by default for security).
     pub remote_ssh_enabled: bool,
+    /// Persist terminal scrollback in session.json (default: true).
+    /// Disable if terminal output may contain sensitive data (passwords, tokens).
+    pub persist_scrollback: bool,
     /// Keyboard shortcuts.
     #[serde(skip)]
     pub shortcuts: shortcuts::ShortcutConfig,
@@ -533,6 +536,7 @@ impl Default for AppSettings {
             pane_flash_enabled: true,
             link_routing: LinkRoutingSettings::default(),
             remote_ssh_enabled: false,
+            persist_scrollback: true,
             shortcuts: shortcuts::ShortcutConfig::default(),
         }
     }

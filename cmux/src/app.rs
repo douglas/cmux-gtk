@@ -594,10 +594,32 @@ pub fn open_window(app: &adw::Application, state: &Rc<AppState>, window_id: Uuid
     window.present();
 }
 
+/// Remove all scrollback temp files left from the previous session.
+///
+/// Files in `~/.cache/cmux/scrollback/` are written at session-restore time
+/// and read by the shell integration script.  They should be cleaned up after
+/// the session starts, but since there is no reliable "terminal has read it"
+/// signal, we clean up at the start of the *next* session instead.
+fn cleanup_scrollback_temp_files() {
+    let dir = dirs::cache_dir()
+        .or_else(|| dirs::home_dir().map(|h| h.join(".cache")))
+        .unwrap_or_else(std::env::temp_dir)
+        .join("cmux/scrollback");
+    let Ok(entries) = std::fs::read_dir(&dir) else { return };
+    for entry in entries.flatten() {
+        if entry.path().extension().is_some_and(|e| e == "txt") {
+            let _ = std::fs::remove_file(entry.path());
+        }
+    }
+}
+
 /// Restore workspaces from a saved session. Returns window IDs for each restored window.
 ///
 /// Session restore can be disabled by setting `CMUX_DISABLE_SESSION_RESTORE=1`.
 fn restore_session(state: &Rc<AppState>) -> Vec<Uuid> {
+    // Clean up temp scrollback files from the previous session before creating new ones.
+    cleanup_scrollback_temp_files();
+
     if std::env::var("CMUX_DISABLE_SESSION_RESTORE")
         .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
         .unwrap_or(false)
