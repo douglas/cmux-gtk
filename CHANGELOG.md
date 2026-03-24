@@ -4,17 +4,31 @@
 
 ### Added
 
+- **Remote SSH workspaces** — `cmux ssh user@host` connects to remote hosts with a full cmux workspace: auto-bootstrapped daemon (`cmuxd-remote`), SOCKS5 proxy tunnel for browser traffic, CLI relay for remote cmux commands, sidebar connection state indicators (Connecting / Connected / Disconnected / Error)
+- Remote workspace connection health monitor with automatic reconnect on session restore
+- Toast error notifications for remote workspace connection failures
+- `persist_scrollback` setting (default: on) — when disabled, terminal scrollback is omitted from session snapshots entirely; protects passwords and tokens from being written to disk
 - Browser support is now optional — build without WebKit via `--no-default-features` for a lighter terminal-only binary
 - Security documentation at `docs/security.md` covering threat model, authentication, and all hardening measures
 - AGPL-3.0 license and CONTRIBUTING.md
 
 ### Changed
 
+- Socket auth modes reduced from 6 to 5 — removed `Password` mode (dead code, superseded by `SO_PEERCRED` same-UID check)
 - Disable GLES and Vulkan GDK backends — forces desktop OpenGL for ghostty compatibility on all hardware
 - License changed from MIT to AGPL-3.0-or-later
+- Quit confirmation dialog now uses square corners to match the app's flat aesthetic
 
 ### Fixed
 
+- **SSRF**: Proxy tunnel `proxy.open` now resolves hostnames and checks all resolved IPs against a CIDR denylist (loopback, link-local, RFC-1918, cloud metadata `169.254.169.254`). Set `CMUXD_PROXY_ALLOW_PRIVATE=1` on the remote host to allow proxying to local dev servers
+- **XSS**: HTTP interstitial "Proceed Anyway" button uses `data-href` attribute + event listener instead of inline `onclick` — eliminates the HTML/JS nested escaping context that allowed `&#39;` → `'` injection
+- **RPC mutex safety**: JSON-RPC client recovers from mutex poison on bookkeeping maps; stdin mutex poison is treated as fatal (connection marked dead, caller receives error) to prevent partial-write protocol corruption
+- Block `javascript:` scheme in browser navigation allowlist
+- Markdown panels: deny-all permission requests (camera/mic/geo), open external HTTP(S) links via xdg-open, block all other external navigations
+- Config directories (`~/.config/cmux/`) created with explicit 0o700 permissions instead of relying on umask
+- PID lockfile and remote daemon download temp files use O_EXCL creation to prevent symlink attacks
+- Scrollback temp files under `~/.cache/cmux/scrollback/` cleaned up at session restore
 - Replace openssl subprocess with native Rust HMAC-SHA256 (`hmac` + `sha2` crates) — eliminates auth bypass when openssl is missing
 - Fix JavaScript injection in browser `input_mouse`/`input_keyboard`/`input_touch` — event types now validated against whitelist
 - Remove unnecessary `Sync` on FFI pointer wrappers (`SendSurfacePtr`, `SendAppPtr`)
