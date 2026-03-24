@@ -192,6 +192,8 @@ pub fn refresh_sidebar(list_box: &gtk4::ListBox, state: &Rc<AppState>) {
                     index,
                     workspace.is_pinned,
                     workspace.window_id,
+                    workspace.id,
+                    workspace.remote_config.is_some(),
                     state,
                 );
                 setup_row_close_button(&row, index, state);
@@ -679,6 +681,8 @@ fn setup_row_context_menu(
     index: usize,
     is_pinned: bool,
     window_id: Option<uuid::Uuid>,
+    workspace_id: uuid::Uuid,
+    has_remote: bool,
     state: &Rc<AppState>,
 ) {
     let menu = gtk4::gio::Menu::new();
@@ -759,6 +763,20 @@ fn setup_row_context_menu(
             );
         }
         menu.append_submenu(Some("Move to Window"), &window_menu);
+    }
+
+    // Remote SSH section (only for remote workspaces)
+    if has_remote {
+        let remote_menu = gtk4::gio::Menu::new();
+        remote_menu.append(
+            Some("Reconnect"),
+            Some(&format!("sidebar.remote-reconnect.{index}")),
+        );
+        remote_menu.append(
+            Some("Disconnect"),
+            Some(&format!("sidebar.remote-disconnect.{index}")),
+        );
+        menu.append_section(None, &remote_menu);
     }
 
     // Close section
@@ -1038,6 +1056,38 @@ fn setup_row_context_menu(
         });
     }
     action_group.add_action(&close_below_action);
+
+    // Remote SSH actions (only registered when this is a remote workspace)
+    if has_remote {
+        let reconnect_action =
+            gtk4::gio::SimpleAction::new(&format!("remote-reconnect.{index}"), None);
+        {
+            let state = state.clone();
+            reconnect_action.connect_activate(move |_, _| {
+                state
+                    .shared
+                    .send_ui_event(crate::app::UiEvent::RemoteDisconnect {
+                        workspace_id,
+                    });
+                state
+                    .shared
+                    .send_ui_event(crate::app::UiEvent::RemoteConnect { workspace_id });
+            });
+        }
+        action_group.add_action(&reconnect_action);
+
+        let disconnect_action =
+            gtk4::gio::SimpleAction::new(&format!("remote-disconnect.{index}"), None);
+        {
+            let state = state.clone();
+            disconnect_action.connect_activate(move |_, _| {
+                state
+                    .shared
+                    .send_ui_event(crate::app::UiEvent::RemoteDisconnect { workspace_id });
+            });
+        }
+        action_group.add_action(&disconnect_action);
+    }
 
     row.insert_action_group("sidebar", Some(&action_group));
 }

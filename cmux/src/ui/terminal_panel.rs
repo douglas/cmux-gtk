@@ -268,11 +268,25 @@ fn create_browser_widget(
     if let Some(widget) = state.get_cached_browser(panel.id) {
         return widget;
     }
+    // For remote workspaces with an active proxy tunnel, route the WebView
+    // through the local SOCKS5 port so traffic travels over SSH.
+    let proxy_port = {
+        let tm = crate::app::lock_or_recover(&state.shared.tab_manager);
+        tm.find_workspace_with_panel(panel.id).and_then(|ws| {
+            match &ws.remote_state {
+                Some(crate::remote::session::RemoteState::Connected { proxy_port, .. }) => {
+                    Some(*proxy_port)
+                }
+                _ => None,
+            }
+        })
+    };
     let widget = super::browser_panel::create_browser_widget(
         panel.id,
         panel.directory.as_deref(),
         is_attention_source,
         panel.pending_zoom,
+        proxy_port,
         Some(state.shared.clone()),
     );
     state.cache_browser(panel.id, widget.clone());

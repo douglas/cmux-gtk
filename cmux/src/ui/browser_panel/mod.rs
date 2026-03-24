@@ -155,6 +155,7 @@ pub fn create_browser_widget(
     initial_url: Option<&str>,
     is_attention_source: bool,
     initial_zoom: Option<f64>,
+    proxy_port: Option<u16>,
     shared: Option<std::sync::Arc<crate::app::SharedState>>,
 ) -> gtk4::Widget {
     let profile_name = browser_profiles::default_profile_name();
@@ -164,6 +165,7 @@ pub fn create_browser_widget(
         is_attention_source,
         initial_zoom,
         &profile_name,
+        proxy_port,
         shared,
     )
 }
@@ -175,6 +177,7 @@ pub fn create_browser_widget_with_profile(
     is_attention_source: bool,
     initial_zoom: Option<f64>,
     profile_name: &str,
+    proxy_port: Option<u16>,
     shared: Option<std::sync::Arc<crate::app::SharedState>>,
 ) -> gtk4::Widget {
     let browser_settings = settings::load().browser;
@@ -315,8 +318,22 @@ pub fn create_browser_widget_with_profile(
     container.append(&find_bar);
 
     // -- WebView (profile-based session for cookie/storage isolation) --
+    // Remote workspaces use an ephemeral session with a SOCKS5 proxy through
+    // the SSH tunnel; local workspaces use the shared per-profile session.
+    let network_session = if let Some(port) = proxy_port {
+        let session = webkit6::NetworkSession::new_ephemeral();
+        let proxy_settings = webkit6::NetworkProxySettings::new(
+            Some(&format!("socks5://127.0.0.1:{port}")),
+            &[],
+        );
+        session.set_proxy_settings(webkit6::NetworkProxyMode::Custom, Some(&proxy_settings));
+        wire_download_handling(&session);
+        session
+    } else {
+        browser_profiles::network_session_for(profile_name)
+    };
     let web_view = webkit6::WebView::builder()
-        .network_session(&browser_profiles::network_session_for(profile_name))
+        .network_session(&network_session)
         .build();
     web_view.set_hexpand(true);
     web_view.set_vexpand(true);
