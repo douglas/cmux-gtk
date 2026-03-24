@@ -81,8 +81,8 @@ cargo build --release --no-default-features --features cmux/link-ghostty
 
 ## Architecture Review
 
-**Read `docs/architecture-review.md` and `docs/ubuntu-mvp-spec.md` before making structural changes.**
-They document the current Ubuntu MVP tradeoffs, Ghostty integration constraints, and review scope.
+**Read `docs/architecture-review.md` before making structural changes.**
+It documents the Ghostty integration constraints and architectural decisions.
 
 ## Shell Integration
 
