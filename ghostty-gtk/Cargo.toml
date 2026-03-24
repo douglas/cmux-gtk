@@ -1,6 +1,6 @@
 [package]
 name = "ghostty-gtk"
-version = "0.62.0-alpha.3"
+version = "0.62.0-alpha.4"
 edition.workspace = true
 description = "Safe Rust wrapper around libghostty for GTK4 integration"
 

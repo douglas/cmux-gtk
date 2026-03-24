@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.62.0-alpha.4] - 2026-03-23
+
+### Changed
+
+- Switch ghostty submodule from manaflow-ai fork to upstream ghostty 1.3.1 stable (douglas/ghostty) — no fork-specific code remains
+
+### Fixed
+
+- Fix `?` and other shifted keys not working in Claude Code / Codex TUI (caused by manaflow ghostty fork key handling)
+- Fix shell integration debug output (`cur_head=...`) leaking to terminal when Claude Code enables xtrace
+- Fix GTK warnings about finalized ListBoxRow with leftover PopoverMenu children on sidebar refresh
+
 ## [0.62.0-alpha.3] - 2026-03-23
 
 ### Added
