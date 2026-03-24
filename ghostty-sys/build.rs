@@ -33,6 +33,32 @@ fn main() {
             )
         });
 
+    // Apply Linux embedded support patch if not already applied.
+    // This adds GHOSTTY_PLATFORM_LINUX to upstream ghostty, which only
+    // ships macOS/iOS platform support. When upstream merges equivalent
+    // support (see ghostty-org/ghostty#11721), delete the patch file.
+    let patch_file = manifest_dir.join("patches/linux-embedded.patch");
+    if patch_file.exists() {
+        // Check if patch is needed (look for the marker it adds)
+        let header = ghostty_dir.join("include/ghostty.h");
+        let needs_patch = fs::read_to_string(&header)
+            .map(|h| !h.contains("GHOSTTY_PLATFORM_LINUX"))
+            .unwrap_or(false);
+        if needs_patch {
+            // Use `patch -p1` instead of `git apply` — works even without .git
+            let apply = Command::new("patch")
+                .args(["-p1", "-N", "-i"])
+                .arg(&patch_file)
+                .current_dir(&ghostty_dir)
+                .status()
+                .expect("Failed to run patch. Is patch installed?");
+            if !apply.success() {
+                panic!("Failed to apply Linux embedded patch to ghostty");
+            }
+            println!("cargo:warning=Applied Linux embedded platform patch to ghostty");
+        }
+    }
+
     // Build libghostty as a static library using zig build
     let output_dir = PathBuf::from(env::var("OUT_DIR").unwrap());
 

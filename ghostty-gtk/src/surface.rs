@@ -157,6 +157,15 @@ mod imp {
             widget.make_current();
             if widget.error().is_some() {
                 tracing::error!("Failed to make GL context current");
+                return;
+            }
+            // Re-realize after reparent: reinitialize renderer GL state.
+            let surface = self.surface.get();
+            if !surface.is_null() {
+                #[cfg(feature = "link-ghostty")]
+                unsafe {
+                    ghostty_surface_display_realized(surface);
+                }
             }
         }
 
