@@ -32,8 +32,7 @@ pub struct HelloResponse {
     pub name: String,
     pub version: String,
     pub capabilities: Vec<String>,
-    #[allow(dead_code)]
-    pub remote_path: String,
+    pub _remote_path: String,
 }
 
 type PendingCall = std::sync::mpsc::Sender<Result<Value, RpcError>>;
@@ -285,7 +284,7 @@ impl RemoteRpcClient {
                     .collect()
             })
             .unwrap_or_default();
-        let remote_path = result
+        let _remote_path = result
             .get("remote_path")
             .and_then(|v| v.as_str())
             .unwrap_or("")
@@ -299,7 +298,7 @@ impl RemoteRpcClient {
             name,
             version,
             capabilities,
-            remote_path,
+            _remote_path,
         })
     }
 

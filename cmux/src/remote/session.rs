@@ -206,25 +206,9 @@ impl RemoteSessionController {
         tracing::info!(destination = %self.config.destination, "Remote session stopped");
     }
 
-    /// Disconnect and reconnect.
-    #[allow(dead_code)]
-    pub fn reconnect(&mut self) -> Result<(), String> {
-        self.stop();
-        self.start()
-    }
-
     /// Whether the underlying SSH/RPC connection is still alive.
     pub fn is_alive(&self) -> bool {
         self.rpc.as_ref().map(|r| r.is_alive()).unwrap_or(false)
-    }
-
-    /// The local proxy port, if connected.
-    #[allow(dead_code)]
-    pub fn proxy_port(&self) -> Option<u16> {
-        match &self.state {
-            RemoteState::Connected { proxy_port, .. } => Some(*proxy_port),
-            _ => None,
-        }
     }
 }
 
@@ -236,3 +220,106 @@ impl Drop for RemoteSessionController {
 
 /// Thread-safe wrapper for RemoteSessionController.
 pub type SharedRemoteSession = Arc<Mutex<RemoteSessionController>>;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn config(destination: &str) -> RemoteConfig {
+        RemoteConfig {
+            destination: destination.to_string(),
+            port: None,
+            identity: None,
+            ssh_options: Vec::new(),
+            remote_daemon_path: None,
+        }
+    }
+
+    #[test]
+    fn test_ssh_args_basic() {
+        let args = config("user@host").ssh_args();
+        assert_eq!(args, vec!["user@host"]);
+    }
+
+    #[test]
+    fn test_ssh_args_with_port_and_identity() {
+        let c = RemoteConfig {
+            destination: "host".to_string(),
+            port: Some(2222),
+            identity: Some("/path/to/key".to_string()),
+            ssh_options: Vec::new(),
+            remote_daemon_path: None,
+        };
+        assert_eq!(c.ssh_args(), vec!["-p", "2222", "-i", "/path/to/key", "host"]);
+    }
+
+    #[test]
+    fn test_ssh_args_rejects_flag_injection() {
+        let c = RemoteConfig {
+            destination: "host".to_string(),
+            port: None,
+            identity: None,
+            ssh_options: vec![
+                "-o ProxyCommand=evil".to_string(),
+                "--flag".to_string(),
+            ],
+            remote_daemon_path: None,
+        };
+        // Both options start with '-', so neither passes through
+        let args = c.ssh_args();
+        assert_eq!(args, vec!["host"]);
+    }
+
+    #[test]
+    fn test_ssh_args_accepts_valid_options() {
+        let c = RemoteConfig {
+            destination: "host".to_string(),
+            port: None,
+            identity: None,
+            ssh_options: vec![
+                "StrictHostKeyChecking=no".to_string(),
+                "ServerAliveInterval=30".to_string(),
+            ],
+            remote_daemon_path: None,
+        };
+        let args = c.ssh_args();
+        assert_eq!(
+            args,
+            vec![
+                "-o", "StrictHostKeyChecking=no",
+                "-o", "ServerAliveInterval=30",
+                "host",
+            ]
+        );
+    }
+
+    #[test]
+    fn test_ssh_args_rejects_long_option() {
+        let c = RemoteConfig {
+            destination: "host".to_string(),
+            port: None,
+            identity: None,
+            ssh_options: vec!["A".repeat(256)],
+            remote_daemon_path: None,
+        };
+        // Longer than 255 chars is rejected
+        assert_eq!(c.ssh_args(), vec!["host"]);
+    }
+
+    #[test]
+    fn test_daemon_path_default() {
+        assert_eq!(config("host").daemon_path(), "~/.cmux/bin/cmuxd-remote");
+    }
+
+    #[test]
+    fn test_daemon_path_custom() {
+        let c = RemoteConfig {
+            destination: "host".to_string(),
+            port: None,
+            identity: None,
+            ssh_options: Vec::new(),
+            remote_daemon_path: Some("/custom/path/cmuxd".to_string()),
+        };
+        assert_eq!(c.daemon_path(), "/custom/path/cmuxd");
+    }
+}

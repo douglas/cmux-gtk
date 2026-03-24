@@ -134,6 +134,10 @@ pub(super) fn handle_workspace_create_ssh(
     params: &Value,
     state: &Arc<SharedState>,
 ) -> Response {
+    if !crate::settings::load().remote_ssh_enabled {
+        return Response::error(id, "disabled", "Remote SSH is disabled in settings");
+    }
+
     let destination = match params.get("destination").and_then(|v| v.as_str()) {
         Some(d) => d,
         None => return Response::error(id, "invalid_params", "destination is required"),

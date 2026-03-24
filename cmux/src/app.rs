@@ -527,6 +527,22 @@ fn activate(app: &adw::Application, state: &Rc<AppState>) {
         }
     }
 
+    // Auto-reconnect remote workspaces from restored session
+    if crate::settings::load().remote_ssh_enabled {
+        let remote_ws_ids: Vec<Uuid> = {
+            let tm = lock_or_recover(&state.shared.tab_manager);
+            tm.iter()
+                .filter(|ws| ws.remote_config.is_some())
+                .map(|ws| ws.id)
+                .collect()
+        };
+        for ws_id in remote_ws_ids {
+            state
+                .shared
+                .send_ui_event(UiEvent::RemoteConnect { workspace_id: ws_id });
+        }
+    }
+
     // Start periodic autosave (every 8 seconds, matching macOS cmux)
     {
         let state = state.clone();

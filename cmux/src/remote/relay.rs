@@ -83,21 +83,9 @@ impl RelayServer {
         })
     }
 
-    /// The local port the relay is listening on.
-    #[allow(dead_code)]
-    pub fn local_port(&self) -> u16 {
-        self.local_port
-    }
-
     /// The relay ID for authentication.
     pub fn relay_id(&self) -> &str {
         &self.relay_id
-    }
-
-    /// The auth token for HMAC verification.
-    #[allow(dead_code)]
-    pub fn auth_token(&self) -> &str {
-        &self.auth_token
     }
 
     /// Start the SSH reverse tunnel and install metadata on the remote host.

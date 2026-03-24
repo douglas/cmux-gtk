@@ -405,3 +405,34 @@ fn find_go_source_dir() -> Result<String, String> {
 fn daemon_version() -> String {
     env!("CARGO_PKG_VERSION").to_string()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_remote_daemon_path_format() {
+        let platform = RemotePlatform {
+            go_os: "linux".to_string(),
+            go_arch: "amd64".to_string(),
+        };
+        let path = remote_daemon_path("1.2.3", &platform);
+        assert_eq!(
+            path,
+            "~/.cmux/bin/cmuxd-remote/1.2.3/linux-amd64/cmuxd-remote"
+        );
+    }
+
+    #[test]
+    fn test_remote_daemon_path_darwin_arm64() {
+        let platform = RemotePlatform {
+            go_os: "darwin".to_string(),
+            go_arch: "arm64".to_string(),
+        };
+        let path = remote_daemon_path("0.62.0-alpha.8", &platform);
+        assert_eq!(
+            path,
+            "~/.cmux/bin/cmuxd-remote/0.62.0-alpha.8/darwin-arm64/cmuxd-remote"
+        );
+    }
+}

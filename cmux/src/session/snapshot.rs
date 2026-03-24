@@ -226,7 +226,7 @@ impl SessionPanelSnapshot {
             terminal: if panel.panel_type == crate::model::PanelType::Terminal {
                 Some(SessionTerminalPanelSnapshot {
                     working_directory: panel.directory.clone(),
-                    scrollback: None, // TODO: capture scrollback
+                    scrollback: None, // Filled in by create_snapshot() after surface read
                 })
             } else {
                 None
