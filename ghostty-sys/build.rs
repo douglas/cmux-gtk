@@ -174,6 +174,9 @@ pub fn main() !void {
     );
 
     println!("cargo:rustc-link-search=native={}", lib_dir.display());
+    // Link GLAD before ghostty so its symbols are available when the
+    // linker resolves libghostty.so's references to gladLoader*.
+    println!("cargo:rustc-link-lib=static=glad");
     println!("cargo:rustc-link-lib=dylib=ghostty");
     println!(
         "cargo:rustc-env=GHOSTTY_BUNDLED_RESOURCES_DIR={}",
