@@ -161,6 +161,7 @@ All shortcuts are configurable via `~/.config/cmux/shortcuts.json`.
 |----------|-------------|
 | `CMUX_SOCKET` | Override socket path |
 | `CMUX_DISABLE_SESSION_RESTORE` | Set to `1` to skip session restore |
+| `CMUXD_PROXY_ALLOW_PRIVATE` | Set to `1` on the **remote host** to allow the SOCKS5 proxy to connect to private/loopback IPs (e.g., a dev server on port 3000) |
 
 ## Remote SSH Workspaces
 
@@ -178,13 +179,15 @@ The remote daemon (`cmuxd-remote`) is bootstrapped automatically on the remote h
 See [docs/security.md](docs/security.md) for the full security architecture.
 
 Key measures:
-- **Socket authentication** via kernel `SO_PEERCRED` (UID/PID verification) with 6 control modes
-- **HMAC-SHA256** authentication for password mode (native Rust `hmac`+`sha2`, no subprocess)
-- **File permissions** — all config/session/history files written with 0o600
+- **Socket authentication** via kernel `SO_PEERCRED` (UID/PID verification) with 5 control modes
+- **HMAC-SHA256** relay authentication (native Rust `hmac`+`sha2`, no subprocess)
+- **File permissions** — all config/session/history files written with 0o600, directories 0o700
 - **Input validation** — all socket inputs truncated, browser event types whitelisted
 - **FFI safety** — all `unsafe` blocks documented with SAFETY comments, panic guards on all FFI callbacks
 - **Integer overflow checks** enabled in release builds
-- **Browser sandboxing** — camera/mic/geo denied by default, deep link schemes whitelisted, download path traversal prevented
+- **Browser sandboxing** — camera/mic/geo denied by default, `javascript:` scheme blocked, deep link schemes whitelisted, download path traversal prevented, HTTP interstitial XSS-safe
+- **SSRF denylist** — proxy tunnel blocks loopback, link-local, RFC-1918, and cloud metadata IPs
+- **Scrollback privacy** — `persist_scrollback` setting (default: on) controls whether terminal history is included in session snapshots
 - **`cargo audit`** in CI for dependency vulnerability scanning
 
 ## Reference
