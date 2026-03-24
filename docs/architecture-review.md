@@ -1,5 +1,7 @@
 # Architecture Review
 
+> **Historical document** (2026-03-10). Ghostty dependency risks noted below have since been resolved — the project now uses `douglas/ghostty` fork with Linux embedded support based on upstream 1.3.1. See CHANGELOG.md for details.
+
 Reviewed: 2026-03-10
 
 This review is for the current Ubuntu MVP implementation only.

@@ -18,6 +18,12 @@ cargo build          # Debug build
 cargo build --release # Release build
 ```
 
+Browser support (WebKit6) is enabled by default. To build without it:
+
+```bash
+cargo build --release --no-default-features --features cmux/link-ghostty
+```
+
 ## Features
 
 - **Terminal multiplexer** — workspaces, split panes, tab management, directional focus
@@ -155,6 +161,20 @@ All shortcuts are configurable via `~/.config/cmux/shortcuts.json`.
 |----------|-------------|
 | `CMUX_SOCKET` | Override socket path |
 | `CMUX_DISABLE_SESSION_RESTORE` | Set to `1` to skip session restore |
+
+## Security
+
+See [docs/security.md](docs/security.md) for the full security architecture.
+
+Key measures:
+- **Socket authentication** via kernel `SO_PEERCRED` (UID/PID verification) with 6 control modes
+- **HMAC-SHA256** authentication for password mode (native Rust `hmac`+`sha2`, no subprocess)
+- **File permissions** — all config/session/history files written with 0o600
+- **Input validation** — all socket inputs truncated, browser event types whitelisted
+- **FFI safety** — all `unsafe` blocks documented with SAFETY comments, panic guards on all FFI callbacks
+- **Integer overflow checks** enabled in release builds
+- **Browser sandboxing** — camera/mic/geo denied by default, deep link schemes whitelisted, download path traversal prevented
+- **`cargo audit`** in CI for dependency vulnerability scanning
 
 ## Reference
 

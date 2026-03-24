@@ -28,6 +28,11 @@
     <name>Douglas</name>
   </developer>
   <releases>
+    <release version="0.62.0-alpha.7" date="2026-03-24">
+      <description>
+        <p>Security hardening, GLAD shared library fix for AUR builds, optional webkit feature gate.</p>
+      </description>
+    </release>
     <release version="0.62.0-alpha.1" date="2026-03-22">
       <description>
         <p>First public release — full feature parity with macOS cmux 0.62.0.</p>
