@@ -1,6 +1,6 @@
 [package]
 name = "cmux-cli"
-version = "0.62.0-alpha.5"
+version = "0.62.0-alpha.6"
 edition.workspace = true
 description = "CLI client for cmux terminal multiplexer"
 

@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.62.0-alpha.6] - 2026-03-24
+
+### Changed
+
+- Ghostty submodule switched to `douglas/ghostty` `cmux-linux-1.3.1` branch (upstream 1.3.1 + Linux embedded support, fully controlled)
+
+### Fixed
+
+- Fix shifted keys (`?`, `!`, `@`, `#`, etc.) not working in TUI apps like Claude Code and Codex — consumed modifiers now correctly reported to ghostty
+- Fix shell integration `cur_head=` output corrupting TUI display — background subshells now redirect all output to `/dev/null`
+- Fix session restore opening stale empty windows — workspaces with 0 panels are now filtered out
+
 ## [0.62.0-alpha.5] - 2026-03-24
 
 ### Changed
