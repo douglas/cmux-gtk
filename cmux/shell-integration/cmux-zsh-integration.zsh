@@ -30,7 +30,7 @@ _cmux_send() {
 }
 
 _cmux_send_fire_forget() {
-  _cmux_send "$1" >/dev/null 2>&1 &!
+  ( setopt NO_XTRACE NO_VERBOSE 2>/dev/null; _cmux_send "$1" >/dev/null 2>&1 ) &!
 }
 
 # ── Workspace / panel identifiers ────────────────────────────────────
@@ -109,6 +109,8 @@ _cmux_git_last_report=0
 
 # Core git branch detection — runs synchronously (used by async wrapper).
 _cmux_update_git_branch_sync() {
+  # Suppress trace/verbose output when backgrounded
+  setopt NO_XTRACE NO_VERBOSE 2>/dev/null
   # Try fast path first (no fork)
   if [[ -z "$_cmux_git_head_path" ]] || [[ ! -f "$_cmux_git_head_path" ]]; then
     _cmux_git_head_path=$(_cmux_git_resolve_head_path 2>/dev/null)
@@ -181,6 +183,8 @@ _cmux_start_git_watcher() {
   [[ -f "$head_file" ]] || return
 
   (
+    # Suppress trace/verbose output inherited from parent shell (e.g. Claude Code)
+    setopt NO_XTRACE NO_VERBOSE 2>/dev/null
     local last_head
     last_head=$(< "$head_file" 2>/dev/null)
     while true; do
