@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.62.0-alpha.5] - 2026-03-24
+
+### Changed
+
+- Use upstream ghostty 1.3.1 with Linux embedded patch (ghostty-org/ghostty#11721) instead of manaflow fork — patch auto-applied at build time, removable when upstream merges
+
 ## [0.62.0-alpha.4] - 2026-03-23
 
 ### Changed
