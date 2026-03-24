@@ -161,3 +161,78 @@ fn read_ppid(pid: u32) -> Option<u32> {
     }
     None
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn hmac_known_vector() {
+        // RFC 4231 Test Case 2: HMAC-SHA256 with "Jefe" key and "what do ya want for nothing?"
+        let key = b"Jefe";
+        let data = b"what do ya want for nothing?";
+        let result = hex_encode(&compute_hmac_sha256(key, data));
+        assert_eq!(
+            result,
+            "5bdcc146bf60754e6a042426089575c75a003f089d2739839dec58b964ec3843"
+        );
+    }
+
+    #[test]
+    fn verify_hmac_valid() {
+        let password = "test-password";
+        let challenge = b"random-challenge-bytes";
+        let expected = compute_hmac_sha256(password.as_bytes(), challenge);
+        let expected_hex = hex_encode(&expected);
+        assert!(verify_hmac(password, challenge, &expected_hex));
+    }
+
+    #[test]
+    fn verify_hmac_invalid() {
+        let password = "test-password";
+        let challenge = b"random-challenge-bytes";
+        assert!(!verify_hmac(password, challenge, "deadbeef00112233"));
+    }
+
+    #[test]
+    fn verify_hmac_wrong_password() {
+        let challenge = b"challenge";
+        let expected = compute_hmac_sha256(b"correct-password", challenge);
+        let expected_hex = hex_encode(&expected);
+        assert!(!verify_hmac("wrong-password", challenge, &expected_hex));
+    }
+
+    #[test]
+    fn verify_hmac_empty_inputs() {
+        // Empty password and empty challenge should still produce a valid HMAC
+        let expected = compute_hmac_sha256(b"", b"");
+        let expected_hex = hex_encode(&expected);
+        assert!(verify_hmac("", b"", &expected_hex));
+        // But should NOT match an empty response
+        assert!(!verify_hmac("", b"", ""));
+    }
+
+    #[test]
+    fn hex_encode_roundtrip() {
+        assert_eq!(hex_encode(&[0x00, 0xff, 0xab, 0x12]), "00ffab12");
+        assert_eq!(hex_encode(&[]), "");
+    }
+
+    #[test]
+    fn is_descendant_self() {
+        let pid = std::process::id();
+        assert!(is_descendant(pid, pid));
+    }
+
+    #[test]
+    fn is_descendant_of_init() {
+        // Current process should be a descendant of PID 1
+        let pid = std::process::id();
+        assert!(is_descendant(pid, 1));
+    }
+
+    #[test]
+    fn is_descendant_zero_pid() {
+        assert!(!is_descendant(0, 1));
+    }
+}

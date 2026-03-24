@@ -2,7 +2,7 @@
 <component type="desktop-application">
   <id>io.github.douglas.cmux_gtk</id>
   <metadata_license>MIT</metadata_license>
-  <project_license>MIT</project_license>
+  <project_license>AGPL-3.0-or-later</project_license>
   <name>cmux</name>
   <summary>Terminal multiplexer for AI coding agents</summary>
   <description>
