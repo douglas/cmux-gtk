@@ -84,6 +84,7 @@ impl RelayServer {
     }
 
     /// The local port the relay is listening on.
+    #[allow(dead_code)]
     pub fn local_port(&self) -> u16 {
         self.local_port
     }
@@ -94,6 +95,7 @@ impl RelayServer {
     }
 
     /// The auth token for HMAC verification.
+    #[allow(dead_code)]
     pub fn auth_token(&self) -> &str {
         &self.auth_token
     }

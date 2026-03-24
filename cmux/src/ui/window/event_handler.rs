@@ -21,6 +21,7 @@ pub(super) fn bind_shared_state_updates(
     notif_page: &adw::NavigationPage,
     showing_notifications: &Rc<Cell<bool>>,
     notif_panel: &notifications_panel::NotificationsPanel,
+    toast_overlay: &adw::ToastOverlay,
 ) {
     let state = state.clone();
     let list_box = list_box.clone();
@@ -31,6 +32,7 @@ pub(super) fn bind_shared_state_updates(
     let notif_page = notif_page.clone();
     let showing_notifications = showing_notifications.clone();
     let notif_panel = notif_panel.clone();
+    let toast_overlay = toast_overlay.clone();
 
     glib::MainContext::default().spawn_local(async move {
         while let Some(event) = ui_events.recv().await {
@@ -465,10 +467,46 @@ pub(super) fn bind_shared_state_updates(
                                         let ctrl = session.lock().unwrap_or_else(|p| p.into_inner());
                                         ctrl.state.clone()
                                     };
-                                    // Store session if connected
+                                    // Store session if connected, then start health monitor
                                     if result.is_ok() {
                                         lock_or_recover(&shared.remote_sessions)
-                                            .insert(ws_id, session);
+                                            .insert(ws_id, session.clone());
+                                        // Health monitor: detect SSH dropout and surface error
+                                        let session_mon = session.clone();
+                                        let shared_mon = shared.clone();
+                                        std::thread::spawn(move || {
+                                            loop {
+                                                std::thread::sleep(
+                                                    std::time::Duration::from_secs(10),
+                                                );
+                                                // Stop if session was removed (user disconnected)
+                                                if !lock_or_recover(&shared_mon.remote_sessions)
+                                                    .contains_key(&ws_id)
+                                                {
+                                                    break;
+                                                }
+                                                let alive = lock_or_recover(&*session_mon)
+                                                    .is_alive();
+                                                if !alive {
+                                                    tracing::warn!(
+                                                        %ws_id,
+                                                        "Remote connection lost"
+                                                    );
+                                                    // Remove from sessions to prevent double-stop
+                                                    lock_or_recover(&shared_mon.remote_sessions)
+                                                        .remove(&ws_id);
+                                                    shared_mon.send_ui_event(
+                                                        UiEvent::RemoteStateChanged {
+                                                            workspace_id: ws_id,
+                                                            state: crate::remote::session::RemoteState::Error(
+                                                                "Connection lost — use Reconnect to retry".to_string(),
+                                                            ),
+                                                        },
+                                                    );
+                                                    break;
+                                                }
+                                            }
+                                        });
                                     }
                                     shared.send_ui_event(UiEvent::RemoteStateChanged {
                                         workspace_id: ws_id,
@@ -498,6 +536,12 @@ pub(super) fn bind_shared_state_updates(
                         workspace_id,
                         state: remote_state,
                     } => {
+                        // Show toast for connection errors
+                        if let crate::remote::session::RemoteState::Error(ref msg) = remote_state {
+                            let toast = adw::Toast::new(msg);
+                            toast.set_timeout(6);
+                            toast_overlay.add_toast(toast);
+                        }
                         let mut tm = lock_or_recover(&state.shared.tab_manager);
                         if let Some(ws) = tm.workspace_mut(workspace_id) {
                             ws.remote_state = Some(remote_state);

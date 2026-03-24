@@ -32,6 +32,7 @@ pub struct HelloResponse {
     pub name: String,
     pub version: String,
     pub capabilities: Vec<String>,
+    #[allow(dead_code)]
     pub remote_path: String,
 }
 

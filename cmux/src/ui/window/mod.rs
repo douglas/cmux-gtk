@@ -82,6 +82,9 @@ pub fn create_window(
     let notif_page = adw::NavigationPage::new(&notif_root, "Notifications");
     let showing_notifications: Rc<Cell<bool>> = Rc::new(Cell::new(false));
 
+    // Toast overlay must be created before binding events so it can be passed in
+    let toast_overlay = adw::ToastOverlay::new();
+
     bind_sidebar_selection(&list_box, &content_box, state);
     event_handler::bind_shared_state_updates(
         &list_box,
@@ -94,6 +97,7 @@ pub fn create_window(
         &notif_page,
         &showing_notifications,
         &notif_panel,
+        &toast_overlay,
     );
 
     let header = adw::HeaderBar::new();
@@ -178,7 +182,8 @@ pub fn create_window(
     outer_box.append(&header);
     outer_box.append(&split_view);
 
-    window.set_content(Some(&outer_box));
+    toast_overlay.set_child(Some(&outer_box));
+    window.set_content(Some(&toast_overlay));
     shortcuts::setup_shortcuts(
         &window,
         state,
@@ -364,7 +369,14 @@ fn refresh_ui(list_box: &gtk4::ListBox, content_box: &gtk4::Box, state: &Rc<AppS
             };
             if let Some((full_title, ws_title)) = titles {
                 window.set_title(Some(&full_title));
-                if let Some(outer) = window.content() {
+                if let Some(root) = window.content() {
+                    // Unwrap ToastOverlay wrapper if present to reach outer_box
+                    let outer = root
+                        .clone()
+                        .downcast::<adw::ToastOverlay>()
+                        .ok()
+                        .and_then(|ov| ov.child())
+                        .unwrap_or(root);
                     if let Some(hb) = outer.first_child() {
                         if let Some(header) = hb.downcast_ref::<adw::HeaderBar>() {
                             if let Some(tw) = header.title_widget() {

@@ -207,12 +207,19 @@ impl RemoteSessionController {
     }
 
     /// Disconnect and reconnect.
+    #[allow(dead_code)]
     pub fn reconnect(&mut self) -> Result<(), String> {
         self.stop();
         self.start()
     }
 
+    /// Whether the underlying SSH/RPC connection is still alive.
+    pub fn is_alive(&self) -> bool {
+        self.rpc.as_ref().map(|r| r.is_alive()).unwrap_or(false)
+    }
+
     /// The local proxy port, if connected.
+    #[allow(dead_code)]
     pub fn proxy_port(&self) -> Option<u16> {
         match &self.state {
             RemoteState::Connected { proxy_port, .. } => Some(*proxy_port),

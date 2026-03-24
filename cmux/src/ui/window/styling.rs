@@ -388,6 +388,24 @@ pub(super) fn install_css() {
             min-height: 16px;
             padding: 0;
         }
+
+        /* ── Remote workspace status icons ── */
+        .remote-connected {
+            color: #26a269;
+        }
+
+        .remote-connecting {
+            color: @accent_color;
+            opacity: 0.8;
+        }
+
+        .remote-error {
+            color: #e01b24;
+        }
+
+        .remote-disconnected {
+            color: alpha(@theme_fg_color, 0.4);
+        }
         ",
     );
 
