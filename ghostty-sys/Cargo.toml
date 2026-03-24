@@ -1,6 +1,6 @@
 [package]
 name = "ghostty-sys"
-version = "0.62.0-alpha.7"
+version = "0.62.0-alpha.8"
 edition.workspace = true
 description = "Raw FFI bindings to libghostty (embedded runtime)"
 

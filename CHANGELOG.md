@@ -1,5 +1,38 @@
 # Changelog
 
+## [0.62.0-alpha.8] - 2026-03-24
+
+### Added
+
+- Browser support is now optional — build without WebKit via `--no-default-features` for a lighter terminal-only binary
+- Security documentation at `docs/security.md` covering threat model, authentication, and all hardening measures
+- AGPL-3.0 license and CONTRIBUTING.md
+
+### Changed
+
+- Disable GLES and Vulkan GDK backends — forces desktop OpenGL for ghostty compatibility on all hardware
+- License changed from MIT to AGPL-3.0-or-later
+
+### Fixed
+
+- Replace openssl subprocess with native Rust HMAC-SHA256 (`hmac` + `sha2` crates) — eliminates auth bypass when openssl is missing
+- Fix JavaScript injection in browser `input_mouse`/`input_keyboard`/`input_touch` — event types now validated against whitelist
+- Remove unnecessary `Sync` on FFI pointer wrappers (`SendSurfacePtr`, `SendAppPtr`)
+- Validate `open_in.*` editor binary against hardcoded whitelist before execution
+- Write browser profiles, settings, and shortcuts config files with 0o600 permissions
+- Remove `sh -c` shell wrapper from remote daemon SSH invocation — pass args directly
+- Cap proxy tunnel at 32 concurrent connections with panic-safe counter
+- Sanitize terminal-sourced titles and directories (strip C0/C1 control chars before GTK display)
+- Remove `CMUX_SOCKET_PASSWORD` from environment at startup to prevent child process access
+- Safe integer cast for SSH port numbers (`u16::try_from` instead of `as u16`)
+- Restrict `xdg-open` deep links to whitelisted URL schemes
+- Validate SSH options restored from session files (require `Key=Value` format)
+- Validate notification sound file paths (known audio extensions + regular file check)
+- Log SSH stderr instead of discarding it
+- Warn prominently when `AllowAll` socket mode is active
+- Enable integer overflow checks in release builds
+- Add SAFETY comments to all unsafe blocks across FFI and libc calls
+
 ## [0.62.0-alpha.7] - 2026-03-24
 
 ### Fixed
