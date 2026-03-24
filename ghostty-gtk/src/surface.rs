@@ -157,34 +157,11 @@ mod imp {
             widget.make_current();
             if widget.error().is_some() {
                 tracing::error!("Failed to make GL context current");
-                return;
-            }
-            // Re-realize after reparent: reinitialize renderer GL state
-            // for the new GL context (shaders, swap chain, etc.).
-            let surface = self.surface.get();
-            if !surface.is_null() {
-                #[cfg(feature = "link-ghostty")]
-                unsafe {
-                    ghostty_surface_display_realized(surface);
-                }
             }
         }
 
         fn unrealize(&self) {
             tracing::debug!("GLArea unrealize");
-            // Tear down renderer GL state BEFORE the context is destroyed.
-            // The context must still be current for cleanup to work.
-            let surface = self.surface.get();
-            if !surface.is_null() {
-                let widget = self.obj();
-                widget.make_current();
-                if widget.error().is_none() {
-                    #[cfg(feature = "link-ghostty")]
-                    unsafe {
-                        ghostty_surface_display_unrealized(surface);
-                    }
-                }
-            }
             self.parent_unrealize();
         }
     }

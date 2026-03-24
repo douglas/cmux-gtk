@@ -125,14 +125,6 @@ pub fn main() !void {
         panic!("tic failed with status: {}", status);
     }
 
-    // Compile weak-symbol stubs for ghostty API functions that may not exist
-    // in all versions of libghostty (e.g. display_realized/unrealized).
-    // Weak symbols are overridden by the real library if it provides them.
-    let compat_c = manifest_dir.join("compat.c");
-    if compat_c.exists() {
-        cc::Build::new().file(&compat_c).compile("ghostty_compat");
-    }
-
     // Compile GLAD (OpenGL loader) — ghostty's build excludes it from libghostty,
     // expecting the host application to provide it.
     let glad_dir = ghostty_dir.join("vendor").join("glad");
