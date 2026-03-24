@@ -1235,8 +1235,7 @@ extern "C" {
     pub fn ghostty_surface_refresh(surface: ghostty_surface_t);
     pub fn ghostty_surface_draw(surface: ghostty_surface_t);
     pub fn ghostty_surface_display_realized(surface: ghostty_surface_t);
-    pub fn ghostty_surface_init_opengl(surface: ghostty_surface_t);
-    pub fn ghostty_surface_draw_frame(surface: ghostty_surface_t);
+    pub fn ghostty_surface_display_unrealized(surface: ghostty_surface_t);
     pub fn ghostty_surface_set_content_scale(
         surface: ghostty_surface_t,
         x_scale: c_double,

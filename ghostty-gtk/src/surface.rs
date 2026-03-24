@@ -159,7 +159,7 @@ mod imp {
                 tracing::error!("Failed to make GL context current");
                 return;
             }
-            // Re-realize after reparent: reinitialize renderer GL state.
+            // (Re-)initialize renderer GL state while context is current.
             let surface = self.surface.get();
             if !surface.is_null() {
                 #[cfg(feature = "link-ghostty")]
@@ -328,6 +328,10 @@ impl GhosttyGlSurface {
 
         #[cfg(feature = "link-ghostty")]
         {
+            // Ensure GL context is current before creating the surface —
+            // ghostty's surfaceInit loads GLAD from the current context.
+            self.make_current();
+
             // Zero-initialize the entire config to avoid garbage in fields
             // we don't explicitly set. In release builds, the optimizer reuses
             // stack slots aggressively and uninitialized fields (env_vars,

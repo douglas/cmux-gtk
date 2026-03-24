@@ -545,11 +545,17 @@ fn restore_session(state: &Rc<AppState>) -> Vec<Uuid> {
         return vec![];
     }
 
-    // Drop windows that have no workspaces (keep only populated ones)
+    // Drop windows that have no workspaces or only empty workspaces
+    // (stale sessions from crashes/testing can leave windows with 0 panels)
     let live_windows: Vec<_> = snapshot
         .windows
         .iter()
-        .filter(|w| !w.tab_manager.workspaces.is_empty())
+        .filter(|w| {
+            w.tab_manager
+                .workspaces
+                .iter()
+                .any(|ws| !ws.panels.is_empty())
+        })
         .collect();
     if live_windows.len() < snapshot.windows.len() {
         tracing::info!(
@@ -580,6 +586,9 @@ fn restore_session(state: &Rc<AppState>) -> Vec<Uuid> {
         let tm_snapshot = &window_snapshot.tab_manager;
 
         for ws_snapshot in &tm_snapshot.workspaces {
+            if ws_snapshot.panels.is_empty() {
+                continue; // Skip workspaces with no panels
+            }
             let mut workspace =
                 crate::model::Workspace::with_directory(&ws_snapshot.current_directory);
             workspace.window_id = Some(window_id);
