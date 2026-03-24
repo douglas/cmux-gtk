@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.62.0-alpha.7] - 2026-03-24
+
+### Fixed
+
+- Fix AUR package build failure — GLAD now built as shared library to resolve `rust-lld` undefined reference errors (`gladLoaderLoadGLContext`, `gladLoaderUnloadGLContext`)
+
 ## [0.62.0-alpha.6] - 2026-03-24
 
 ### Changed
