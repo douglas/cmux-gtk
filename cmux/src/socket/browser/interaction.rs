@@ -297,12 +297,27 @@ pub(super) fn handle_highlight(id: Value, params: &Value, state: &Arc<SharedStat
     send_eval_action(&id, params, state, js)
 }
 
+/// Allowed DOM event types for synthetic event dispatch (prevents JS injection).
+const MOUSE_EVENTS: &[&str] = &[
+    "click", "dblclick", "mousedown", "mouseup", "mouseover", "mouseout",
+    "mousemove", "mouseenter", "mouseleave", "contextmenu",
+];
+const KEYBOARD_EVENTS: &[&str] = &["keydown", "keyup", "keypress"];
+const TOUCH_EVENTS: &[&str] = &["touchstart", "touchend", "touchmove", "touchcancel"];
+
 /// browser.input_mouse -- Dispatch a synthetic mouse event at coordinates.
 pub(super) fn handle_input_mouse(id: Value, params: &Value, state: &Arc<SharedState>) -> Response {
     let event_type = params
         .get("type")
         .and_then(|v| v.as_str())
         .unwrap_or("click");
+    if !MOUSE_EVENTS.contains(&event_type) {
+        return Response::error(
+            id,
+            "invalid_params",
+            &format!("Invalid mouse event type: {event_type}"),
+        );
+    }
     let x = params.get("x").and_then(|v| v.as_f64()).unwrap_or(0.0);
     let y = params.get("y").and_then(|v| v.as_f64()).unwrap_or(0.0);
     let button = params.get("button").and_then(|v| v.as_u64()).unwrap_or(0);
@@ -327,6 +342,13 @@ pub(super) fn handle_input_keyboard(
         .get("type")
         .and_then(|v| v.as_str())
         .unwrap_or("keypress");
+    if !KEYBOARD_EVENTS.contains(&event_type) {
+        return Response::error(
+            id,
+            "invalid_params",
+            &format!("Invalid keyboard event type: {event_type}"),
+        );
+    }
     let key = params.get("key").and_then(|v| v.as_str()).unwrap_or("");
     let js = format!(
         "document.activeElement.dispatchEvent(new KeyboardEvent('{event_type}', \
@@ -342,6 +364,13 @@ pub(super) fn handle_input_touch(id: Value, params: &Value, state: &Arc<SharedSt
         .get("type")
         .and_then(|v| v.as_str())
         .unwrap_or("touchstart");
+    if !TOUCH_EVENTS.contains(&event_type) {
+        return Response::error(
+            id,
+            "invalid_params",
+            &format!("Invalid touch event type: {event_type}"),
+        );
+    }
     let x = params.get("x").and_then(|v| v.as_f64()).unwrap_or(0.0);
     let y = params.get("y").and_then(|v| v.as_f64()).unwrap_or(0.0);
     let js = format!(

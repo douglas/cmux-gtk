@@ -624,6 +624,18 @@ pub fn create_browser_widget_with_profile(
                                                 | "about" | "data" | "blob"
                                                 | "javascript"
                                         ) {
+                                            // Only forward known-safe schemes to xdg-open
+                                            const ALLOWED_SCHEMES: &[&str] = &[
+                                                "mailto", "tel", "ssh", "vscode",
+                                                "vscode-insiders", "cursor", "zed",
+                                                "obsidian", "notion", "slack",
+                                                "discord", "spotify", "steam",
+                                            ];
+                                            if !ALLOWED_SCHEMES.contains(&scheme.as_str()) {
+                                                tracing::warn!(%url, %scheme, "decide_policy: blocked unknown scheme");
+                                                decision.ignore();
+                                                return true;
+                                            }
                                             tracing::warn!(%url, %scheme, "decide_policy: deep link \u{2192} xdg-open");
                                             decision.ignore();
                                             // Sanitize: strip control chars and cap length

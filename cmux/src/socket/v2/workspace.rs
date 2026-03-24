@@ -142,7 +142,7 @@ pub(super) fn handle_workspace_create_ssh(
     let port = params
         .get("port")
         .and_then(|v| v.as_u64())
-        .map(|p| p as u16);
+        .and_then(|p| u16::try_from(p).ok());
     let identity = params
         .get("identity")
         .and_then(|v| v.as_str())

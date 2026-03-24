@@ -60,12 +60,22 @@ pub fn init() {
 }
 
 fn save_store(store: &ProfileStore) {
+    use std::os::unix::fs::OpenOptionsExt;
     let path = config_path();
     if let Some(parent) = path.parent() {
         let _ = std::fs::create_dir_all(parent);
     }
     if let Ok(json) = serde_json::to_string_pretty(store) {
-        let _ = std::fs::write(path, json);
+        let _ = std::fs::OpenOptions::new()
+            .create(true)
+            .truncate(true)
+            .write(true)
+            .mode(0o600)
+            .open(&path)
+            .and_then(|mut f| {
+                use std::io::Write;
+                f.write_all(json.as_bytes())
+            });
     }
 }
 

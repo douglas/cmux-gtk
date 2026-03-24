@@ -260,39 +260,8 @@ fn forward_to_socket(socket_path: &str, command: &str) -> Result<String, String>
 }
 
 /// Compute HMAC-SHA256 and return as hex string.
-///
-/// Uses a simple HMAC implementation to avoid heavy crypto dependencies.
 fn compute_hmac_sha256(key: &[u8], message: &[u8]) -> String {
-    // Compute HMAC-SHA256 via openssl subprocess. Fail closed (empty = auth fails).
-    use std::io::Write;
-    let hex_key = key.iter().map(|b| format!("{b:02x}")).collect::<String>();
-    let result = std::process::Command::new("openssl")
-        .args(["dgst", "-sha256", "-mac", "HMAC", "-macopt"])
-        .arg(format!("hexkey:{hex_key}"))
-        .stdin(std::process::Stdio::piped())
-        .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::null())
-        .spawn()
-        .and_then(|mut child| {
-            if let Some(ref mut stdin) = child.stdin {
-                stdin.write_all(message)?;
-            }
-            child.wait_with_output()
-        });
-    match result {
-        Ok(output) if output.status.success() => {
-            // openssl outputs "...= <hex>\n"
-            let stdout = String::from_utf8_lossy(&output.stdout);
-            stdout
-                .rsplit_once("= ")
-                .map(|(_, hex)| hex.trim().to_string())
-                .unwrap_or_default()
-        }
-        _ => {
-            tracing::error!("openssl HMAC-SHA256 failed — auth will fail (fail closed)");
-            String::new() // Empty string will never match a valid HMAC
-        }
-    }
+    crate::socket::auth::hex_encode(&crate::socket::auth::compute_hmac_sha256(key, message))
 }
 
 /// Find an available port on the remote host for the reverse tunnel.

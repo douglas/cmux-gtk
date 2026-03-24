@@ -83,13 +83,12 @@ impl RemoteRpcClient {
                 "StrictHostKeyChecking=accept-new",
             ])
             .args(ssh_args)
-            .arg(format!(
-                "sh -c 'exec {} serve --stdio'",
-                shell_escape::escape(remote_daemon_path.into())
-            ))
+            // Pass daemon path and args directly — avoids sh -c shell injection risk.
+            .arg(remote_daemon_path)
+            .args(["serve", "--stdio"])
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
-            .stderr(Stdio::null());
+            .stderr(Stdio::piped());
 
         let mut child = cmd
             .spawn()
@@ -97,6 +96,17 @@ impl RemoteRpcClient {
 
         let stdin = child.stdin.take().ok_or("No stdin on SSH process")?;
         let stdout = child.stdout.take().ok_or("No stdout on SSH process")?;
+
+        // Log SSH stderr in background (host key warnings, connection errors)
+        if let Some(stderr) = child.stderr.take() {
+            std::thread::spawn(move || {
+                use std::io::BufRead;
+                let reader = std::io::BufReader::new(stderr);
+                for line in reader.lines().map_while(Result::ok) {
+                    tracing::warn!(target: "ssh", "{}", line);
+                }
+            });
+        }
 
         let pending: Arc<Mutex<HashMap<u64, PendingCall>>> = Arc::new(Mutex::new(HashMap::new()));
         let stream_subs: Arc<Mutex<HashMap<u64, mpsc::Sender<StreamEvent>>>> =

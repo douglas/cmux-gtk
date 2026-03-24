@@ -8,6 +8,9 @@ use std::net::{TcpListener, TcpStream};
 use std::sync::Arc;
 use std::time::Duration;
 
+/// Maximum concurrent proxy connections (prevents resource exhaustion).
+const MAX_PROXY_CONNECTIONS: usize = 32;
+
 use super::rpc::{RemoteRpcClient, StreamEvent};
 
 /// A local proxy that tunnels TCP connections through the remote daemon.
@@ -37,6 +40,7 @@ impl ProxyTunnel {
             tracing::info!(port, "Proxy tunnel listening");
             // Set short timeout for accept so we can check alive flag
             let _ = listener.set_nonblocking(false);
+            let active = Arc::new(std::sync::atomic::AtomicUsize::new(0));
 
             loop {
                 if !alive_clone.load(std::sync::atomic::Ordering::Acquire) {
@@ -47,12 +51,22 @@ impl ProxyTunnel {
                 // We can't use set_nonblocking easily, so just accept and handle
                 match listener.accept() {
                     Ok((stream, addr)) => {
+                        if active.load(std::sync::atomic::Ordering::Relaxed)
+                            >= MAX_PROXY_CONNECTIONS
+                        {
+                            tracing::warn!("Proxy: max connections reached, dropping");
+                            continue;
+                        }
+                        active.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                         tracing::debug!(?addr, "Proxy: new connection");
                         let rpc = Arc::clone(&rpc);
+                        let active_clone = Arc::clone(&active);
                         std::thread::spawn(move || {
                             if let Err(e) = handle_proxy_connection(stream, &rpc) {
                                 tracing::debug!("Proxy connection error: {}", e);
                             }
+                            active_clone
+                                .fetch_sub(1, std::sync::atomic::Ordering::Relaxed);
                         });
                     }
                     Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {

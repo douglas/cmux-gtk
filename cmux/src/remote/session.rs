@@ -36,9 +36,15 @@ impl RemoteConfig {
             args.push("-i".to_string());
             args.push(identity.clone());
         }
+        // Only pass ssh_options that look like valid Key=Value pairs
+        // to prevent injection of arbitrary SSH flags from tampered session files.
         for opt in &self.ssh_options {
-            args.push("-o".to_string());
-            args.push(opt.clone());
+            if opt.contains('=') && !opt.starts_with('-') && opt.len() < 256 {
+                args.push("-o".to_string());
+                args.push(opt.clone());
+            } else {
+                tracing::warn!(opt, "Skipping invalid SSH option from session config");
+            }
         }
         args.push(self.destination.clone());
         args

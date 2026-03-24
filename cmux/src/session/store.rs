@@ -80,9 +80,11 @@ pub fn load_session() -> anyhow::Result<Option<AppSessionSnapshot>> {
 
 fn write_atomic(path: &Path, bytes: &[u8]) -> anyhow::Result<()> {
     let tmp_path = path.with_extension(format!("json.tmp.{}", std::process::id()));
+    // Prevent symlink attacks: remove any existing file/symlink at the temp path
+    // before creating a new file with O_CREAT|O_EXCL semantics.
+    let _ = std::fs::remove_file(&tmp_path);
     let mut file = OpenOptions::new()
-        .create(true)
-        .truncate(true)
+        .create_new(true) // O_EXCL: fail if path still exists (race protection)
         .write(true)
         .mode(0o600)
         .open(&tmp_path)?;

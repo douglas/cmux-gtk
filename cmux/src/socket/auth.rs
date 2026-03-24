@@ -1,7 +1,6 @@
 //! Socket authentication using SO_PEERCRED.
 
 use std::io;
-use std::io::Write;
 
 /// Information about the connected peer process.
 #[derive(Debug)]
@@ -76,69 +75,42 @@ pub fn socket_password() -> Option<String> {
 /// HMAC is computed as HMAC-SHA256(password, challenge_bytes).
 #[allow(dead_code)]
 pub fn verify_hmac(password: &str, challenge: &[u8], response_hex: &str) -> bool {
-    // Simple HMAC-SHA256 using the system's openssl or a manual implementation
-    // For simplicity, we do a basic comparison — in production, use a crypto crate.
-    // Here we use a basic HMAC construction for the password mode.
-    let expected = compute_hmac_sha256(password.as_bytes(), challenge);
+    use hmac::{Hmac, Mac};
+    use sha2::Sha256;
+
+    type HmacSha256 = Hmac<Sha256>;
+    let Ok(mut mac) = HmacSha256::new_from_slice(password.as_bytes()) else {
+        return false;
+    };
+    mac.update(challenge);
+    let expected = mac.finalize().into_bytes();
     let expected_hex = hex_encode(&expected);
-    // Constant-time comparison
+
+    // Constant-time comparison via fixed-length XOR
     if expected_hex.len() != response_hex.len() {
         return false;
     }
-    let mut diff = 0u8;
-    for (a, b) in expected_hex.bytes().zip(response_hex.bytes()) {
-        diff |= a ^ b;
-    }
+    let diff = expected_hex
+        .bytes()
+        .zip(response_hex.bytes())
+        .fold(0u8, |acc, (a, b)| acc | (a ^ b));
     diff == 0
 }
 
-/// Minimal HMAC-SHA256 (uses command-line openssl as fallback).
-#[allow(dead_code)]
-fn compute_hmac_sha256(key: &[u8], data: &[u8]) -> Vec<u8> {
-    // Try using /usr/bin/openssl for HMAC
-    let key_hex = hex_encode(key);
-    let data_hex = hex_encode(data);
-    let output = std::process::Command::new("openssl")
-        .args(["dgst", "-sha256", "-mac", "HMAC", "-macopt"])
-        .arg(format!("hexkey:{}", key_hex))
-        .stdin(std::process::Stdio::piped())
-        .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::null())
-        .spawn()
-        .and_then(|mut child| {
-            if let Some(ref mut stdin) = child.stdin {
-                let _ = stdin.write_all(&hex_decode(&data_hex));
-            }
-            child.wait_with_output()
-        });
+/// Compute HMAC-SHA256 and return the raw bytes.
+pub fn compute_hmac_sha256(key: &[u8], data: &[u8]) -> Vec<u8> {
+    use hmac::{Hmac, Mac};
+    use sha2::Sha256;
 
-    if let Ok(out) = output {
-        let stdout = String::from_utf8_lossy(&out.stdout);
-        // openssl output: "(stdin)= <hex>"
-        if let Some(hex) = stdout.rsplit("= ").next() {
-            return hex_decode(hex.trim());
-        }
-    }
-
-    // Fallback: just SHA256(key || data) — not a proper HMAC but acceptable for local use
-    Vec::new()
+    type HmacSha256 = Hmac<Sha256>;
+    let mut mac = HmacSha256::new_from_slice(key)
+        .expect("HMAC accepts any key length");
+    mac.update(data);
+    mac.finalize().into_bytes().to_vec()
 }
 
-fn hex_encode(data: &[u8]) -> String {
+pub fn hex_encode(data: &[u8]) -> String {
     data.iter().map(|b| format!("{:02x}", b)).collect()
-}
-
-fn hex_decode(hex: &str) -> Vec<u8> {
-    hex.as_bytes()
-        .chunks(2)
-        .filter_map(|chunk| {
-            if chunk.len() == 2 {
-                u8::from_str_radix(std::str::from_utf8(chunk).ok()?, 16).ok()
-            } else {
-                None
-            }
-        })
-        .collect()
 }
 
 /// Check whether a peer is authorized under the given control mode.

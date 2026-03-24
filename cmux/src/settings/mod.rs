@@ -556,7 +556,17 @@ pub fn save(settings: &AppSettings) -> Result<(), std::io::Error> {
 
     let path = dir.join("settings.json");
     let json = serde_json::to_string_pretty(settings).map_err(std::io::Error::other)?;
-    std::fs::write(path, json)?;
+    {
+        use std::io::Write;
+        use std::os::unix::fs::OpenOptionsExt;
+        let mut f = std::fs::OpenOptions::new()
+            .create(true)
+            .truncate(true)
+            .write(true)
+            .mode(0o600)
+            .open(&path)?;
+        f.write_all(json.as_bytes())?;
+    }
 
     shortcuts::save(&settings.shortcuts)?;
     Ok(())

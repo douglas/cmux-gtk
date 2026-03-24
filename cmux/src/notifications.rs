@@ -296,6 +296,16 @@ mod tests {
 
 /// Play a custom sound file (WAV, OGG, OGA).
 fn play_sound_file(path: &str) {
+    // Validate: must be a regular file with a known audio extension.
+    let p = std::path::Path::new(path);
+    let valid_ext = p
+        .extension()
+        .and_then(|e| e.to_str())
+        .is_some_and(|e| matches!(e, "wav" | "ogg" | "oga" | "mp3" | "flac" | "opus"));
+    if !valid_ext || !p.is_file() {
+        tracing::warn!(path, "Notification sound: invalid file or extension");
+        return;
+    }
     let path = path.to_string();
     std::thread::spawn(move || {
         // Try paplay (PulseAudio), then pw-play (PipeWire), then aplay (ALSA)

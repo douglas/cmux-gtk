@@ -284,8 +284,11 @@ pub enum UiEvent {
 /// Wrapper to send a raw ghostty_surface_t across threads.
 #[derive(Clone, Copy)]
 pub struct SendSurfacePtr(pub ghostty_surface_t);
+// SAFETY: SendSurfacePtr wraps a ghostty_surface_t (opaque C pointer) that is
+// sent via channels from background threads to the GTK main thread. The pointer
+// is only dereferenced on the main thread. Sync is intentionally not implemented
+// — the pointer must not be shared concurrently across threads.
 unsafe impl Send for SendSurfacePtr {}
-unsafe impl Sync for SendSurfacePtr {}
 impl std::fmt::Debug for SendSurfacePtr {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_tuple("SendSurfacePtr")
@@ -1160,8 +1163,8 @@ impl ghostty_gtk::callbacks::GhosttyCallbackHandler for CmuxCallbackHandler {
 #[derive(Clone, Copy)]
 struct SendAppPtr(ghostty_app_t);
 
+// SAFETY: SendAppPtr wraps a ghostty_app_t passed via channel to the main thread.
 unsafe impl Send for SendAppPtr {}
-unsafe impl Sync for SendAppPtr {}
 
 impl SendAppPtr {
     #[cfg(feature = "link-ghostty")]

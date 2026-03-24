@@ -35,3 +35,5 @@ base64 = "0.22"
 webkit6 = { workspace = true, optional = true }
 pulldown-cmark = { workspace = true, optional = true }
 shell-escape = "0.1.5"
+hmac = { workspace = true }
+sha2 = { workspace = true }

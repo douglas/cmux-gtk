@@ -600,7 +600,15 @@ fn execute_action(name: &str, state: &Rc<AppState>, on_refresh: &Rc<dyn Fn()>) {
             }
         }
         name if name.starts_with("open_in.") => {
+            const ALLOWED_EDITORS: &[&str] = &[
+                "code", "cursor", "zed", "ghostty", "nvim", "vim", "emacs",
+                "subl", "idea",
+            ];
             let binary = &name[8..];
+            if !ALLOWED_EDITORS.contains(&binary) {
+                tracing::warn!(binary, "open_in: blocked unknown binary");
+                return;
+            }
             let dir = lock_or_recover(&state.shared.tab_manager)
                 .selected()
                 .map(|ws| ws.current_directory.clone());
