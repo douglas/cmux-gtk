@@ -90,16 +90,20 @@ jobs:
     needs: release
     runs-on: ubuntu-latest
     steps:
-      - name: Extract version from tag
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: .ghostty-commit
+
+      - name: Extract version and ghostty commit from tag
         id: version
         env:
           REF_NAME: ${{ github.ref_name }}
         run: |
           raw="${REF_NAME#v}"
-          # AUR pkgver: replace hyphens with dots (0.62.0-alpha.2 -> 0.62.0.alpha.2)
           aur_ver="${raw//-/.}"
           echo "version=$raw" >> "$GITHUB_OUTPUT"
           echo "aur_version=$aur_ver" >> "$GITHUB_OUTPUT"
+          echo "ghostty_commit=$(cat .ghostty-commit | tr -d '[:space:]')" >> "$GITHUB_OUTPUT"
 
       - name: Compute source tarball sha256
         id: sha256
@@ -128,11 +132,12 @@ jobs:
           VERSION: ${{ steps.version.outputs.version }}
           AUR_VERSION: ${{ steps.version.outputs.aur_version }}
           SHA256: ${{ steps.sha256.outputs.sha256 }}
+          GHOSTTY_COMMIT: ${{ steps.version.outputs.ghostty_commit }}
         run: |
           cd aur-cmux-gtk
           sed -i "s/^pkgver=.*/pkgver=${AUR_VERSION}/" PKGBUILD
-          # Update the tarball sha256 (first entry); ghostty git source stays SKIP
           sed -i "s/^    '[0-9a-f]\{64\}'/    '${SHA256}'/" PKGBUILD
+          sed -i "s/#commit=[0-9a-f]*/#commit=${GHOSTTY_COMMIT}/" PKGBUILD
 
           # Generate .SRCINFO (deterministic format, no makepkg needed)
           printf '%s\n' \
@@ -159,7 +164,7 @@ jobs:
             "	conflicts = cmux" \
             "	conflicts = cmux-git" \
             "	source = cmux-gtk-${VERSION}.tar.gz::https://github.com/douglas/cmux-gtk/archive/v${VERSION}.tar.gz" \
-            "	source = ghostty::git+https://github.com/manaflow-ai/ghostty.git" \
+            "	source = ghostty::git+https://github.com/manaflow-ai/ghostty.git#commit=${GHOSTTY_COMMIT}" \
             "	sha256sums = ${SHA256}" \
             "	sha256sums = SKIP" \
             "" \
