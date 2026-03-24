@@ -148,9 +148,12 @@ pub fn main() !void {
     );
 
     println!("cargo:rustc-link-search=native={}", lib_dir.display());
-    // Link GLAD before ghostty so its symbols are available when the
-    // linker resolves libghostty.so's references to gladLoader*.
+    // Force all GLAD symbols to be retained — libghostty.so references
+    // gladLoaderLoadGLContext/UnloadGLContext which are in the static
+    // libglad.a compiled by cc::Build above.
+    println!("cargo:rustc-link-arg=-Wl,--whole-archive");
     println!("cargo:rustc-link-lib=static=glad");
+    println!("cargo:rustc-link-arg=-Wl,--no-whole-archive");
     println!("cargo:rustc-link-lib=dylib=ghostty");
     println!(
         "cargo:rustc-env=GHOSTTY_BUNDLED_RESOURCES_DIR={}",
