@@ -391,7 +391,7 @@ impl GhosttyGlSurface {
 
             let surface = unsafe { ghostty_surface_new(app, &config) };
             if surface.is_null() {
-                tracing::error!("ghostty_surface_new returned null");
+                tracing::error!("ghostty_surface_new returned null — ghostty failed to create the surface");
                 return;
             }
 
@@ -665,10 +665,20 @@ impl GhosttyGlSurface {
             }
         };
 
+        // Compute consumed modifiers from the GDK event — modifiers that
+        // were used by the keyboard layout to produce the character (e.g.,
+        // Shift is consumed when producing '?' from '/'). Without this,
+        // ghostty sees Shift+? instead of just ? in raw/alternate mode.
+        let consumed_mods = controller
+            .current_event()
+            .and_then(|ev| ev.downcast_ref::<gdk4::KeyEvent>().cloned())
+            .map(|ke| keys::gdk_mods_to_ghostty(ke.consumed_modifiers()))
+            .unwrap_or(0);
+
         let key_event = ghostty_input_key_s {
             action,
             mods,
-            consumed_mods: 0,
+            consumed_mods,
             keycode,
             text: text_ptr,
             unshifted_codepoint,

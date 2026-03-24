@@ -30,7 +30,7 @@ _cmux_send() {
 }
 
 _cmux_send_fire_forget() {
-  ( setopt NO_XTRACE NO_VERBOSE 2>/dev/null; _cmux_send "$1" >/dev/null 2>&1 ) &!
+  ( exec >/dev/null 2>&1; set +x; setopt NO_XTRACE NO_VERBOSE; _cmux_send "$1" ) &!
 }
 
 # ── Workspace / panel identifiers ────────────────────────────────────
@@ -109,7 +109,9 @@ _cmux_git_last_report=0
 
 # Core git branch detection — runs synchronously (used by async wrapper).
 _cmux_update_git_branch_sync() {
-  # Suppress trace/verbose output when backgrounded
+  # Redirect all output to prevent TUI corruption from background writes
+  exec >/dev/null 2>&1
+  set +x 2>/dev/null
   setopt NO_XTRACE NO_VERBOSE 2>/dev/null
   # Try fast path first (no fork)
   if [[ -z "$_cmux_git_head_path" ]] || [[ ! -f "$_cmux_git_head_path" ]]; then
@@ -183,7 +185,10 @@ _cmux_start_git_watcher() {
   [[ -f "$head_file" ]] || return
 
   (
-    # Suppress trace/verbose output inherited from parent shell (e.g. Claude Code)
+    # Redirect all output to /dev/null FIRST to prevent any background
+    # writes from corrupting TUI apps (Claude Code, vim, etc.)
+    exec >/dev/null 2>&1
+    set +x 2>/dev/null
     setopt NO_XTRACE NO_VERBOSE 2>/dev/null
     local last_head
     last_head=$(< "$head_file" 2>/dev/null)
@@ -245,7 +250,9 @@ _cmux_start_pr_poll() {
   [[ -n "$_cmux_pr_poll_pid" ]] && kill "$_cmux_pr_poll_pid" 2>/dev/null
 
   (
-    # Suppress all trace/verbose output in the background poller
+    # Redirect all output and suppress tracing to prevent TUI corruption
+    exec >/dev/null 2>&1
+    set +x 2>/dev/null
     setopt NO_XTRACE NO_VERBOSE 2>/dev/null
     while true; do
       sleep 45
