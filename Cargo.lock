@@ -121,16 +121,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "cc"
-version = "1.2.56"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "aebf35691d1bfb0ac386a69bac2fde4dd276fb618cf8bf4f5318fe285e821bb2"
-dependencies = [
- "find-msvc-tools",
- "shlex",
-]
-
-[[package]]
 name = "cfg-expr"
 version = "0.20.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -188,7 +178,7 @@ checksum = "3a822ea5bc7590f9d40f1ba12c0dc3c2760f3482c6984db1573ad11031420831"
 
 [[package]]
 name = "cmux"
-version = "0.62.0-alpha.5"
+version = "0.62.0-alpha.6"
 dependencies = [
  "anyhow",
  "base64",
@@ -215,7 +205,7 @@ dependencies = [
 
 [[package]]
 name = "cmux-cli"
-version = "0.62.0-alpha.5"
+version = "0.62.0-alpha.6"
 dependencies = [
  "anyhow",
  "clap",
@@ -277,12 +267,6 @@ dependencies = [
  "memoffset",
  "rustc_version",
 ]
-
-[[package]]
-name = "find-msvc-tools"
-version = "0.1.9"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5baebc0774151f905a1a2cc41989300b1e6fbb29aff0ceffa1064fdd3088d582"
 
 [[package]]
 name = "foldhash"
@@ -444,7 +428,7 @@ dependencies = [
 
 [[package]]
 name = "ghostty-gtk"
-version = "0.62.0-alpha.5"
+version = "0.62.0-alpha.6"
 dependencies = [
  "gdk4",
  "ghostty-sys",
@@ -455,10 +439,7 @@ dependencies = [
 
 [[package]]
 name = "ghostty-sys"
-version = "0.62.0-alpha.5"
-dependencies = [
- "cc",
-]
+version = "0.62.0-alpha.6"
 
 [[package]]
 name = "gio"
@@ -1073,12 +1054,6 @@ name = "shell-escape"
 version = "0.1.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "45bb67a18fa91266cc7807181f62f9178a6873bfad7dc788c42e6430db40184f"
-
-[[package]]
-name = "shlex"
-version = "1.3.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0fda2ff0d084019ba4d7c6f371c95d8fd75ce3524c3cb8fb653a3023f6323e64"
 
 [[package]]
 name = "signal-hook-registry"
