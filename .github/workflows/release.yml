@@ -80,11 +80,16 @@ jobs:
           REPO: ${{ github.repository }}
         run: |
           chmod +x artifacts/cmux-app artifacts/cmux
-          gh release create "$TAG" \
-            --title "$TAG" \
-            --notes "See [CHANGELOG.md](https://github.com/${REPO}/blob/main/CHANGELOG.md) for details." \
-            artifacts/cmux-app \
-            artifacts/cmux
+          # Upload to existing release if it was created manually, otherwise create new
+          if gh release view "$TAG" &>/dev/null; then
+            gh release upload "$TAG" artifacts/cmux-app artifacts/cmux --clobber
+          else
+            gh release create "$TAG" \
+              --title "$TAG" \
+              --notes "See [CHANGELOG.md](https://github.com/${REPO}/blob/main/CHANGELOG.md) for details." \
+              artifacts/cmux-app \
+              artifacts/cmux
+          fi
 
   aur:
     needs: release
@@ -139,34 +144,28 @@ jobs:
           sed -i "s/^sha256sums=.*/sha256sums=('${SHA256}')/" PKGBUILD
           sed -i "s/^_ghostty_commit=.*/_ghostty_commit=${GHOSTTY_COMMIT}/" PKGBUILD
 
-          # Generate .SRCINFO (deterministic format, no makepkg needed)
-          printf '%s\n' \
-            "pkgbase = cmux-gtk" \
-            "	pkgdesc = Terminal multiplexer for AI coding agents (GTK4/libadwaita)" \
-            "	pkgver = ${AUR_VERSION}" \
-            "	pkgrel = 1" \
-            "	url = https://github.com/douglas/cmux-gtk" \
-            "	arch = x86_64" \
-            "	license = AGPL-3.0-or-later" \
-            "	makedepends = rust" \
-            "	makedepends = cargo" \
-            "	makedepends = zig" \
-            "	makedepends = ncurses" \
-            "	makedepends = gcc" \
-            "	makedepends = patchelf" \
-            "	makedepends = git" \
-            "	depends = gtk4" \
-            "	depends = libadwaita" \
-            "	depends = webkitgtk-6.0" \
-            "	depends = glib2" \
-            "	depends = opengl-driver" \
-            "	provides = cmux" \
-            "	conflicts = cmux" \
-            "	conflicts = cmux-git" \
-            "	source = cmux-gtk-${VERSION}.tar.gz::https://github.com/douglas/cmux-gtk/archive/v${VERSION}.tar.gz" \
-            "	sha256sums = ${SHA256}" \
-            "" \
-            "pkgname = cmux-gtk" > .SRCINFO
+          # Generate .SRCINFO by sourcing PKGBUILD variables.
+          # This stays in sync automatically when PKGBUILD fields change.
+          eval "$(grep -E '^(pkgname|pkgver|pkgrel|pkgdesc|url|license|_tagver)=' PKGBUILD | head -20)"
+          eval "$(grep -E '^(arch|depends|makedepends|provides|conflicts)=' PKGBUILD | head -20)"
+          _tagver="${pkgver//.alpha/-alpha}"
+          {
+            echo "pkgbase = ${pkgname}"
+            echo "	pkgdesc = ${pkgdesc}"
+            echo "	pkgver = ${pkgver}"
+            echo "	pkgrel = ${pkgrel}"
+            echo "	url = ${url}"
+            for v in "${arch[@]}"; do echo "	arch = $v"; done
+            for v in "${license[@]}"; do echo "	license = $v"; done
+            for v in "${makedepends[@]}"; do echo "	makedepends = $v"; done
+            for v in "${depends[@]}"; do echo "	depends = $v"; done
+            for v in "${provides[@]}"; do echo "	provides = $v"; done
+            for v in "${conflicts[@]}"; do echo "	conflicts = $v"; done
+            echo "	source = ${pkgname}-${_tagver}.tar.gz::${url}/archive/v${_tagver}.tar.gz"
+            echo "	sha256sums = ${SHA256}"
+            echo ""
+            echo "pkgname = ${pkgname}"
+          } > .SRCINFO
 
       - name: Push to AUR
         env:
