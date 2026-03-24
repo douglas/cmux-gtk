@@ -28,14 +28,31 @@ pub struct RemoteConfig {
 impl RemoteConfig {
     /// Build SSH arguments from this config.
     pub fn ssh_args(&self) -> Vec<String> {
+        // Reject destinations that look like SSH flags to prevent argument injection
+        // (e.g., a session file with destination="-oProxyCommand=evil").
+        if self.destination.starts_with('-') {
+            tracing::error!(
+                dest = %self.destination,
+                "Rejecting SSH destination starting with '-' (possible injection)"
+            );
+            return Vec::new();
+        }
+
         let mut args = Vec::new();
         if let Some(port) = self.port {
             args.push("-p".to_string());
             args.push(port.to_string());
         }
         if let Some(ref identity) = self.identity {
-            args.push("-i".to_string());
-            args.push(identity.clone());
+            if identity.starts_with('-') {
+                tracing::warn!(
+                    identity,
+                    "Skipping identity path starting with '-' (possible injection)"
+                );
+            } else {
+                args.push("-i".to_string());
+                args.push(identity.clone());
+            }
         }
         // Only pass ssh_options that look like valid Key=Value pairs
         // to prevent injection of arbitrary SSH flags from tampered session files.
@@ -268,6 +285,32 @@ mod tests {
         // Both options start with '-', so neither passes through
         let args = c.ssh_args();
         assert_eq!(args, vec!["host"]);
+    }
+
+    #[test]
+    fn test_ssh_args_rejects_dash_destination() {
+        let c = RemoteConfig {
+            destination: "-oProxyCommand=id".to_string(),
+            port: None,
+            identity: None,
+            ssh_options: Vec::new(),
+            remote_daemon_path: None,
+        };
+        // Destination starting with '-' returns empty args
+        assert!(c.ssh_args().is_empty());
+    }
+
+    #[test]
+    fn test_ssh_args_skips_dash_identity() {
+        let c = RemoteConfig {
+            destination: "host".to_string(),
+            port: None,
+            identity: Some("-evil".to_string()),
+            ssh_options: Vec::new(),
+            remote_daemon_path: None,
+        };
+        // Identity starting with '-' is dropped; destination still present
+        assert_eq!(c.ssh_args(), vec!["host"]);
     }
 
     #[test]

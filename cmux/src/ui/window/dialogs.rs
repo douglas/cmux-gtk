@@ -190,7 +190,7 @@ pub fn show_ssh_dialog(window: &adw::ApplicationWindow, state: &Rc<AppState>) {
             return;
         }
         let destination = dest_row.text().to_string();
-        if destination.is_empty() {
+        if destination.is_empty() || destination.starts_with('-') {
             return;
         }
         let port: Option<u16> = port_row

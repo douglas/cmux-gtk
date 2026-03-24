@@ -82,6 +82,14 @@ type sessionState struct {
 
 const maxRPCFrameBytes = 4 * 1024 * 1024
 
+// maxConcurrentStreams caps the number of live proxy streams to prevent resource
+// exhaustion from a compromised or misbehaving local client.
+const maxConcurrentStreams = 64
+
+// streamIdleTimeout closes a proxy stream that has received no data for this
+// duration, preventing indefinite goroutine and connection leaks.
+const streamIdleTimeout = 5 * time.Minute
+
 func main() {
 	if shouldRunCLIForInvocation(os.Args[0], os.Args[1:]) {
 		os.Exit(runCLI(os.Args[1:]))
@@ -384,10 +392,26 @@ func (s *rpcServer) handleProxyOpen(req rpcRequest) rpcResponse {
 		}
 	}
 
+	// Reject timeout_ms=0 — treat non-positive values as the default to avoid
+	// zero-duration timeouts that make all connections fail immediately.
 	timeoutMs := 10000
-	if parsed, hasTimeout := getIntParam(req.Params, "timeout_ms"); hasTimeout && parsed >= 0 {
+	if parsed, hasTimeout := getIntParam(req.Params, "timeout_ms"); hasTimeout && parsed > 0 {
 		timeoutMs = parsed
 	}
+
+	s.mu.Lock()
+	if len(s.streams) >= maxConcurrentStreams {
+		s.mu.Unlock()
+		return rpcResponse{
+			ID: req.ID,
+			OK: false,
+			Error: &rpcError{
+				Code:    "too_many_streams",
+				Message: fmt.Sprintf("concurrent stream limit (%d) reached", maxConcurrentStreams),
+			},
+		}
+	}
+	s.mu.Unlock()
 
 	conn, err := net.DialTimeout(
 		"tcp",
@@ -509,8 +533,10 @@ func (s *rpcServer) handleProxyWrite(req rpcRequest) rpcResponse {
 	}
 	conn := state.conn
 
+	// Treat timeout_ms=0 as the default (8000ms) — zero would disable the write
+	// deadline entirely, allowing a slow remote to hang the goroutine indefinitely.
 	timeoutMs := 8000
-	if parsed, hasTimeout := getIntParam(req.Params, "timeout_ms"); hasTimeout {
+	if parsed, hasTimeout := getIntParam(req.Params, "timeout_ms"); hasTimeout && parsed > 0 {
 		timeoutMs = parsed
 	}
 	if timeoutMs > 0 {
@@ -1005,6 +1031,9 @@ func (s *rpcServer) streamPump(streamID string, conn net.Conn) {
 
 	buffer := make([]byte, 32768)
 	for {
+		// Idle timeout: close streams that have received no data for a prolonged
+		// period to prevent goroutine and connection leaks.
+		_ = conn.SetReadDeadline(time.Now().Add(streamIdleTimeout))
 		n, readErr := conn.Read(buffer)
 		data := append([]byte(nil), buffer[:max(0, n)]...)
 		if len(data) > 0 {
@@ -1033,6 +1062,12 @@ func (s *rpcServer) streamPump(streamID string, conn net.Conn) {
 				Event:      "proxy.stream.eof",
 				StreamID:   streamID,
 				DataBase64: "",
+			})
+		} else if netErr, ok := readErr.(net.Error); ok && netErr.Timeout() {
+			_ = s.frameWriter.writeEvent(rpcEvent{
+				Event:    "proxy.stream.error",
+				StreamID: streamID,
+				Error:    "stream idle timeout",
 			})
 		} else if !errors.Is(readErr, net.ErrClosed) {
 			_ = s.frameWriter.writeEvent(rpcEvent{

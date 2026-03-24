@@ -293,9 +293,22 @@ fn download_from_github_releases(
 
     tracing::info!(bytes = body.len(), "Downloaded {asset_name}");
 
-    // Verify SHA-256 against the release manifest (best-effort).
-    if let Err(e) = verify_sha256(version, &asset_name, &body) {
-        tracing::warn!("SHA-256 verification skipped or failed: {e}");
+    // Verify SHA-256 — mandatory except when the manifest itself is unreachable
+    // (offline / air-gapped environments).  Any other failure (hash mismatch,
+    // asset not listed) is a hard error to prevent MITM binary substitution.
+    match verify_sha256(version, &asset_name, &body) {
+        Ok(()) => {}
+        Err(e)
+            if e.starts_with("Failed to fetch checksums")
+                || e.starts_with("Failed to read manifest") =>
+        {
+            tracing::error!(
+                "SHA-256 manifest unreachable, proceeding without verification: {e}"
+            );
+        }
+        Err(e) => {
+            return Err(format!("SHA-256 verification failed: {e}"));
+        }
     }
 
     // Write to cache so subsequent runs hit Priority 2 instead.

@@ -9,7 +9,7 @@
 use base64::Engine;
 use serde_json::Value;
 use std::collections::HashMap;
-use std::io::{BufRead, BufReader, Write};
+use std::io::{BufRead, BufReader, Read, Write};
 use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{mpsc, Arc, Mutex};
@@ -118,15 +118,29 @@ impl RemoteRpcClient {
         let subs_clone = Arc::clone(&stream_subs);
         let alive_clone = Arc::clone(&alive);
         let reader_thread = std::thread::spawn(move || {
-            let reader = BufReader::new(stdout);
-            for line in reader.lines() {
-                let line = match line {
-                    Ok(l) => l,
+            // 4 MB matches Go daemon's maxRPCFrameBytes constant.
+            const MAX_LINE: usize = 4 * 1024 * 1024;
+            let mut reader = BufReader::new(stdout);
+            loop {
+                let mut buf = String::new();
+                let n = match reader.by_ref().take((MAX_LINE + 1) as u64).read_line(&mut buf) {
+                    Ok(0) => {
+                        tracing::debug!("RPC reader: EOF");
+                        break;
+                    }
                     Err(e) => {
                         tracing::debug!("RPC reader: stdout closed: {}", e);
                         break;
                     }
+                    Ok(n) => n,
                 };
+                // Detect oversized frames: take(MAX_LINE+1) read the whole window
+                // without encountering a newline → frame exceeds limit.
+                if n > MAX_LINE && !buf.ends_with('\n') {
+                    tracing::warn!("RPC reader: frame exceeds {MAX_LINE} bytes, disconnecting");
+                    break;
+                }
+                let line = buf.trim_end_matches(['\n', '\r']).to_owned();
 
                 if line.is_empty() {
                     continue;

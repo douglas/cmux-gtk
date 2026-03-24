@@ -142,6 +142,9 @@ pub(super) fn handle_workspace_create_ssh(
         Some(d) => d,
         None => return Response::error(id, "invalid_params", "destination is required"),
     };
+    if destination.is_empty() || destination.starts_with('-') {
+        return Response::error(id, "invalid_params", "Invalid SSH destination");
+    }
 
     let port = params
         .get("port")

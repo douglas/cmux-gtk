@@ -9,9 +9,14 @@
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::process::{Child, Command, Stdio};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
+
+/// Maximum simultaneous relay connections.  Excess connections are rejected
+/// immediately to prevent resource exhaustion from an untrusted remote host.
+const MAX_RELAY_CONNECTIONS: usize = 8;
+static RELAY_CONNECTIONS: AtomicUsize = AtomicUsize::new(0);
 
 /// A relay server that accepts authenticated commands and forwards them
 /// to the local cmux socket.
@@ -34,7 +39,9 @@ impl RelayServer {
             .port();
 
         let relay_id = uuid::Uuid::new_v4().to_string();
-        let auth_token = uuid::Uuid::new_v4().to_string();
+        // Token: 16 random bytes hex-encoded (32 hex chars, no hyphens).
+        // Go side calls hex.DecodeString() which fails on UUID hyphens.
+        let auth_token = crate::socket::auth::hex_encode(&uuid::Uuid::new_v4().into_bytes());
         let alive = Arc::new(AtomicBool::new(true));
 
         let alive_clone = Arc::clone(&alive);
@@ -52,6 +59,13 @@ impl RelayServer {
 
                 match listener.accept() {
                     Ok((stream, addr)) => {
+                        // Reject connections beyond the limit before spawning a thread.
+                        let count = RELAY_CONNECTIONS.fetch_add(1, Ordering::Relaxed);
+                        if count >= MAX_RELAY_CONNECTIONS {
+                            RELAY_CONNECTIONS.fetch_sub(1, Ordering::Relaxed);
+                            tracing::warn!(?addr, "Relay: connection limit reached, rejecting");
+                            continue;
+                        }
                         tracing::debug!(?addr, "Relay: new connection");
                         let socket = socket_path.clone();
                         let rid = relay_id_clone.clone();
@@ -60,6 +74,7 @@ impl RelayServer {
                             if let Err(e) = handle_relay_connection(stream, &socket, &rid, &token) {
                                 tracing::debug!("Relay connection error: {}", e);
                             }
+                            RELAY_CONNECTIONS.fetch_sub(1, Ordering::Relaxed);
                         });
                     }
                     Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
@@ -175,12 +190,9 @@ fn handle_relay_connection(
     writeln!(stream, "{}", challenge_line).map_err(|e| format!("write challenge: {}", e))?;
     stream.flush().ok();
 
-    // Step 2: Read auth response
+    // Step 2: Read auth response (bounded: 32 KB — large enough for any valid JSON auth frame)
     let mut reader = BufReader::new(stream.try_clone().map_err(|e| e.to_string())?);
-    let mut response_line = String::new();
-    reader
-        .read_line(&mut response_line)
-        .map_err(|e| format!("read auth response: {}", e))?;
+    let response_line = read_limited_line(&mut reader, 32 * 1024)?;
 
     let response: serde_json::Value = serde_json::from_str(response_line.trim())
         .map_err(|e| format!("parse auth response: {}", e))?;
@@ -195,19 +207,23 @@ fn handle_relay_connection(
         return Err("Relay ID mismatch".to_string());
     }
 
-    // Step 3: Verify HMAC-SHA256
+    // Step 3: Verify HMAC-SHA256 with constant-time comparison.
+    // Hex-decode the token so both Rust and Go use the same raw key bytes.
+    let key = crate::socket::auth::hex_decode(auth_token)
+        .ok_or_else(|| "auth_token is not valid hex".to_string())?;
     let message = format!("relay_id={}\nnonce={}\nversion=1", relay_id, nonce);
-    let expected_mac = compute_hmac_sha256(auth_token.as_bytes(), message.as_bytes());
-
-    if client_mac != expected_mac {
+    if !crate::socket::auth::verify_hmac_raw(&key, message.as_bytes(), client_mac) {
         return Err("HMAC verification failed".to_string());
     }
 
-    // Step 4: Read command and forward to local socket
-    let mut command_line = String::new();
-    reader
-        .read_line(&mut command_line)
-        .map_err(|e| format!("read command: {}", e))?;
+    // Step 4: Send auth OK — Go's authenticateRelayConn expects {"ok":true} before
+    // proceeding to send commands.
+    writeln!(stream, r#"{{"ok":true}}"#)
+        .map_err(|e| format!("write auth ok: {}", e))?;
+    stream.flush().ok();
+
+    // Step 5: Read command (bounded: 1 MB — enough for any realistic socket v2 request)
+    let command_line = read_limited_line(&mut reader, 1024 * 1024)?;
 
     if command_line.trim().is_empty() {
         return Err("Empty command".to_string());
@@ -221,6 +237,25 @@ fn handle_relay_connection(
     stream.flush().ok();
 
     Ok(())
+}
+
+/// Read one newline-terminated line from `reader`, capping at `limit` content bytes.
+///
+/// Returns the line including its trailing `\n`.  Returns an error if the line
+/// exceeds `limit` bytes (no newline found within the window), preventing OOM
+/// from an unbounded pre-auth read.
+fn read_limited_line<R: BufRead>(reader: &mut R, limit: usize) -> Result<String, String> {
+    let mut buf = String::new();
+    reader
+        .by_ref()
+        .take((limit + 1) as u64)
+        .read_line(&mut buf)
+        .map_err(|e| format!("read error: {e}"))?;
+    // If the buffer filled the window without a newline, the line is too long.
+    if !buf.ends_with('\n') && buf.len() >= limit {
+        return Err(format!("line exceeds {limit} bytes"));
+    }
+    Ok(buf)
 }
 
 /// Forward a command to the local cmux Unix socket.
@@ -249,11 +284,6 @@ fn forward_to_socket(socket_path: &str, command: &str) -> Result<String, String>
     Ok(response.trim().to_string())
 }
 
-/// Compute HMAC-SHA256 and return as hex string.
-fn compute_hmac_sha256(key: &[u8], message: &[u8]) -> String {
-    crate::socket::auth::hex_encode(&crate::socket::auth::compute_hmac_sha256(key, message))
-}
-
 /// Find an available port on the remote host for the reverse tunnel.
 fn allocate_remote_port(ssh_args: &[String]) -> Result<u16, String> {
     // Try ports in the high ephemeral range
@@ -280,6 +310,10 @@ fn allocate_remote_port(ssh_args: &[String]) -> Result<u16, String> {
 }
 
 /// Install relay metadata files on the remote host.
+///
+/// Writes a JSON auth file (`~/.cmux/relay/<port>.auth`) with restrictive
+/// permissions so other users cannot read the relay token.  The JSON format
+/// matches Go's `relayAuthState` struct (`relay_id` / `relay_token`).
 fn install_remote_metadata(
     ssh_args: &[String],
     remote_port: u16,
@@ -287,18 +321,24 @@ fn install_remote_metadata(
     auth_token: &str,
     daemon_path: &str,
 ) -> Result<(), String> {
-    let escaped_daemon = shell_escape::escape(daemon_path.into());
+    let esc_daemon = shell_escape::escape(daemon_path.into());
+    // Shell-escape the relay credentials even though they are safe ASCII;
+    // this provides defence-in-depth if the generation ever changes.
+    let esc_relay_id = shell_escape::escape(relay_id.into());
+    let esc_auth_token = shell_escape::escape(auth_token.into());
+
+    // Write JSON: {"relay_id":"...","relay_token":"..."} (matches Go relayAuthState)
+    // chmod 700 the relay dir and 600 the auth file so only the owner can read them.
     let script = format!(
-        r#"
-mkdir -p ~/.cmux/relay ~/.cmux/bin
+        r#"mkdir -p ~/.cmux/relay ~/.cmux/bin && chmod 700 ~/.cmux/relay
 echo '127.0.0.1:{remote_port}' > ~/.cmux/socket_addr
-printf '{relay_id}\n{auth_token}' > ~/.cmux/relay/{remote_port}.auth
-echo {escaped_daemon} > ~/.cmux/relay/{remote_port}.daemon_path
-"#,
+printf '{{"relay_id":"%s","relay_token":"%s"}}' {esc_relay_id} {esc_auth_token} > ~/.cmux/relay/{remote_port}.auth
+chmod 600 ~/.cmux/relay/{remote_port}.auth
+echo {esc_daemon} > ~/.cmux/relay/{remote_port}.daemon_path"#,
         remote_port = remote_port,
-        relay_id = relay_id,
-        auth_token = auth_token,
-        escaped_daemon = escaped_daemon,
+        esc_relay_id = esc_relay_id,
+        esc_auth_token = esc_auth_token,
+        esc_daemon = esc_daemon,
     );
 
     let status = Command::new("ssh")

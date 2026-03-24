@@ -114,6 +114,38 @@ pub fn hex_encode(data: &[u8]) -> String {
     data.iter().map(|b| format!("{:02x}", b)).collect()
 }
 
+/// Decode a hex string to bytes.  Returns `None` for odd-length or non-hex input.
+pub fn hex_decode(s: &str) -> Option<Vec<u8>> {
+    if !s.len().is_multiple_of(2) {
+        return None;
+    }
+    let mut bytes = Vec::with_capacity(s.len() / 2);
+    let mut chars = s.chars();
+    while let (Some(a), Some(b)) = (chars.next(), chars.next()) {
+        let hi = a.to_digit(16)?;
+        let lo = b.to_digit(16)?;
+        bytes.push(((hi << 4) | lo) as u8);
+    }
+    Some(bytes)
+}
+
+/// Constant-time HMAC-SHA256 verification using raw key bytes.
+///
+/// Use this instead of `verify_hmac` when the key is already raw bytes
+/// (e.g., decoded from hex).
+pub fn verify_hmac_raw(key: &[u8], message: &[u8], response_hex: &str) -> bool {
+    let expected = compute_hmac_sha256(key, message);
+    let expected_hex = hex_encode(&expected);
+    if expected_hex.len() != response_hex.len() {
+        return false;
+    }
+    expected_hex
+        .bytes()
+        .zip(response_hex.bytes())
+        .fold(0u8, |acc, (a, b)| acc | (a ^ b))
+        == 0
+}
+
 /// Check whether a peer is authorized under the given control mode.
 /// `server_pid` should be the cmux server process ID (used for CmuxOnly descendant check).
 pub fn is_authorized(peer: &PeerInfo, mode: SocketControlMode, server_pid: u32) -> bool {
