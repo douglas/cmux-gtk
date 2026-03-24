@@ -406,6 +406,15 @@ pub(super) fn install_css() {
         .remote-disconnected {
             color: alpha(@theme_fg_color, 0.4);
         }
+
+        /* ── Confirmation dialogs — square corners ── */
+        .cmux-confirm-dialog,
+        .cmux-confirm-dialog > .background,
+        .cmux-confirm-dialog .dialog-content,
+        .cmux-confirm-dialog > decoration,
+        .cmux-confirm-dialog > decoration-overlay {
+            border-radius: 0;
+        }
         ",
     );
 

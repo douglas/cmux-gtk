@@ -256,6 +256,7 @@ pub fn create_window(
             }
 
             let dialog = adw::MessageDialog::new(Some(window), Some("Quit cmux?"), None);
+            dialog.add_css_class("cmux-confirm-dialog");
             dialog.set_body(&format!(
                 "There {} still active. Are you sure you want to quit?",
                 if terminal_count == 1 {
