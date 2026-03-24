@@ -136,8 +136,8 @@ jobs:
         run: |
           cd aur-cmux-gtk
           sed -i "s/^pkgver=.*/pkgver=${AUR_VERSION}/" PKGBUILD
-          sed -i "s/^    '[0-9a-f]\{64\}'/    '${SHA256}'/" PKGBUILD
-          sed -i "s/#commit=[0-9a-f]*/#commit=${GHOSTTY_COMMIT}/" PKGBUILD
+          sed -i "s/^sha256sums=.*/sha256sums=('${SHA256}')/" PKGBUILD
+          sed -i "s/^_ghostty_commit=.*/_ghostty_commit=${GHOSTTY_COMMIT}/" PKGBUILD
 
           # Generate .SRCINFO (deterministic format, no makepkg needed)
           printf '%s\n' \
@@ -164,9 +164,7 @@ jobs:
             "	conflicts = cmux" \
             "	conflicts = cmux-git" \
             "	source = cmux-gtk-${VERSION}.tar.gz::https://github.com/douglas/cmux-gtk/archive/v${VERSION}.tar.gz" \
-            "	source = ghostty::git+https://github.com/manaflow-ai/ghostty.git#commit=${GHOSTTY_COMMIT}" \
             "	sha256sums = ${SHA256}" \
-            "	sha256sums = SKIP" \
             "" \
             "pkgname = cmux-gtk" > .SRCINFO
 
