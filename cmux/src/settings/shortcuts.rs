@@ -220,6 +220,10 @@ pub fn load() -> ShortcutConfig {
 pub fn save(config: &ShortcutConfig) -> Result<(), std::io::Error> {
     let dir = super::config_dir();
     std::fs::create_dir_all(&dir)?;
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700));
+    }
 
     let path = dir.join("shortcuts.json");
     let json = serde_json::to_string_pretty(config).map_err(std::io::Error::other)?;

@@ -93,7 +93,9 @@ pub fn build_daemon_locally(
     platform: &RemotePlatform,
     go_source_dir: &str,
 ) -> Result<String, String> {
-    let output_path = format!("/tmp/cmuxd-remote-{}-{}", platform.go_os, platform.go_arch);
+    // SAFETY: getuid() is always safe.
+    let uid = unsafe { libc::getuid() };
+    let output_path = format!("/tmp/cmuxd-remote-{uid}-{}-{}", platform.go_os, platform.go_arch);
 
     tracing::info!(
         go_os = %platform.go_os,
@@ -328,9 +330,11 @@ fn download_from_github_releases(
     {
         use std::io::Write;
         use std::os::unix::fs::OpenOptionsExt;
+        // Remove any existing tmp file so O_EXCL (create_new) won't fail and
+        // won't follow a symlink that may have been planted at the path.
+        let _ = std::fs::remove_file(&tmp_path);
         let mut f = std::fs::OpenOptions::new()
-            .create(true)
-            .truncate(true)
+            .create_new(true)
             .write(true)
             .mode(0o755)
             .open(&tmp_path)

@@ -69,8 +69,12 @@ pub(super) fn insecure_http_interstitial(url: &str) -> String {
 <p>Your data may be visible to others on the network.</p>
 <div class="actions">
   <button onclick="history.back()">Go Back</button>
-  <button class="proceed" onclick="location.href='{escaped}'">Proceed Anyway</button>
+  <button class="proceed" data-href="{escaped}">Proceed Anyway</button>
 </div>
+<script>
+  var btn = document.querySelector('.proceed');
+  if (btn) {{ btn.addEventListener('click', function() {{ location.href = this.dataset.href; }}); }}
+</script>
 </body></html>"#
     )
 }

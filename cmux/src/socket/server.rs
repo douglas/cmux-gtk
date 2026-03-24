@@ -77,7 +77,7 @@ pub async fn run_socket_server(state: Arc<SharedState>) -> anyhow::Result<()> {
     if socket_path.exists() {
         // Only remove if it's actually a Unix socket, not a regular file
         let metadata = std::fs::symlink_metadata(socket_path)?;
-        if metadata.file_type().is_socket() {
+        if metadata.file_type().is_socket() && !metadata.file_type().is_symlink() {
             // Check PID lockfile first — faster and more reliable than connect()
             let stale = is_stale_socket(&pid_path);
             if !stale && std::os::unix::net::UnixStream::connect(&path).is_ok() {
@@ -289,12 +289,17 @@ fn is_stale_socket(pid_path: &str) -> bool {
 }
 
 /// Write the current PID to a lockfile next to the socket.
+///
+/// Uses O_EXCL (`create_new`) to prevent symlink following — any pre-existing
+/// file is removed first (the caller already cleaned up the stale socket).
 fn write_pid_file(pid_path: &str) {
     use std::io::Write;
     use std::os::unix::fs::OpenOptionsExt;
+    // Remove any remnant so create_new succeeds. If removal fails (e.g. the
+    // file was already gone) we still attempt create_new below.
+    let _ = std::fs::remove_file(pid_path);
     let result = std::fs::OpenOptions::new()
-        .create(true)
-        .truncate(true)
+        .create_new(true)
         .write(true)
         .mode(0o600)
         .open(pid_path)

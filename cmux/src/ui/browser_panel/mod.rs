@@ -639,7 +639,6 @@ pub fn create_browser_widget_with_profile(
                                             scheme.as_str(),
                                             "http" | "https" | "file"
                                                 | "about" | "data" | "blob"
-                                                | "javascript"
                                         ) {
                                             // Only forward known-safe schemes to xdg-open
                                             const ALLOWED_SCHEMES: &[&str] = &[

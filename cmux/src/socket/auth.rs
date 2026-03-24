@@ -40,8 +40,6 @@ pub enum SocketControlMode {
     CmuxOnly,
     /// Allow any connection from the same local user (same UID).
     LocalUser,
-    /// Require HMAC-SHA256 authentication with a shared password.
-    Password,
     /// Allow any local connection (no auth check beyond same-user).
     Automation,
     /// Allow any local connection (no auth check at all).
@@ -57,18 +55,10 @@ impl SocketControlMode {
             Ok("off") => Self::Off,
             Ok("allowAll") => Self::AllowAll,
             Ok("cmuxOnly") => Self::CmuxOnly,
-            Ok("password") => Self::Password,
             Ok("automation") => Self::Automation,
             _ => Self::LocalUser,
         }
     }
-}
-
-/// Stored password for HMAC-SHA256 mode.
-/// Set via CMUX_SOCKET_PASSWORD env var.
-#[allow(dead_code)]
-pub fn socket_password() -> Option<String> {
-    std::env::var("CMUX_SOCKET_PASSWORD").ok()
 }
 
 /// Verify an HMAC-SHA256 challenge response.
@@ -154,11 +144,6 @@ pub fn is_authorized(peer: &PeerInfo, mode: SocketControlMode, server_pid: u32) 
         SocketControlMode::AllowAll => true,
         SocketControlMode::LocalUser | SocketControlMode::Automation => is_same_user(peer),
         SocketControlMode::CmuxOnly => is_same_user(peer) && is_descendant(peer.pid, server_pid),
-        SocketControlMode::Password => {
-            // Password mode still requires same-user for the socket connection;
-            // the HMAC challenge happens at the protocol level in the server.
-            is_same_user(peer)
-        }
     }
 }
 

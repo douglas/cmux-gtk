@@ -556,6 +556,10 @@ pub fn load() -> AppSettings {
 pub fn save(settings: &AppSettings) -> Result<(), std::io::Error> {
     let dir = config_dir();
     std::fs::create_dir_all(&dir)?;
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700));
+    }
 
     let path = dir.join("settings.json");
     let json = serde_json::to_string_pretty(settings).map_err(std::io::Error::other)?;

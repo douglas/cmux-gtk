@@ -73,6 +73,45 @@ pub fn create_markdown_widget(
         settings.set_enable_developer_extras(false);
     }
 
+    // Deny all permission requests (camera, microphone, geolocation, etc.)
+    web_view.connect_permission_request(|_, request| {
+        request.deny();
+        true
+    });
+
+    // Navigation policy: block external navigations — open http/https links
+    // externally with xdg-open, ignore everything else (javascript:, etc.).
+    // Programmatic loads via load_html() bypass this handler entirely.
+    web_view.connect_decide_policy(|_, decision, decision_type| {
+        use webkit6::PolicyDecisionType;
+        if decision_type == PolicyDecisionType::NavigationAction {
+            if let Ok(nav) = decision.clone().downcast::<webkit6::NavigationPolicyDecision>() {
+                if let Some(action) = nav.navigation_action() {
+                    if action.is_user_gesture() {
+                        if let Some(req) = action.request() {
+                            if let Some(uri) = req.uri() {
+                                let url = uri.to_string();
+                                if url.starts_with("http://") || url.starts_with("https://") {
+                                    let safe: String = url
+                                        .chars()
+                                        .filter(|c| !c.is_control())
+                                        .take(4096)
+                                        .collect();
+                                    let _ = std::process::Command::new("xdg-open")
+                                        .arg(&safe)
+                                        .spawn();
+                                }
+                            }
+                        }
+                        nav.ignore();
+                        return true;
+                    }
+                }
+            }
+        }
+        false
+    });
+
     // Load rendered content
     if let Some(path) = file_path {
         load_markdown_file(&web_view, path);
