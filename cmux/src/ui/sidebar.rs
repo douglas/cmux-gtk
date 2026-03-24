@@ -159,7 +159,18 @@ pub fn create_sidebar(state: &Rc<AppState>) -> SidebarWidgets {
 
 /// Refresh the workspace list from shared state.
 pub fn refresh_sidebar(list_box: &gtk4::ListBox, state: &Rc<AppState>) {
+    // Unparent popover menus before removing rows to avoid GTK warnings
+    // about finalized widgets with leftover children.
     while let Some(child) = list_box.first_child() {
+        if let Some(row) = child.downcast_ref::<gtk4::ListBoxRow>() {
+            let mut maybe = row.first_child();
+            while let Some(c) = maybe {
+                maybe = c.next_sibling();
+                if c.downcast_ref::<gtk4::PopoverMenu>().is_some() {
+                    c.unparent();
+                }
+            }
+        }
         list_box.remove(&child);
     }
 
