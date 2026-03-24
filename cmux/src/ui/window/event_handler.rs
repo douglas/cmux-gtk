@@ -149,6 +149,12 @@ pub(super) fn bind_shared_state_updates(
                     // Search events are handled but we don't have the search
                     // overlay widget refs here. The search overlay reads state
                     UiEvent::SetTitle { surface, title } => {
+                        // Sanitize terminal-sourced title: strip C0/C1 control chars
+                        // to prevent escape sequence injection into GTK labels.
+                        let title: String = title
+                            .chars()
+                            .filter(|c| !c.is_control())
+                            .collect();
                         // Reverse-lookup panel_id from terminal_cache
                         let panel_id = state
                             .terminal_cache
@@ -172,6 +178,11 @@ pub(super) fn bind_shared_state_updates(
                         }
                     }
                     UiEvent::SetPwd { surface, directory } => {
+                        // Sanitize terminal-sourced directory path
+                        let directory: String = directory
+                            .chars()
+                            .filter(|c| !c.is_control())
+                            .collect();
                         let panel_id = state
                             .terminal_cache
                             .borrow()

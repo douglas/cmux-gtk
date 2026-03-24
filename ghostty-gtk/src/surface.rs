@@ -1407,6 +1407,8 @@ fn shell_escape(s: &str) -> String {
 #[derive(Clone, Copy)]
 struct SendPtr(*mut c_void);
 
+// SAFETY: SendPtr wraps an opaque ghostty pointer that is sent via channel
+// to the GTK main thread. The pointer is only dereferenced on the main thread.
 unsafe impl Send for SendPtr {}
 
 /// Parse a CSS hex color (#RGB or #RRGGBB) into (r, g, b) floats in [0, 1].

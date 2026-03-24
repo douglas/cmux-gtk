@@ -431,6 +431,10 @@ fn activate(app: &adw::Application, state: &Rc<AppState>) {
         return;
     }
 
+    // Remove socket password from environment so child terminal processes
+    // cannot read it. The password is already cached by socket_password().
+    std::env::remove_var("CMUX_SOCKET_PASSWORD");
+
     // Apply saved theme preference
     apply_theme_from_settings();
 

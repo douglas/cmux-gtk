@@ -51,3 +51,8 @@ sha2 = "0.10"
 # Error handling
 anyhow = "1"
 thiserror = "2"
+
+[profile.release]
+# Keep integer overflow checks in release builds — the hot path is in
+# Zig-compiled ghostty, so the Rust overhead is negligible.
+overflow-checks = true

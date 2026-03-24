@@ -57,6 +57,12 @@ pub async fn run_socket_server(state: Arc<SharedState>) -> anyhow::Result<()> {
     let control_mode = auth::SocketControlMode::from_env();
     let server_pid = std::process::id();
     tracing::info!("Socket control mode: {:?}", control_mode);
+    if control_mode == auth::SocketControlMode::AllowAll {
+        tracing::warn!(
+            "AllowAll socket mode: ANY local process can control cmux \
+             (terminals, browser, notifications). Set CMUX_SOCKET_MODE=localUser to restrict."
+        );
+    }
     if control_mode == auth::SocketControlMode::CmuxOnly {
         tracing::info!("CmuxOnly mode: same-UID + descendant-PID check via /proc enabled");
     }

@@ -223,5 +223,16 @@ pub fn save(config: &ShortcutConfig) -> Result<(), std::io::Error> {
 
     let path = dir.join("shortcuts.json");
     let json = serde_json::to_string_pretty(config).map_err(std::io::Error::other)?;
-    std::fs::write(path, json)
+    {
+        use std::io::Write;
+        use std::os::unix::fs::OpenOptionsExt;
+        let mut f = std::fs::OpenOptions::new()
+            .create(true)
+            .truncate(true)
+            .write(true)
+            .mode(0o600)
+            .open(&path)?;
+        f.write_all(json.as_bytes())?;
+    }
+    Ok(())
 }
