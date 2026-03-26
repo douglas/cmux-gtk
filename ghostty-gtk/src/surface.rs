@@ -92,8 +92,7 @@ mod imp {
         pub(super) resize_focus_restore_source: RefCell<Option<glib::SourceId>>,
         /// Grace period after surface creation during which the render
         /// callback paints the initial background color instead of
-        /// drawing terminal content, hiding the mispositioned prompt
-        /// until Ctrl+L corrects it.
+        /// drawing terminal content, giving the shell time to initialize.
         #[allow(dead_code)] // read via imp() in render callback
         pub(super) created_at: Cell<Option<std::time::Instant>>,
         /// Background color (r, g, b) to paint during the grace period.
@@ -406,26 +405,17 @@ impl GhosttyGlSurface {
             *self.imp().callback_userdata.borrow_mut() = Some(callback_userdata);
             self.imp().surface.set(surface);
 
-            // Start grace period: the render callback will paint black
-            // (terminal bg) instead of calling ghostty_surface_draw,
-            // hiding the mispositioned prompt.
+            // Brief grace period: the render callback paints the terminal
+            // background color instead of calling ghostty_surface_draw,
+            // giving the shell time to initialize before we show content.
             self.imp().created_at.set(Some(std::time::Instant::now()));
-
-            // Freeze after the first black frame so the GL area stays
-            // dark without continuous repaints.
             self.set_auto_render(false);
 
-            // After the shell has started, send Ctrl+L to clear and
-            // redraw the prompt at the top. Then resume rendering.
             let widget = self.clone();
-            glib::timeout_add_local_once(std::time::Duration::from_millis(150), move || {
-                widget.send_text("\x0c");
-                let widget2 = widget.clone();
-                glib::timeout_add_local_once(std::time::Duration::from_millis(50), move || {
-                    widget2.imp().created_at.set(None);
-                    widget2.set_auto_render(true);
-                    widget2.queue_draw();
-                });
+            glib::timeout_add_local_once(std::time::Duration::from_millis(200), move || {
+                widget.imp().created_at.set(None);
+                widget.set_auto_render(true);
+                widget.queue_draw();
             });
 
             self.flush_pending_text();
@@ -461,6 +451,10 @@ impl GhosttyGlSurface {
         }
         self.add_controller(key_controller);
 
+        // Right-click context menu (Copy / Paste)
+        let context_menu = self.build_context_menu();
+        context_menu.set_parent(self);
+
         // Mouse click events
         let click = gtk4::GestureClick::new();
         click.set_button(0); // All buttons
@@ -480,8 +474,16 @@ impl GhosttyGlSurface {
         }
         {
             let surface_widget = self.clone();
+            let menu = context_menu.clone();
             click.connect_released(move |gesture, _n_press, x, y| {
                 let button = gesture.current_button();
+                // Right-click: show context menu instead of forwarding to ghostty
+                if button == 3 {
+                    let rect = gdk4::Rectangle::new(x as i32, y as i32, 1, 1);
+                    menu.set_pointing_to(Some(&rect));
+                    menu.popup();
+                    return;
+                }
                 surface_widget.on_mouse_button(
                     button,
                     x,
@@ -1350,6 +1352,63 @@ impl GhosttyGlSurface {
         }
         #[cfg(not(feature = "link-ghostty"))]
         None
+    }
+
+    /// Build a right-click context menu with Copy and Paste actions.
+    fn build_context_menu(&self) -> gtk4::PopoverMenu {
+        let menu = gtk4::gio::Menu::new();
+        menu.append(Some("Copy"), Some("surface.copy"));
+        menu.append(Some("Paste"), Some("surface.paste"));
+
+        let action_group = gtk4::gio::SimpleActionGroup::new();
+
+        // Copy: read the primary selection (highlighted text) into the system clipboard
+        let copy_action = gtk4::gio::SimpleAction::new("copy", None);
+        let widget_for_copy = self.clone();
+        copy_action.connect_activate(move |_, _| {
+            let primary = widget_for_copy.primary_clipboard();
+            let system = widget_for_copy.clipboard();
+            primary.read_text_async(
+                None::<&gtk4::gio::Cancellable>,
+                glib::clone!(
+                    #[weak]
+                    system,
+                    move |result| {
+                        if let Ok(Some(text)) = result {
+                            if !text.is_empty() {
+                                system.set_text(&text);
+                            }
+                        }
+                    }
+                ),
+            );
+        });
+        action_group.add_action(&copy_action);
+
+        // Paste: read system clipboard and send to the terminal
+        let paste_action = gtk4::gio::SimpleAction::new("paste", None);
+        let widget_for_paste = self.clone();
+        paste_action.connect_activate(move |_, _| {
+            let clipboard = widget_for_paste.clipboard();
+            let surface = widget_for_paste.clone();
+            clipboard.read_text_async(
+                None::<&gtk4::gio::Cancellable>,
+                move |result| {
+                    if let Ok(Some(text)) = result {
+                        if !text.is_empty() {
+                            surface.send_text(&text);
+                        }
+                    }
+                },
+            );
+        });
+        action_group.add_action(&paste_action);
+
+        self.insert_action_group("surface", Some(&action_group));
+
+        let popover = gtk4::PopoverMenu::from_model(Some(&menu));
+        popover.set_has_arrow(false);
+        popover
     }
 
     fn clipboard_for_kind(&self, clipboard: ghostty_clipboard_e) -> gdk4::Clipboard {
