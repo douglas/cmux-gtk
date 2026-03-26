@@ -160,15 +160,16 @@ pub(super) fn handle_surface_send_key(
         }
     }
 
-    // Convert key name to GDK keyval. Try the name directly first,
-    // then try common aliases.
-    let keyval = resolve_key_name(key_name);
-    let Some(keyval) = keyval else {
-        return Response::error(
-            id,
-            "invalid_params",
-            &format!("Unknown key name: '{key_name}'"),
-        );
+    // Convert key name to GDK keyval + XKB keycode.
+    let (keyval, keycode) = match resolve_key_name(key_name) {
+        Some(pair) => pair,
+        None => {
+            return Response::error(
+                id,
+                "invalid_params",
+                &format!("Unknown key name: '{key_name}'"),
+            );
+        }
     };
 
     // Resolve the panel
@@ -195,53 +196,56 @@ pub(super) fn handle_surface_send_key(
     state.send_ui_event(UiEvent::SendKey {
         panel_id,
         keyval,
-        keycode: 0,
+        keycode,
         mods,
     });
     Response::success(id, serde_json::json!({"sent": true}))
 }
 
-/// Resolve a key name string to a GDK keyval.
-fn resolve_key_name(name: &str) -> Option<u32> {
-    // Single character -> use its unicode value as keyval
+/// Resolve a key name string to a (GDK keyval, XKB keycode) pair.
+///
+/// Ghostty uses the native keycode to look up the physical key in its
+/// keycode table. Without a valid keycode, keys resolve to `.unidentified`
+/// and produce no terminal output. XKB keycodes = evdev scancode + 8.
+fn resolve_key_name(name: &str) -> Option<(u32, u32)> {
+    // Single character -> use its unicode value as keyval, keycode 0
+    // (Ghostty uses the text field for printable characters)
     let mut chars = name.chars();
     if let Some(ch) = chars.next() {
-        if chars.next().is_none() && ch.is_ascii() {
-            // Single ASCII char: GDK keyvals for ASCII match the codepoint
-            // for a-z, 0-9, punctuation
-            return Some(ch as u32);
+        if chars.next().is_none() && (ch.is_ascii_graphic() || ch == ' ') {
+            return Some((ch as u32, 0));
         }
     }
 
-    // Common key name aliases
+    // Common key name aliases: (GDK keyval, XKB keycode)
     match name.to_lowercase().as_str() {
-        "return" | "enter" => Some(0xff0d),
-        "escape" | "esc" => Some(0xff1b),
-        "tab" => Some(0xff09),
-        "backspace" => Some(0xff08),
-        "delete" | "del" => Some(0xffff),
-        "space" => Some(0x0020),
-        "up" | "arrow_up" => Some(0xff52),
-        "down" | "arrow_down" => Some(0xff54),
-        "left" | "arrow_left" => Some(0xff51),
-        "right" | "arrow_right" => Some(0xff53),
-        "home" => Some(0xff50),
-        "end" => Some(0xff57),
-        "page_up" | "pageup" => Some(0xff55),
-        "page_down" | "pagedown" => Some(0xff56),
-        "insert" => Some(0xff63),
-        "f1" => Some(0xffbe),
-        "f2" => Some(0xffbf),
-        "f3" => Some(0xffc0),
-        "f4" => Some(0xffc1),
-        "f5" => Some(0xffc2),
-        "f6" => Some(0xffc3),
-        "f7" => Some(0xffc4),
-        "f8" => Some(0xffc5),
-        "f9" => Some(0xffc6),
-        "f10" => Some(0xffc7),
-        "f11" => Some(0xffc8),
-        "f12" => Some(0xffc9),
+        "return" | "enter" => Some((0xff0d, 36)),
+        "escape" | "esc" => Some((0xff1b, 9)),
+        "tab" => Some((0xff09, 23)),
+        "backspace" => Some((0xff08, 22)),
+        "delete" | "del" => Some((0xffff, 119)),
+        "space" => Some((0x0020, 65)),
+        "up" | "arrow_up" => Some((0xff52, 111)),
+        "down" | "arrow_down" => Some((0xff54, 116)),
+        "left" | "arrow_left" => Some((0xff51, 113)),
+        "right" | "arrow_right" => Some((0xff53, 114)),
+        "home" => Some((0xff50, 110)),
+        "end" => Some((0xff57, 115)),
+        "page_up" | "pageup" => Some((0xff55, 112)),
+        "page_down" | "pagedown" => Some((0xff56, 117)),
+        "insert" => Some((0xff63, 118)),
+        "f1" => Some((0xffbe, 67)),
+        "f2" => Some((0xffbf, 68)),
+        "f3" => Some((0xffc0, 69)),
+        "f4" => Some((0xffc1, 70)),
+        "f5" => Some((0xffc2, 71)),
+        "f6" => Some((0xffc3, 72)),
+        "f7" => Some((0xffc4, 73)),
+        "f8" => Some((0xffc5, 74)),
+        "f9" => Some((0xffc6, 75)),
+        "f10" => Some((0xffc7, 76)),
+        "f11" => Some((0xffc8, 95)),
+        "f12" => Some((0xffc9, 96)),
         _ => None,
     }
 }
@@ -655,5 +659,97 @@ pub(super) fn handle_surface_drag_to_split(
         )
     } else {
         Response::error(id, "not_found", "Could not split panel")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn resolve_return_key() {
+        let (keyval, keycode) = resolve_key_name("Return").unwrap();
+        assert_eq!(keyval, 0xff0d, "Return keyval should be GDK_KEY_Return");
+        assert_eq!(keycode, 36, "Return XKB keycode should be 36");
+    }
+
+    #[test]
+    fn resolve_key_aliases() {
+        assert_eq!(resolve_key_name("Enter"), resolve_key_name("Return"));
+        assert_eq!(resolve_key_name("Esc"), resolve_key_name("Escape"));
+        assert_eq!(resolve_key_name("Del"), resolve_key_name("Delete"));
+        assert_eq!(resolve_key_name("PageUp"), resolve_key_name("Page_Up"));
+        assert_eq!(resolve_key_name("PageDown"), resolve_key_name("Page_Down"));
+        assert_eq!(resolve_key_name("Arrow_Up"), resolve_key_name("Up"));
+        assert_eq!(resolve_key_name("Arrow_Down"), resolve_key_name("Down"));
+        assert_eq!(resolve_key_name("Arrow_Left"), resolve_key_name("Left"));
+        assert_eq!(resolve_key_name("Arrow_Right"), resolve_key_name("Right"));
+    }
+
+    #[test]
+    fn resolve_case_insensitive() {
+        assert_eq!(resolve_key_name("return"), resolve_key_name("RETURN"));
+        assert_eq!(resolve_key_name("escape"), resolve_key_name("Escape"));
+        assert_eq!(resolve_key_name("tab"), resolve_key_name("TAB"));
+    }
+
+    #[test]
+    fn resolve_special_keys_have_nonzero_keycode() {
+        let keys = [
+            "Return", "Escape", "Tab", "Backspace", "Delete", "Space",
+            "Up", "Down", "Left", "Right", "Home", "End",
+            "Page_Up", "Page_Down", "Insert",
+            "F1", "F2", "F3", "F4", "F5", "F6",
+            "F7", "F8", "F9", "F10", "F11", "F12",
+        ];
+        for name in keys {
+            let (keyval, keycode) = resolve_key_name(name)
+                .unwrap_or_else(|| panic!("resolve_key_name({name}) returned None"));
+            assert_ne!(keyval, 0, "{name} keyval should not be 0");
+            assert_ne!(keycode, 0, "{name} XKB keycode should not be 0");
+        }
+    }
+
+    #[test]
+    fn resolve_single_ascii_char() {
+        let (keyval, keycode) = resolve_key_name("a").unwrap();
+        assert_eq!(keyval, 'a' as u32);
+        assert_eq!(keycode, 0, "single char keys use keycode 0 (text-based)");
+    }
+
+    #[test]
+    fn resolve_unknown_returns_none() {
+        assert!(resolve_key_name("NonExistentKey").is_none());
+        assert!(resolve_key_name("").is_none());
+    }
+
+    #[test]
+    fn reject_ascii_control_chars() {
+        assert!(resolve_key_name("\x01").is_none());
+        assert!(resolve_key_name("\x0d").is_none()); // raw CR
+        assert!(resolve_key_name("\x1b").is_none()); // raw ESC
+        assert!(resolve_key_name("\x00").is_none()); // null
+    }
+
+    #[test]
+    fn xkb_keycodes_match_standard_evdev_plus_8() {
+        // Verify a few well-known evdev scancodes + 8 = XKB keycode
+        let cases = [
+            ("Escape", 1 + 8),     // evdev 1
+            ("Backspace", 14 + 8), // evdev 14
+            ("Tab", 15 + 8),       // evdev 15
+            ("Return", 28 + 8),    // evdev 28
+            ("Space", 57 + 8),     // evdev 57
+            ("Up", 103 + 8),       // evdev 103
+            ("Down", 108 + 8),     // evdev 108
+            ("Left", 105 + 8),     // evdev 105
+            ("Right", 106 + 8),    // evdev 106
+            ("F11", 87 + 8),       // evdev 87 (non-contiguous with F10)
+            ("F12", 88 + 8),       // evdev 88
+        ];
+        for (name, expected_xkb) in cases {
+            let (_, keycode) = resolve_key_name(name).unwrap();
+            assert_eq!(keycode, expected_xkb, "{name} XKB keycode mismatch");
+        }
     }
 }
