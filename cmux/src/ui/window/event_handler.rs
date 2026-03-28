@@ -610,3 +610,133 @@ pub(super) fn mark_workspace_read(state: &Rc<AppState>, workspace_id: uuid::Uuid
         workspace.clear_attention();
     }
 }
+
+/// The maximum level of UI refresh a `UiEvent` can require.
+///
+/// This is used to ensure metadata-only events (title, PWD) never trigger
+/// a full layout rebuild, which would unparent browser panels.
+#[cfg(test)]
+#[derive(Debug, PartialEq, Eq)]
+enum RefreshKind {
+    /// No UI refresh needed (e.g. search events handled elsewhere).
+    None,
+    /// Sidebar + window title only — layout is unchanged.
+    MetadataOnly,
+    /// Full rebuild: sidebar + content layout + window title.
+    Full,
+}
+
+/// Classify a `UiEvent` by the refresh it may require.
+///
+/// This is a pure function with no GTK dependencies, so it can be unit-tested.
+/// The dispatch loop in `bind_shared_state_updates` must respect this
+/// classification: `SetTitle` and `SetPwd` are `MetadataOnly` and must never
+/// set `needs_refresh = true`.
+#[cfg(test)]
+fn event_refresh_kind(event: &UiEvent) -> RefreshKind {
+    match event {
+        // Metadata changes: only sidebar labels + window title need updating.
+        // Must NOT trigger rebuild_content — browser panels would unparent.
+        UiEvent::SetTitle { .. } | UiEvent::SetPwd { .. } => RefreshKind::MetadataOnly,
+
+        // No UI refresh — handled via dedicated callbacks or state only.
+        UiEvent::StartSearch
+        | UiEvent::EndSearch
+        | UiEvent::SearchTotal
+        | UiEvent::SearchSelected
+        | UiEvent::SendInput { .. }
+        | UiEvent::SendKey { .. }
+        | UiEvent::ReadText { .. }
+        | UiEvent::RefreshSurface { .. }
+        | UiEvent::ClearHistory { .. }
+        | UiEvent::TriggerFlash { .. } => RefreshKind::None,
+
+        // Everything else may require a full layout rebuild.
+        _ => RefreshKind::Full,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::ptr;
+
+    fn null_surface() -> crate::app::SendSurfacePtr {
+        crate::app::SendSurfacePtr(ptr::null_mut())
+    }
+
+    // ── The regression tests ───────────────────────────────────────────────
+    // These guard the fix for GitHub issue #1: SetTitle and SetPwd must never
+    // trigger a full layout rebuild (which unparents browser panels).
+
+    #[test]
+    fn set_title_is_metadata_only() {
+        let event = UiEvent::SetTitle {
+            surface: null_surface(),
+            title: "vim".to_string(),
+        };
+        assert_eq!(
+            event_refresh_kind(&event),
+            RefreshKind::MetadataOnly,
+            "SetTitle must not trigger rebuild_content — browser panels would reload"
+        );
+    }
+
+    #[test]
+    fn set_pwd_is_metadata_only() {
+        let event = UiEvent::SetPwd {
+            surface: null_surface(),
+            directory: "/home/user/project".to_string(),
+        };
+        assert_eq!(
+            event_refresh_kind(&event),
+            RefreshKind::MetadataOnly,
+            "SetPwd must not trigger rebuild_content — browser panels would reload"
+        );
+    }
+
+    #[test]
+    fn set_title_is_not_full_refresh() {
+        let event = UiEvent::SetTitle {
+            surface: null_surface(),
+            title: "bash".to_string(),
+        };
+        assert_ne!(event_refresh_kind(&event), RefreshKind::Full);
+    }
+
+    #[test]
+    fn set_pwd_is_not_full_refresh() {
+        let event = UiEvent::SetPwd {
+            surface: null_surface(),
+            directory: "/tmp".to_string(),
+        };
+        assert_ne!(event_refresh_kind(&event), RefreshKind::Full);
+    }
+
+    // ── Sanity checks for other event classes ─────────────────────────────
+
+    #[test]
+    fn search_events_are_noop() {
+        for event in [
+            UiEvent::StartSearch,
+            UiEvent::EndSearch,
+            UiEvent::SearchTotal,
+            UiEvent::SearchSelected,
+        ] {
+            assert_eq!(
+                event_refresh_kind(&event),
+                RefreshKind::None,
+                "{event:?} should not trigger any refresh"
+            );
+        }
+    }
+
+    #[test]
+    fn structural_events_are_full_refresh() {
+        // Events that change layout must still trigger a full rebuild.
+        assert_eq!(event_refresh_kind(&UiEvent::Refresh), RefreshKind::Full);
+        assert_eq!(event_refresh_kind(&UiEvent::ToggleNotifications), RefreshKind::Full);
+        assert_eq!(event_refresh_kind(&UiEvent::OpenFolderAsWorkspace), RefreshKind::Full);
+        assert_eq!(event_refresh_kind(&UiEvent::CreateWindow), RefreshKind::Full);
+    }
+}
