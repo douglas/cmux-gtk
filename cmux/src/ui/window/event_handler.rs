@@ -559,8 +559,10 @@ pub(super) fn bind_shared_state_updates(
             }
 
             if needs_refresh {
+                tracing::trace!("refresh_ui (full layout rebuild)");
                 super::refresh_ui(&list_box, &content_box, &state);
             } else if needs_metadata_refresh {
+                tracing::trace!("refresh_metadata (sidebar + title only, no layout rebuild)");
                 super::refresh_metadata(&list_box, &content_box, &state);
             }
         }
