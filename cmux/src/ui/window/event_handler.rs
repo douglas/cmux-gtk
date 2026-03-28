@@ -38,6 +38,7 @@ pub(super) fn bind_shared_state_updates(
         while let Some(event) = ui_events.recv().await {
             let mut pending = Some(event);
             let mut needs_refresh = false;
+            let mut needs_metadata_refresh = false;
             loop {
                 let event = match pending.take() {
                     Some(event) => event,
@@ -176,7 +177,7 @@ pub(super) fn bind_shared_state_updates(
                                 }
                             }
                             drop(tm);
-                            needs_refresh = true;
+                            needs_metadata_refresh = true;
                         }
                     }
                     UiEvent::SetPwd { surface, directory } => {
@@ -205,7 +206,7 @@ pub(super) fn bind_shared_state_updates(
                                 }
                             }
                             drop(tm);
-                            needs_refresh = true;
+                            needs_metadata_refresh = true;
                         }
                     }
                     UiEvent::OpenFolderAsWorkspace => {
@@ -559,6 +560,8 @@ pub(super) fn bind_shared_state_updates(
 
             if needs_refresh {
                 super::refresh_ui(&list_box, &content_box, &state);
+            } else if needs_metadata_refresh {
+                super::refresh_metadata(&list_box, &content_box, &state);
             }
         }
     });

@@ -356,8 +356,18 @@ fn refresh_ui(list_box: &gtk4::ListBox, content_box: &gtk4::Box, state: &Rc<AppS
     state.shared.cleanup_stale_remote_sessions();
     sidebar::refresh_sidebar(list_box, state);
     rebuild_content(content_box, state);
+    update_window_title(content_box, state);
+}
 
-    // Update window title to reflect selected workspace
+/// Lightweight refresh for metadata-only changes (title, PWD, git branch).
+/// Updates the sidebar and window title without touching the content layout,
+/// so browser panels are not unparented/reparented.
+pub fn refresh_metadata(list_box: &gtk4::ListBox, content_box: &gtk4::Box, state: &Rc<AppState>) {
+    sidebar::refresh_sidebar(list_box, state);
+    update_window_title(content_box, state);
+}
+
+fn update_window_title(content_box: &gtk4::Box, state: &Rc<AppState>) {
     if let Some(root) = content_box.root() {
         if let Some(window) = root.downcast_ref::<adw::ApplicationWindow>() {
             let titles = {
