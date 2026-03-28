@@ -299,8 +299,16 @@ pub(super) fn handle_highlight(id: Value, params: &Value, state: &Arc<SharedStat
 
 /// Allowed DOM event types for synthetic event dispatch (prevents JS injection).
 const MOUSE_EVENTS: &[&str] = &[
-    "click", "dblclick", "mousedown", "mouseup", "mouseover", "mouseout",
-    "mousemove", "mouseenter", "mouseleave", "contextmenu",
+    "click",
+    "dblclick",
+    "mousedown",
+    "mouseup",
+    "mouseover",
+    "mouseout",
+    "mousemove",
+    "mouseenter",
+    "mouseleave",
+    "contextmenu",
 ];
 const KEYBOARD_EVENTS: &[&str] = &["keydown", "keyup", "keypress"];
 const TOUCH_EVENTS: &[&str] = &["touchstart", "touchend", "touchmove", "touchcancel"];

@@ -123,7 +123,11 @@ impl RemoteRpcClient {
             let mut reader = BufReader::new(stdout);
             loop {
                 let mut buf = String::new();
-                let n = match reader.by_ref().take((MAX_LINE + 1) as u64).read_line(&mut buf) {
+                let n = match reader
+                    .by_ref()
+                    .take((MAX_LINE + 1) as u64)
+                    .read_line(&mut buf)
+                {
                     Ok(0) => {
                         tracing::debug!("RPC reader: EOF");
                         break;
@@ -256,7 +260,10 @@ impl RemoteRpcClient {
         });
 
         let (tx, rx) = std::sync::mpsc::channel();
-        self.pending.lock().unwrap_or_else(|p| p.into_inner()).insert(id, tx);
+        self.pending
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .insert(id, tx);
 
         {
             // stdin poison means a partial write corrupted the protocol — treat as fatal.
@@ -264,13 +271,19 @@ impl RemoteRpcClient {
                 Ok(guard) => guard,
                 Err(_) => {
                     self.alive.store(false, Ordering::Release);
-                    self.pending.lock().unwrap_or_else(|p| p.into_inner()).remove(&id);
+                    self.pending
+                        .lock()
+                        .unwrap_or_else(|p| p.into_inner())
+                        .remove(&id);
                     return Err("RPC connection corrupted (stdin mutex poisoned)".to_string());
                 }
             };
             let line = serde_json::to_string(&request).expect("RPC request JSON");
             if let Err(e) = writeln!(stdin, "{}", line) {
-                self.pending.lock().unwrap_or_else(|p| p.into_inner()).remove(&id);
+                self.pending
+                    .lock()
+                    .unwrap_or_else(|p| p.into_inner())
+                    .remove(&id);
                 return Err(format!("Failed to write RPC request: {}", e));
             }
             let _ = stdin.flush();
@@ -280,7 +293,10 @@ impl RemoteRpcClient {
             Ok(Ok(result)) => Ok(result),
             Ok(Err(rpc_err)) => Err(format!("RPC error: {}", rpc_err)),
             Err(_) => {
-                self.pending.lock().unwrap_or_else(|p| p.into_inner()).remove(&id);
+                self.pending
+                    .lock()
+                    .unwrap_or_else(|p| p.into_inner())
+                    .remove(&id);
                 Err("RPC call timed out".to_string())
             }
         }

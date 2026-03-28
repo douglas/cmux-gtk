@@ -325,8 +325,7 @@ pub struct SharedState {
     /// Per-window UI event senders.
     ui_event_txs: Mutex<HashMap<Uuid, UnboundedSender<UiEvent>>>,
     /// Active remote SSH sessions keyed by workspace ID.
-    pub remote_sessions:
-        Mutex<HashMap<Uuid, crate::remote::session::SharedRemoteSession>>,
+    pub remote_sessions: Mutex<HashMap<Uuid, crate::remote::session::SharedRemoteSession>>,
 }
 
 impl SharedState {
@@ -472,8 +471,9 @@ pub fn run() -> i32 {
             }
 
             // Drain all remote sessions so SSH processes are killed before exit.
-            let sessions: Vec<_> =
-                lock_or_recover(&state.shared.remote_sessions).drain().collect();
+            let sessions: Vec<_> = lock_or_recover(&state.shared.remote_sessions)
+                .drain()
+                .collect();
             for (_ws_id, session) in sessions {
                 lock_or_recover(&session).stop();
             }
@@ -537,9 +537,9 @@ fn activate(app: &adw::Application, state: &Rc<AppState>) {
                 .collect()
         };
         for ws_id in remote_ws_ids {
-            state
-                .shared
-                .send_ui_event(UiEvent::RemoteConnect { workspace_id: ws_id });
+            state.shared.send_ui_event(UiEvent::RemoteConnect {
+                workspace_id: ws_id,
+            });
         }
     }
 
@@ -605,7 +605,9 @@ fn cleanup_scrollback_temp_files() {
         .or_else(|| dirs::home_dir().map(|h| h.join(".cache")))
         .unwrap_or_else(std::env::temp_dir)
         .join("cmux/scrollback");
-    let Ok(entries) = std::fs::read_dir(&dir) else { return };
+    let Ok(entries) = std::fs::read_dir(&dir) else {
+        return;
+    };
     for entry in entries.flatten() {
         if entry.path().extension().is_some_and(|e| e == "txt") {
             let _ = std::fs::remove_file(entry.path());

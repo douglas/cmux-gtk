@@ -398,7 +398,9 @@ impl GhosttyGlSurface {
 
             let surface = unsafe { ghostty_surface_new(app, &config) };
             if surface.is_null() {
-                tracing::error!("ghostty_surface_new returned null — ghostty failed to create the surface");
+                tracing::error!(
+                    "ghostty_surface_new returned null — ghostty failed to create the surface"
+                );
                 return;
             }
 
@@ -1391,16 +1393,13 @@ impl GhosttyGlSurface {
         paste_action.connect_activate(move |_, _| {
             let clipboard = widget_for_paste.clipboard();
             let surface = widget_for_paste.clone();
-            clipboard.read_text_async(
-                None::<&gtk4::gio::Cancellable>,
-                move |result| {
-                    if let Ok(Some(text)) = result {
-                        if !text.is_empty() {
-                            surface.send_text(&text);
-                        }
+            clipboard.read_text_async(None::<&gtk4::gio::Cancellable>, move |result| {
+                if let Ok(Some(text)) = result {
+                    if !text.is_empty() {
+                        surface.send_text(&text);
                     }
-                },
-            );
+                }
+            });
         });
         action_group.add_action(&paste_action);
 

@@ -65,11 +65,10 @@ impl ProxyTunnel {
                             // Wrap in catch_unwind so a panic doesn't leak the
                             // active connection counter (which would block future
                             // connections at the MAX_PROXY_CONNECTIONS limit).
-                            let result = std::panic::catch_unwind(
-                                std::panic::AssertUnwindSafe(|| {
+                            let result =
+                                std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                                     handle_proxy_connection(stream, &rpc)
-                                }),
-                            );
+                                }));
                             match result {
                                 Ok(Err(e)) => {
                                     tracing::debug!("Proxy connection error: {}", e);
@@ -79,8 +78,7 @@ impl ProxyTunnel {
                                 }
                                 _ => {}
                             }
-                            active_clone
-                                .fetch_sub(1, std::sync::atomic::Ordering::Relaxed);
+                            active_clone.fetch_sub(1, std::sync::atomic::Ordering::Relaxed);
                         });
                     }
                     Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {

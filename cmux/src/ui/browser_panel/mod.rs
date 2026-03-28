@@ -322,10 +322,8 @@ pub fn create_browser_widget_with_profile(
     // the SSH tunnel; local workspaces use the shared per-profile session.
     let network_session = if let Some(port) = proxy_port {
         let session = webkit6::NetworkSession::new_ephemeral();
-        let proxy_settings = webkit6::NetworkProxySettings::new(
-            Some(&format!("socks5://127.0.0.1:{port}")),
-            &[],
-        );
+        let proxy_settings =
+            webkit6::NetworkProxySettings::new(Some(&format!("socks5://127.0.0.1:{port}")), &[]);
         session.set_proxy_settings(webkit6::NetworkProxyMode::Custom, Some(&proxy_settings));
         wire_download_handling(&session);
         session

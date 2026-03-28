@@ -1066,9 +1066,7 @@ fn setup_row_context_menu(
             reconnect_action.connect_activate(move |_, _| {
                 state
                     .shared
-                    .send_ui_event(crate::app::UiEvent::RemoteDisconnect {
-                        workspace_id,
-                    });
+                    .send_ui_event(crate::app::UiEvent::RemoteDisconnect { workspace_id });
                 state
                     .shared
                     .send_ui_event(crate::app::UiEvent::RemoteConnect { workspace_id });

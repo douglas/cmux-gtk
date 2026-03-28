@@ -201,7 +201,11 @@ pub fn show_ssh_dialog(window: &adw::ApplicationWindow, state: &Rc<AppState>) {
             .filter(|&p: &u16| p > 0);
         let identity = {
             let text = identity_row.text().to_string();
-            if text.is_empty() { None } else { Some(text) }
+            if text.is_empty() {
+                None
+            } else {
+                Some(text)
+            }
         };
 
         let remote_config = crate::remote::session::RemoteConfig {

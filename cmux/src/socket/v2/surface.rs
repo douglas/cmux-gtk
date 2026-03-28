@@ -696,11 +696,33 @@ mod tests {
     #[test]
     fn resolve_special_keys_have_nonzero_keycode() {
         let keys = [
-            "Return", "Escape", "Tab", "Backspace", "Delete", "Space",
-            "Up", "Down", "Left", "Right", "Home", "End",
-            "Page_Up", "Page_Down", "Insert",
-            "F1", "F2", "F3", "F4", "F5", "F6",
-            "F7", "F8", "F9", "F10", "F11", "F12",
+            "Return",
+            "Escape",
+            "Tab",
+            "Backspace",
+            "Delete",
+            "Space",
+            "Up",
+            "Down",
+            "Left",
+            "Right",
+            "Home",
+            "End",
+            "Page_Up",
+            "Page_Down",
+            "Insert",
+            "F1",
+            "F2",
+            "F3",
+            "F4",
+            "F5",
+            "F6",
+            "F7",
+            "F8",
+            "F9",
+            "F10",
+            "F11",
+            "F12",
         ];
         for name in keys {
             let (keyval, keycode) = resolve_key_name(name)
