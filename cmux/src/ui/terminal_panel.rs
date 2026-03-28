@@ -272,14 +272,13 @@ fn create_browser_widget(
     // through the local SOCKS5 port so traffic travels over SSH.
     let proxy_port = {
         let tm = crate::app::lock_or_recover(&state.shared.tab_manager);
-        tm.find_workspace_with_panel(panel.id).and_then(|ws| {
-            match &ws.remote_state {
+        tm.find_workspace_with_panel(panel.id)
+            .and_then(|ws| match &ws.remote_state {
                 Some(crate::remote::session::RemoteState::Connected { proxy_port, .. }) => {
                     Some(*proxy_port)
                 }
                 _ => None,
-            }
-        })
+            })
     };
     let widget = super::browser_panel::create_browser_widget(
         panel.id,

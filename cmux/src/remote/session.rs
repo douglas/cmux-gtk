@@ -175,22 +175,20 @@ impl RemoteSessionController {
         // Non-critical: relay failure does not block the session.
         let local_socket = crate::socket::server::socket_path();
         let relay = match RelayServer::start(&local_socket) {
-            Ok(mut relay) => {
-                match relay.start_reverse_tunnel(&ssh_args, &daemon_path) {
-                    Ok(remote_port) => {
-                        tracing::info!(
-                            remote_port,
-                            relay_id = %relay.relay_id(),
-                            "CLI relay tunnel established"
-                        );
-                        Some(relay)
-                    }
-                    Err(e) => {
-                        tracing::warn!("CLI relay tunnel failed (non-fatal): {e}");
-                        None
-                    }
+            Ok(mut relay) => match relay.start_reverse_tunnel(&ssh_args, &daemon_path) {
+                Ok(remote_port) => {
+                    tracing::info!(
+                        remote_port,
+                        relay_id = %relay.relay_id(),
+                        "CLI relay tunnel established"
+                    );
+                    Some(relay)
                 }
-            }
+                Err(e) => {
+                    tracing::warn!("CLI relay tunnel failed (non-fatal): {e}");
+                    None
+                }
+            },
             Err(e) => {
                 tracing::warn!("CLI relay server failed to start (non-fatal): {e}");
                 None
@@ -267,7 +265,10 @@ mod tests {
             ssh_options: Vec::new(),
             remote_daemon_path: None,
         };
-        assert_eq!(c.ssh_args(), vec!["-p", "2222", "-i", "/path/to/key", "host"]);
+        assert_eq!(
+            c.ssh_args(),
+            vec!["-p", "2222", "-i", "/path/to/key", "host"]
+        );
     }
 
     #[test]
@@ -276,10 +277,7 @@ mod tests {
             destination: "host".to_string(),
             port: None,
             identity: None,
-            ssh_options: vec![
-                "-o ProxyCommand=evil".to_string(),
-                "--flag".to_string(),
-            ],
+            ssh_options: vec!["-o ProxyCommand=evil".to_string(), "--flag".to_string()],
             remote_daemon_path: None,
         };
         // Both options start with '-', so neither passes through
@@ -329,8 +327,10 @@ mod tests {
         assert_eq!(
             args,
             vec![
-                "-o", "StrictHostKeyChecking=no",
-                "-o", "ServerAliveInterval=30",
+                "-o",
+                "StrictHostKeyChecking=no",
+                "-o",
+                "ServerAliveInterval=30",
                 "host",
             ]
         );

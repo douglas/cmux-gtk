@@ -85,7 +85,10 @@ pub fn create_markdown_widget(
     web_view.connect_decide_policy(|_, decision, decision_type| {
         use webkit6::PolicyDecisionType;
         if decision_type == PolicyDecisionType::NavigationAction {
-            if let Ok(nav) = decision.clone().downcast::<webkit6::NavigationPolicyDecision>() {
+            if let Ok(nav) = decision
+                .clone()
+                .downcast::<webkit6::NavigationPolicyDecision>()
+            {
                 if let Some(action) = nav.navigation_action() {
                     if action.is_user_gesture() {
                         if let Some(req) = action.request() {
@@ -97,9 +100,8 @@ pub fn create_markdown_widget(
                                         .filter(|c| !c.is_control())
                                         .take(4096)
                                         .collect();
-                                    let _ = std::process::Command::new("xdg-open")
-                                        .arg(&safe)
-                                        .spawn();
+                                    let _ =
+                                        std::process::Command::new("xdg-open").arg(&safe).spawn();
                                 }
                             }
                         }

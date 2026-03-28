@@ -218,8 +218,7 @@ fn handle_relay_connection(
 
     // Step 4: Send auth OK — Go's authenticateRelayConn expects {"ok":true} before
     // proceeding to send commands.
-    writeln!(stream, r#"{{"ok":true}}"#)
-        .map_err(|e| format!("write auth ok: {}", e))?;
+    writeln!(stream, r#"{{"ok":true}}"#).map_err(|e| format!("write auth ok: {}", e))?;
     stream.flush().ok();
 
     // Step 5: Read command (bounded: 1 MB — enough for any realistic socket v2 request)

@@ -95,7 +95,10 @@ pub fn build_daemon_locally(
 ) -> Result<String, String> {
     // SAFETY: getuid() is always safe.
     let uid = unsafe { libc::getuid() };
-    let output_path = format!("/tmp/cmuxd-remote-{uid}-{}-{}", platform.go_os, platform.go_arch);
+    let output_path = format!(
+        "/tmp/cmuxd-remote-{uid}-{}-{}",
+        platform.go_os, platform.go_arch
+    );
 
     tracing::info!(
         go_os = %platform.go_os,
@@ -304,9 +307,7 @@ fn download_from_github_releases(
             if e.starts_with("Failed to fetch checksums")
                 || e.starts_with("Failed to read manifest") =>
         {
-            tracing::error!(
-                "SHA-256 manifest unreachable, proceeding without verification: {e}"
-            );
+            tracing::error!("SHA-256 manifest unreachable, proceeding without verification: {e}");
         }
         Err(e) => {
             return Err(format!("SHA-256 verification failed: {e}"));
@@ -321,8 +322,7 @@ fn download_from_github_releases(
         .join(version)
         .join(format!("{}-{}", platform.go_os, platform.go_arch));
 
-    std::fs::create_dir_all(&cache_dir)
-        .map_err(|e| format!("Cannot create cache dir: {e}"))?;
+    std::fs::create_dir_all(&cache_dir).map_err(|e| format!("Cannot create cache dir: {e}"))?;
 
     let final_path = cache_dir.join("cmuxd-remote");
     let tmp_path = cache_dir.join("cmuxd-remote.tmp");
@@ -396,8 +396,7 @@ fn find_go_source_dir() -> Result<String, String> {
     let candidates: &[std::path::PathBuf] = &[
         // 1. Vendored source in this repository (daemon/remote/ at repo root).
         //    CARGO_MANIFEST_DIR is cmux-gtk/cmux at compile time, so go up two levels.
-        std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../daemon/remote"),
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../daemon/remote"),
         // 2. Legacy sibling repo location (~/src/cmux/daemon/remote).
         dirs::home_dir()
             .map(|h| h.join("src/cmux/daemon/remote"))

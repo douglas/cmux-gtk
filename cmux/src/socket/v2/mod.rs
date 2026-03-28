@@ -243,9 +243,11 @@ pub fn dispatch(json_line: &str, state: &Arc<SharedState>) -> Response {
             }
         }
         #[cfg(not(feature = "webkit"))]
-        method if method.starts_with("browser.") => {
-            Response::error(id, "not_compiled", "browser support not compiled (build with --features webkit)")
-        }
+        method if method.starts_with("browser.") => Response::error(
+            id,
+            "not_compiled",
+            "browser support not compiled (build with --features webkit)",
+        ),
 
         // Markdown commands
         "markdown.open" => markdown::handle_markdown_open(id, &req.params, state),

@@ -104,9 +104,8 @@ pub fn show_settings(parent: &adw::ApplicationWindow, on_close: impl Fn() + 'sta
 
     let remote_ssh_row = adw::SwitchRow::new();
     remote_ssh_row.set_title("Remote SSH Workspaces");
-    remote_ssh_row.set_subtitle(
-        "Enable SSH workspace connections (bootstraps daemon on remote host)",
-    );
+    remote_ssh_row
+        .set_subtitle("Enable SSH workspace connections (bootstraps daemon on remote host)");
     remote_ssh_row.set_active(current_settings.remote_ssh_enabled);
     behavior_group.add(&remote_ssh_row);
 
