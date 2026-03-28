@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.62.0-alpha.11] - 2026-03-28
+
+### Fixed
+
+- `cmux surface send-key` now correctly sends non-printable keys (Return, Escape, Tab, Backspace, Delete, Space, arrow keys, Home/End, Page Up/Down, Insert, F1–F12). Previously all special keys were silently dropped because the keycode was hardcoded to 0
+
 ## [0.62.0-alpha.10] - 2026-03-28
 
 ### Added

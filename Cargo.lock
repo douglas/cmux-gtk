@@ -203,7 +203,7 @@ checksum = "3a822ea5bc7590f9d40f1ba12c0dc3c2760f3482c6984db1573ad11031420831"
 
 [[package]]
 name = "cmux"
-version = "0.62.0-alpha.9"
+version = "0.62.0-alpha.11"
 dependencies = [
  "anyhow",
  "base64",
@@ -233,7 +233,7 @@ dependencies = [
 
 [[package]]
 name = "cmux-cli"
-version = "0.62.0-alpha.9"
+version = "0.62.0-alpha.11"
 dependencies = [
  "anyhow",
  "clap",
@@ -549,7 +549,7 @@ dependencies = [
 
 [[package]]
 name = "ghostty-gtk"
-version = "0.62.0-alpha.9"
+version = "0.62.0-alpha.11"
 dependencies = [
  "gdk4",
  "ghostty-sys",
@@ -560,7 +560,7 @@ dependencies = [
 
 [[package]]
 name = "ghostty-sys"
-version = "0.62.0-alpha.9"
+version = "0.62.0-alpha.11"
 
 [[package]]
 name = "gio"

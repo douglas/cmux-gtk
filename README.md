@@ -49,6 +49,7 @@ cargo build --release --no-default-features --features cmux/link-ghostty
 - **Link routing** — configurable URL patterns for system vs cmux browser, HTTP allowlist
 - **Keyboard copy mode** — Ghostty vi-style navigation with vim badge indicator
 - **Ghostty config** — reads `~/.config/ghostty/config` for themes, fonts, colors, background opacity, unfocused split opacity, and split divider color; live reload via Ctrl+Shift+,
+- **Right-click context menu** — Copy and Paste actions on terminal panels
 - **File drag-and-drop** — drop files from file manager onto terminal to paste shell-escaped paths
 - **Omarchy themes** — colors.toml parsing with SIGUSR2 live reload
 - **tmux compatibility** — CLI shim maps tmux commands (split-window, send-keys, capture-pane, etc.) to cmux socket API for tool compatibility
@@ -101,6 +102,8 @@ Unix socket at `$XDG_RUNTIME_DIR/cmux.sock` (falls back to `/tmp/cmux-$UID.sock`
 **Browser automation** — 120+ `browser.*` commands (Playwright-style API).
 
 Use the CLI wrapper: `cmux/bin/cmux <command> [args...]`
+
+`surface.send_key` supports all standard key names: `Return`, `Escape`, `Tab`, `Backspace`, `Delete`, `Space`, arrow keys (`Up`, `Down`, `Left`, `Right`), `Home`, `End`, `Page_Up`, `Page_Down`, `Insert`, `F1`–`F12`, and single printable ASCII characters.
 
 ## Ghostty Integration
 
