@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.62.0-alpha.10] - 2026-03-28
+
+### Added
+
+- Right-click context menu on terminal panels with Copy and Paste actions
+
+### Fixed
+
+- **Browser panel stability** — browser panels no longer freeze, flicker, or reload when typing in a terminal or running commands. Shell integrations (title updates, directory changes) no longer trigger a full UI layout rebuild
+- New terminals no longer display a stray `^L` character on the first prompt
+
 ## [0.62.0-alpha.9] - 2026-03-24
 
 ### Added
