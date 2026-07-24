@@ -612,12 +612,29 @@ fn do_custom_command(entry: &CommandEntry, base_dir: &str, state: &Rc<AppState>)
     }
 }
 
-/// Open the scope-grouped Notes panel as a split beside the current pane.
-/// Shared by the command palette, the header-bar Notes button, and the
-/// `notes.open` keyboard shortcut. Callers are responsible for refreshing the UI.
+/// Toggle the scope-grouped Notes panel in the current workspace: if one is
+/// already open, close it; otherwise open it as a split beside the current
+/// pane. Shared by the command palette, the header-bar Notes button, and the
+/// `notes.open` keyboard shortcut. Callers are responsible for refreshing the
+/// UI.
 pub fn insert_notes_panel(state: &Rc<AppState>) {
     let mut tm = lock_or_recover(&state.shared.tab_manager);
     if let Some(ws) = tm.selected_mut() {
+        // Toggle off: close any existing Notes panel(s) rather than stacking
+        // another. Collecting all also cleans up duplicates from before this
+        // was a toggle.
+        let existing: Vec<_> = ws
+            .panels
+            .iter()
+            .filter(|(_, p)| p.panel_type == crate::model::PanelType::Notes)
+            .map(|(id, _)| *id)
+            .collect();
+        if !existing.is_empty() {
+            for id in existing {
+                ws.remove_panel(id);
+            }
+            return;
+        }
         let panel =
             crate::model::Panel::new_notes(&crate::ui::notes_panel::default_notes_path());
         ws.insert_panel(panel, SplitOrientation::Horizontal);
