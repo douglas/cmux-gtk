@@ -212,11 +212,15 @@ pub fn refresh_sidebar(list_box: &gtk4::ListBox, state: &Rc<AppState>) {
     // selection and display settings — deliberately over-inclusive (a change
     // to a non-rendered field costs one extra rebuild, same as before this
     // check; a missed field would mean stale UI, so we hash everything).
+    // Selection is deliberately excluded from the signature: a pure workspace
+    // switch changes only which row is highlighted, and rebuilding every row to
+    // move that highlight was the dominant cost that made switches sluggish (and
+    // dropped clicks that landed while the rows were being torn down). On the
+    // unchanged path we move the highlight in place instead (see below).
     let signature = {
         use std::hash::{Hash, Hasher};
         let tab_manager = lock_or_recover(&state.shared.tab_manager);
         let mut h = std::collections::hash_map::DefaultHasher::new();
-        tab_manager.selected_index().hash(&mut h);
         for ws in tab_manager.iter() {
             format!("{ws:?}").hash(&mut h);
         }
@@ -231,6 +235,9 @@ pub fn refresh_sidebar(list_box: &gtk4::ListBox, state: &Rc<AppState>) {
     // An empty list means this ListBox was never built (or a new widget reused
     // a freed address) — never skip the first build.
     if unchanged && list_box.first_child().is_some() {
+        // Structure is identical; only the selection may have moved. Move the
+        // highlight without a full teardown/rebuild of every row.
+        update_selected_row(list_box, state);
         return;
     }
     SIDEBAR_SIGNATURES.with(|s| {
@@ -341,6 +348,42 @@ pub fn refresh_sidebar(list_box: &gtk4::ListBox, state: &Rc<AppState>) {
     list_box.invalidate_filter();
 }
 
+/// Move the selection highlight to the currently selected workspace's row
+/// without rebuilding the list. The fast path for a pure workspace switch: the
+/// rows already exist (structure unchanged), so we just re-select the matching
+/// one by its `ws-<index>` widget name.
+///
+/// Records focus history first — the chokepoint the full rebuild would
+/// otherwise own (`record_focus_if_changed` no-ops when unchanged). The
+/// `tab_manager` lock is released before `select_row`, which emits
+/// `row-selected` synchronously and would re-lock (std::sync::Mutex is not
+/// re-entrant).
+fn update_selected_row(list_box: &gtk4::ListBox, state: &Rc<AppState>) {
+    let selected_index = {
+        let mut tab_manager = lock_or_recover(&state.shared.tab_manager);
+        tab_manager.record_focus_if_changed();
+        tab_manager.selected_index()
+    };
+    let Some(selected_index) = selected_index else {
+        list_box.unselect_all();
+        return;
+    };
+    let target_name = format!("ws-{selected_index}");
+    let mut child = list_box.first_child();
+    while let Some(widget) = child {
+        child = widget.next_sibling();
+        if widget.widget_name().as_str() != target_name {
+            continue;
+        }
+        if let Some(row) = widget.downcast_ref::<gtk4::ListBoxRow>() {
+            if !row.is_selected() {
+                list_box.select_row(Some(row));
+            }
+        }
+        return;
+    }
+}
+
 /// Set up drag-and-drop on a sidebar workspace row for reordering.
 fn setup_row_drag_drop(row: &gtk4::ListBoxRow, index: usize, state: &Rc<AppState>) {
     // Drag source — provides the source index as a string
@@ -429,6 +472,9 @@ fn create_workspace_row(
     state: &Rc<AppState>,
 ) -> gtk4::ListBoxRow {
     let row = gtk4::ListBoxRow::new();
+    // Tag the row with its workspace index so `update_selected_row` can find and
+    // re-highlight it on a selection-only switch without rebuilding the list.
+    row.set_widget_name(&format!("ws-{index}"));
 
     // Workspace color indicator: colored left border when custom_color is set.
     if let Some(ref color) = workspace.custom_color {

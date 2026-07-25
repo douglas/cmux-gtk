@@ -1027,6 +1027,18 @@ fn bind_sidebar_selection(list_box: &gtk4::ListBox, content_box: &gtk4::Box, sta
     let lb = list_box.clone();
     let content_box = content_box.clone();
 
+    // Coalesce rapid workspace switches. A deliberate switch runs the refresh
+    // immediately (instant page swap); switches arriving faster than the window
+    // collapse into a single trailing refresh, so a burst — a held index key or
+    // fast clicking down the sidebar — can't fire N synchronous rebuilds
+    // back-to-back and starve pointer/key input. `select_workspace_by_index`
+    // updates the model on every event, so the trailing refresh always lands on
+    // the final selection.
+    let last_switch = Rc::new(std::cell::Cell::new(
+        std::time::Instant::now() - std::time::Duration::from_secs(1),
+    ));
+    let switch_scheduled = Rc::new(std::cell::Cell::new(false));
+
     list_box.connect_row_selected(move |_list_box, row| {
         let Some(row) = row else {
             return;
@@ -1036,8 +1048,28 @@ fn bind_sidebar_selection(list_box: &gtk4::ListBox, content_box: &gtk4::Box, sta
         if index < 0 {
             return;
         }
-        if event_handler::select_workspace_by_index(&state, index as usize) {
+        if !event_handler::select_workspace_by_index(&state, index as usize) {
+            return;
+        }
+
+        const SWITCH_THROTTLE: std::time::Duration = std::time::Duration::from_millis(120);
+        let elapsed = std::time::Instant::now().duration_since(last_switch.get());
+        if elapsed >= SWITCH_THROTTLE {
+            last_switch.set(std::time::Instant::now());
             refresh_ui(&lb, &content_box, &state);
+        } else if !switch_scheduled.get() {
+            switch_scheduled.set(true);
+            let delay = SWITCH_THROTTLE - elapsed;
+            let lb2 = lb.clone();
+            let cb2 = content_box.clone();
+            let st2 = state.clone();
+            let flag = switch_scheduled.clone();
+            let ts = last_switch.clone();
+            glib::timeout_add_local_once(delay, move || {
+                flag.set(false);
+                ts.set(std::time::Instant::now());
+                refresh_ui(&lb2, &cb2, &st2);
+            });
         }
     });
 
