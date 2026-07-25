@@ -306,6 +306,27 @@ pub(super) fn install_css() {
             border-color: @theme_fg_color;
         }
 
+        /* Swatch fill colours as static classes so each swatch just adds a
+           class instead of installing its own CssProvider (per-widget
+           providers trigger a global style revalidation and made the Set
+           Color popup sluggish). Keep in sync with color_css_value(). */
+        .color-swatch-red    { background-color: #e01b24; }
+        .color-swatch-crimson{ background-color: #dc143c; }
+        .color-swatch-orange { background-color: #ff7800; }
+        .color-swatch-amber  { background-color: #ffbf00; }
+        .color-swatch-yellow { background-color: #f6d32d; }
+        .color-swatch-lime   { background-color: #a3be8c; }
+        .color-swatch-green  { background-color: #33d17a; }
+        .color-swatch-teal   { background-color: #2aa198; }
+        .color-swatch-cyan   { background-color: #00bcd4; }
+        .color-swatch-sky    { background-color: #87ceeb; }
+        .color-swatch-blue   { background-color: #3584e4; }
+        .color-swatch-indigo { background-color: #4b0082; }
+        .color-swatch-purple { background-color: #9141ac; }
+        .color-swatch-violet { background-color: #7c3aed; }
+        .color-swatch-pink   { background-color: #e91e8c; }
+        .color-swatch-rose   { background-color: #f43f5e; }
+
         /* No-colour swatch — hollow with a diagonal strike. */
         .color-swatch-none {
             background-color: transparent;

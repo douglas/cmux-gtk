@@ -2167,13 +2167,9 @@ fn build_color_swatch_grid(
         if key.is_empty() {
             btn.add_css_class("color-swatch-none");
         } else {
-            let css = gtk4::CssProvider::new();
-            css.load_from_data(&format!(
-                "button {{ background-image: none; background-color: {}; }}",
-                color_css_value(key)
-            ));
-            btn.style_context()
-                .add_provider(&css, gtk4::STYLE_PROVIDER_PRIORITY_APPLICATION);
+            // Static class defined in the global stylesheet — no per-widget
+            // CssProvider, which would force a global style revalidation.
+            btn.add_css_class(&format!("color-swatch-{key}"));
         }
         let action = action_for(key);
         let popover = popover.clone();
