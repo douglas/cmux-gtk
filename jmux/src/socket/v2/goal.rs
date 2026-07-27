@@ -10,19 +10,6 @@ use uuid::Uuid;
 use super::Response;
 use crate::app::{lock_or_recover, SharedState};
 use crate::goal::{self, GoalRun, GoalStatus};
-use crate::model::Workspace;
-
-/// Walk up from `start` to the nearest directory containing `.git`.
-fn find_git_root(start: &Path) -> Option<PathBuf> {
-    let mut dir = Some(start);
-    while let Some(d) = dir {
-        if d.join(".git").exists() {
-            return Some(d.to_path_buf());
-        }
-        dir = d.parent();
-    }
-    None
-}
 
 /// Resolve the runner for a request: `runner` names a configured runner;
 /// `agent`/`model`/`effort` params override on top (or define an ad-hoc
@@ -91,7 +78,7 @@ pub(super) fn handle_goal_create(id: Value, params: &Value, state: &Arc<SharedSt
         Some(c) => PathBuf::from(c),
         None => {
             let parent = goal_path.parent().unwrap_or(Path::new("/"));
-            find_git_root(parent).unwrap_or_else(|| parent.to_path_buf())
+            goal::find_git_root(parent).unwrap_or_else(|| parent.to_path_buf())
         }
     };
     if !cwd.is_dir() {
@@ -136,100 +123,29 @@ pub(super) fn handle_goal_create(id: Value, params: &Value, state: &Arc<SharedSt
         }
     };
 
-    // Ensure the roadmap dir exists so the agent's Write and our polling
-    // agree on the location.
-    let roadmap = cwd.join("docs/roadmap");
-    if let Err(e) = std::fs::create_dir_all(&roadmap) {
-        return Response::error(id, "internal", &format!("Cannot create {roadmap:?}: {e}"));
-    }
-    let iteration = goal::next_iteration_number(&cwd_str);
-    let feedback_rel = (iteration > 1).then(|| GoalRun::output_rel(iteration - 1));
-    let feedback_ref = feedback_rel
-        .as_deref()
-        .filter(|rel| cwd.join(rel).exists());
-
-    let session_id = Uuid::new_v4().to_string();
-    let seed = goal::compose_seed(&goal_name, &goal_text, iteration, feedback_ref);
-
-    // Build the workspace first so the seed file can live under its id.
-    let mut ws = Workspace::with_directory(&cwd_str);
-    let ws_id = ws.id;
-    ws.custom_title = Some(
-        params
+    let spec = goal::LaunchSpec {
+        goal_name,
+        goal_path: goal_path.to_string_lossy().to_string(),
+        goal_text,
+        cwd: cwd_str,
+        output_dir_rel: "docs/roadmap".into(),
+        upstream_refs: Vec::new(),
+        runner_name,
+        runner,
+        max_iterations,
+        permission_mode,
+        wall_clock_minutes: settings.wall_clock_minutes,
+        title: params
             .get("title")
             .and_then(|v| v.as_str())
-            .map(str::to_string)
-            .unwrap_or_else(|| format!("goal: {goal_name}")),
-    );
-
-    let seed_dir = goal::seed_dir(ws_id);
-    if let Err(e) = std::fs::create_dir_all(&seed_dir) {
-        return Response::error(id, "internal", &format!("Cannot create seed dir: {e}"));
-    }
-    let seed_file = seed_dir.join(format!("iteration-{iteration}.md"));
-    if let Err(e) = std::fs::write(&seed_file, &seed) {
-        return Response::error(id, "internal", &format!("Cannot write seed file: {e}"));
-    }
-
-    let command = goal::launch_command(&runner, &session_id, &seed, &seed_file, &permission_mode);
-    let is_claude = runner.agent != "custom";
-
-    let Some(panel_id) = ws.panels.keys().next().copied() else {
-        return Response::error(id, "internal", "New workspace has no panel");
+            .map(str::to_string),
+        graph: None,
+        group_id: None,
     };
-    if let Some(panel) = ws.panels.get_mut(&panel_id) {
-        panel.command = Some(command);
-        if is_claude {
-            // Stamp the session identity at launch: `command=`-launched panes
-            // never run shell integration, so the reporting path that
-            // normally fills agent_session_id does not apply here.
-            panel.agent_session_id = Some(session_id.clone());
-        }
+    match goal::launch_goal(state, spec) {
+        Ok(result) => Response::success(id, result),
+        Err(e) => Response::error(id, "internal", &e),
     }
-    // Mirror the master's Task-tool sub-agents beside it (claude only —
-    // custom runners have no transcript to mirror).
-    ws.subagent_monitor = is_claude;
-
-    {
-        let mut tm = lock_or_recover(&state.tab_manager);
-        let placement = crate::settings::load().new_workspace_placement;
-        tm.add_workspace_with_placement(ws, placement);
-    }
-    state.notify_ui_refresh();
-
-    goal::register(
-        state,
-        GoalRun {
-            workspace_id: ws_id,
-            panel_id,
-            session_id: session_id.clone(),
-            goal_name: goal_name.clone(),
-            goal_path: goal_path.to_string_lossy().to_string(),
-            cwd: cwd_str,
-            iteration,
-            max_iterations,
-            runner_name: runner_name.clone(),
-            runner,
-            status: GoalStatus::Running,
-            nudges_sent: 0,
-            idle_ticks: 0,
-            started_epoch: goal::epoch_now(),
-            wall_clock_minutes: settings.wall_clock_minutes,
-            last_escalation_epoch: 0,
-        },
-    );
-
-    Response::success(
-        id,
-        serde_json::json!({
-            "workspace_id": ws_id.to_string(),
-            "session_id": session_id,
-            "goal": goal_name,
-            "iteration": iteration,
-            "output": GoalRun::output_rel(iteration),
-            "runner": runner_name,
-        }),
-    )
 }
 
 /// Parse an optional workspace UUID out of `workspace`/`workspace_id`.
@@ -299,7 +215,7 @@ pub(super) fn handle_goal_complete(id: Value, params: &Value, state: &Arc<Shared
                 "invalid_params",
                 &format!(
                     "No usable status: iteration file {} {} — write it with front-matter status done|blocked",
-                    GoalRun::output_rel(run.iteration),
+                    run.output_rel(run.iteration),
                     if file_status.is_none() { "is missing or has no front matter" } else { "has an unknown status" },
                 ),
             );
@@ -317,7 +233,7 @@ pub(super) fn handle_goal_complete(id: Value, params: &Value, state: &Arc<Shared
         let mut notifications = lock_or_recover(&state.notifications);
         notifications.add(
             "Goal complete",
-            &format!("'{}' finished: {}", run.goal_name, GoalRun::output_rel(run.iteration)),
+            &format!("'{}' finished: {}", run.goal_name, run.output_rel(run.iteration)),
             Some(ws_id),
             None,
             true,
@@ -333,5 +249,55 @@ pub(super) fn handle_goal_complete(id: Value, params: &Value, state: &Arc<Shared
             "status": if is_done { "done" } else { "blocked" },
             "iteration": run.iteration,
         }),
+    )
+}
+
+/// Human verdict: run another iteration, seeded with the (possibly
+/// human-edited) feedback section of the current iteration file.
+pub(super) fn handle_goal_continue(id: Value, params: &Value, state: &Arc<SharedState>) -> Response {
+    let ws_id = match workspace_param(params) {
+        Ok(Some(v)) => v,
+        Ok(None) => return Response::error(id, "invalid_params", "Missing workspace"),
+        Err(()) => return Response::error(id, "invalid_params", "Invalid workspace UUID"),
+    };
+    match goal::advance_iteration(
+        state,
+        ws_id,
+        "The reviewer asked for another iteration.",
+    ) {
+        Ok(next) => {
+            // Graph nodes in Review go back to Running.
+            goal::graph::continue_node(state, ws_id);
+            Response::success(
+                id,
+                serde_json::json!({"workspace_id": ws_id.to_string(), "iteration": next}),
+            )
+        }
+        Err(e) => Response::error(id, "not_found", &e),
+    }
+}
+
+/// Human verdict: accept the current iteration as final — mark the run Done
+/// (the graph scheduler then merges/unblocks dependents).
+pub(super) fn handle_goal_accept(id: Value, params: &Value, state: &Arc<SharedState>) -> Response {
+    let ws_id = match workspace_param(params) {
+        Ok(Some(v)) => v,
+        Ok(None) => return Response::error(id, "invalid_params", "Missing workspace"),
+        Err(()) => return Response::error(id, "invalid_params", "Invalid workspace UUID"),
+    };
+    let mut goals = lock_or_recover(&state.goals);
+    let Some(run) = goals.get_mut(&ws_id) else {
+        return Response::error(id, "not_found", "No goal registered for that workspace");
+    };
+    run.status = GoalStatus::Done;
+    let iteration = run.iteration;
+    drop(goals);
+    // Graph nodes: finish immediately (merge + unblock dependents).
+    if let Err(e) = goal::graph::accept_node(state, ws_id) {
+        return Response::error(id, "internal", &e);
+    }
+    Response::success(
+        id,
+        serde_json::json!({"workspace_id": ws_id.to_string(), "iteration": iteration, "status": "done"}),
     )
 }

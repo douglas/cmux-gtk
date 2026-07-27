@@ -189,10 +189,14 @@ fn main() -> anyhow::Result<()> {
     if let Commands::Goal { .. } = &cli.command {
         return run_goal(&cli);
     }
+    if let Commands::Graph { .. } = &cli.command {
+        return run_graph(&cli);
+    }
 
     let (method, params) = match &cli.command {
         Commands::Themes { .. } => unreachable!(),
         Commands::Goal { .. } => unreachable!(), // handled above
+        Commands::Graph { .. } => unreachable!(), // handled above
         Commands::Config(_) => unreachable!(),
         Commands::Top { .. } => unreachable!(), // handled above
         Commands::Agent(AgentCommands::Hook { .. }) => unreachable!(), // handled above
@@ -858,6 +862,133 @@ fn main() -> anyhow::Result<()> {
     Ok(())
 }
 
+/// `jmux graph …` — DAG orchestration of goal workspaces.
+fn run_graph(cli: &Cli) -> anyhow::Result<()> {
+    let Commands::Graph {
+        command,
+        name,
+        goal,
+        max_concurrency,
+        max_iterations,
+        no_review,
+        review_iterations,
+        runner,
+        full_auto,
+        supervised,
+    } = &cli.command
+    else {
+        unreachable!()
+    };
+
+    let (method, params) = if let Some(cmd) = command {
+        match cmd {
+            GraphCommands::Approve { name } => ("graph.approve", serde_json::json!({"name": name})),
+            GraphCommands::Revise { name, note } => {
+                ("graph.revise", serde_json::json!({"name": name, "note": note}))
+            }
+            GraphCommands::Status { name } => ("graph.status", serde_json::json!({"name": name})),
+            GraphCommands::Pause { name } => ("graph.pause", serde_json::json!({"name": name})),
+            GraphCommands::Resume { name } => ("graph.resume", serde_json::json!({"name": name})),
+            GraphCommands::Stop { name } => ("graph.stop", serde_json::json!({"name": name})),
+        }
+    } else {
+        let (Some(name), Some(goal)) = (name, goal) else {
+            eprintln!("usage: jmux graph <name> --goal <top.md> [--max-concurrency K] …");
+            eprintln!("       jmux graph approve|revise|status|pause|resume|stop <name>");
+            std::process::exit(2);
+        };
+        let abs = std::fs::canonicalize(goal)
+            .map_err(|e| anyhow::anyhow!("cannot resolve goal file '{goal}': {e}"))?;
+        let permission_mode = if *full_auto {
+            "bypassPermissions"
+        } else if *supervised {
+            "supervised"
+        } else {
+            "acceptEdits"
+        };
+        let mut params = serde_json::json!({
+            "name": name,
+            "goal": abs.to_string_lossy(),
+            "review": !*no_review,
+            "review_iterations": *review_iterations,
+            "permission_mode": permission_mode,
+        });
+        let obj = params.as_object_mut().expect("params is an object");
+        if let Some(v) = max_concurrency {
+            obj.insert("max_concurrency".into(), serde_json::json!(v));
+        }
+        if let Some(v) = max_iterations {
+            obj.insert("max_iterations".into(), serde_json::json!(v));
+        }
+        if let Some(v) = runner {
+            obj.insert("runner".into(), serde_json::json!(v));
+        }
+        ("graph.create", params)
+    };
+
+    let response = rpc::send_request(&cli.socket, method, params, cli.window.as_deref())?;
+    if cli.json || method != "graph.status" {
+        println!("{}", serde_json::to_string_pretty(&response)?);
+    } else {
+        print_graph_status(&response);
+    }
+    if response.get("ok").and_then(|v| v.as_bool()) != Some(true) {
+        std::process::exit(1);
+    }
+    Ok(())
+}
+
+/// Human-friendly `graph status` rendering.
+fn print_graph_status(response: &serde_json::Value) {
+    let result = &response["result"];
+    let empty = vec![];
+    let graphs: Vec<&serde_json::Value> = if let Some(gs) = result["graphs"].as_array() {
+        gs.iter().collect()
+    } else if result.is_object() && result.get("name").is_some() {
+        vec![result]
+    } else {
+        empty.iter().collect()
+    };
+    if graphs.is_empty() {
+        println!("no graphs");
+        return;
+    }
+    for g in graphs {
+        println!(
+            "graph {} — {} (concurrency {}, iterations/node {})",
+            g["name"].as_str().unwrap_or("?"),
+            g["status"].as_str().unwrap_or("?"),
+            g["max_concurrency"].as_u64().unwrap_or(1),
+            g["max_iterations"].as_u64().unwrap_or(1),
+        );
+        for n in g["nodes"].as_array().unwrap_or(&empty) {
+            let deps = n["deps"]
+                .as_array()
+                .map(|d| {
+                    d.iter()
+                        .filter_map(|x| x.as_str())
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                })
+                .unwrap_or_default();
+            println!(
+                "  [{}] {}{}{}",
+                n["status"].as_str().unwrap_or("?"),
+                n["id"].as_str().unwrap_or("?"),
+                if deps.is_empty() {
+                    String::new()
+                } else {
+                    format!("  <- {deps}")
+                },
+                n["detail"]
+                    .as_str()
+                    .map(|d| format!("  ({d})"))
+                    .unwrap_or_default(),
+            );
+        }
+    }
+}
+
 /// `jmux goal …` — launch / track goal-driven agent workspaces
 /// (docs/roadmap/DESIGN-goal-graph.md).
 fn run_goal(cli: &Cli) -> anyhow::Result<()> {
@@ -898,6 +1029,12 @@ fn run_goal(cli: &Cli) -> anyhow::Result<()> {
             }
             GoalCommands::Status { workspace } => {
                 ("goal.status", serde_json::json!({"workspace": workspace}))
+            }
+            GoalCommands::Continue { workspace } => {
+                ("goal.continue", serde_json::json!({"workspace": workspace}))
+            }
+            GoalCommands::Accept { workspace } => {
+                ("goal.accept", serde_json::json!({"workspace": workspace}))
             }
         };
         let response = rpc::send_request(&cli.socket, method, params, cli.window.as_deref())?;

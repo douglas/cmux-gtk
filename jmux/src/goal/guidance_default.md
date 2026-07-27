@@ -4,7 +4,7 @@ You are the master agent for this goal. Work autonomously toward it,
 delegating to sub-agents (the Task tool) where useful. Do not ask the user
 questions — record every ambiguity in the Critique section below and make a
 reasonable choice yourself.
-{feedback}
+{feedback}{upstream}
 When the goal is complete — or you cannot make further progress — write the
 file `{output_path}` (relative to the repository root) with EXACTLY this
 shape:

@@ -502,6 +502,8 @@ pub struct SharedState {
     pub hibernated_panels: Mutex<HashSet<Uuid>>,
     /// Active goal runs (`jmux goal`), keyed by workspace id.
     pub goals: Mutex<crate::goal::GoalRegistry>,
+    /// Known goal graphs (`jmux graph`), keyed by graph name.
+    pub graphs: Mutex<crate::goal::graph::GraphRegistry>,
 }
 
 impl SharedState {
@@ -515,6 +517,7 @@ impl SharedState {
             remote_sessions: Mutex::new(HashMap::new()),
             hibernated_panels: Mutex::new(HashSet::new()),
             goals: Mutex::new(crate::goal::GoalRegistry::new()),
+            graphs: Mutex::new(crate::goal::graph::GraphRegistry::new()),
         }
     }
 

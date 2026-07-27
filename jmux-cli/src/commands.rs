@@ -131,6 +131,60 @@ pub enum Commands {
         #[arg(long)]
         title: Option<String>,
     },
+
+    /// DAG orchestration: decompose a goal into parallel goal workspaces
+    #[command(args_conflicts_with_subcommands = true)]
+    Graph {
+        #[command(subcommand)]
+        command: Option<GraphCommands>,
+        /// Graph name (lowercase/digits/hyphens) — creates it with --goal
+        name: Option<String>,
+        /// Path to the top-level goal markdown file
+        #[arg(long)]
+        goal: Option<String>,
+        /// Max nodes running at once (>1 uses per-node git worktrees)
+        #[arg(long)]
+        max_concurrency: Option<u32>,
+        /// Per-node iteration cap
+        #[arg(long)]
+        max_iterations: Option<u32>,
+        /// Skip the decomposition review gate (auto-approve the proposal)
+        #[arg(long)]
+        no_review: bool,
+        /// Pause each node iteration for human review (Gate 2)
+        #[arg(long)]
+        review_iterations: bool,
+        /// Default runner for orchestrator + nodes (settings goal.runners)
+        #[arg(long)]
+        runner: Option<String>,
+        /// Bypass all permission checks (opt-in)
+        #[arg(long)]
+        full_auto: bool,
+        /// Stock interactive permission prompting
+        #[arg(long, conflicts_with = "full_auto")]
+        supervised: bool,
+    },
+}
+
+#[derive(Subcommand)]
+pub enum GraphCommands {
+    /// Approve the proposal (re-reads proposal.json, so your edits count)
+    Approve { name: String },
+    /// Ask the orchestrator to revise the proposal
+    Revise {
+        name: String,
+        /// What to change
+        #[arg(long)]
+        note: String,
+    },
+    /// Show graph state (all graphs, or one)
+    Status { name: Option<String> },
+    /// Stop launching new nodes (running nodes continue)
+    Pause { name: String },
+    /// Relaunch interrupted nodes / retry pending merges
+    Resume { name: String },
+    /// Stop the graph permanently
+    Stop { name: String },
 }
 
 #[derive(Subcommand)]
@@ -149,6 +203,18 @@ pub enum GoalCommands {
     Status {
         /// Goal workspace UUID
         workspace: Option<String>,
+    },
+    /// Reviewer verdict: run another iteration (seeded with the current
+    /// iteration file's feedback — edit section 4 first to steer it)
+    Continue {
+        /// Goal workspace UUID
+        workspace: String,
+    },
+    /// Reviewer verdict: accept the current iteration as final
+    /// (graph nodes merge + unblock dependents)
+    Accept {
+        /// Goal workspace UUID
+        workspace: String,
     },
 }
 

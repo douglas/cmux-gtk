@@ -12,6 +12,7 @@
 
 mod file;
 mod goal;
+mod graph;
 mod group;
 mod helpers;
 mod markdown;
@@ -248,6 +249,17 @@ pub fn dispatch(json_line: &str, state: &Arc<SharedState>) -> Response {
         "goal.create" => goal::handle_goal_create(id, &req.params, state),
         "goal.status" => goal::handle_goal_status(id, &req.params, state),
         "goal.complete" => goal::handle_goal_complete(id, &req.params, state),
+        "goal.continue" => goal::handle_goal_continue(id, &req.params, state),
+        "goal.accept" => goal::handle_goal_accept(id, &req.params, state),
+
+        // Graph commands (DAG orchestration)
+        "graph.create" => graph::handle_graph_create(id, &req.params, state),
+        "graph.approve" => graph::handle_graph_approve(id, &req.params, state),
+        "graph.revise" => graph::handle_graph_revise(id, &req.params, state),
+        "graph.status" => graph::handle_graph_status(id, &req.params, state),
+        "graph.pause" => graph::handle_graph_pause(id, &req.params, state),
+        "graph.resume" => graph::handle_graph_resume(id, &req.params, state),
+        "graph.stop" => graph::handle_graph_stop(id, &req.params, state),
 
         // App commands
         "app.focus_override.set" => workspace::handle_app_focus_override(id, &req.params, state),

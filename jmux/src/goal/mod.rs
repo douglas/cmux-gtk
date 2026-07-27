@@ -8,6 +8,8 @@
 //! `jmux goal complete` socket call is only a fast-path notification. See
 //! docs/roadmap/DESIGN-goal-graph.md for the full design.
 
+pub mod graph;
+
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
@@ -18,6 +20,7 @@ use uuid::Uuid;
 
 use crate::app::{lock_or_recover, AppState, SharedState};
 use crate::model::claude_state::{classify, has_selection_menu, ClaudeState};
+use crate::model::Workspace;
 use crate::settings::GoalRunner;
 
 /// Driver tick interval (same cadence as the sub-agent monitor).
@@ -66,6 +69,13 @@ impl GoalStatus {
     }
 }
 
+/// Ties a goal run to the graph node it executes.
+#[derive(Debug, Clone, PartialEq)]
+pub struct GraphLink {
+    pub graph: String,
+    pub node: String,
+}
+
 /// One registered goal run. Lives in `SharedState::goals`, keyed by
 /// workspace id; mutated by the driver ticker (GTK main loop) and the
 /// `goal.*` socket handlers (tokio blocking threads).
@@ -77,6 +87,10 @@ pub struct GoalRun {
     pub goal_name: String,
     pub goal_path: String,
     pub cwd: String,
+    /// Repo-relative directory holding this run's iteration files
+    /// ("docs/roadmap" for bare goals, "docs/roadmap/<graph>/<node>" for
+    /// graph nodes).
+    pub output_dir_rel: String,
     pub iteration: u32,
     pub max_iterations: u32,
     pub runner_name: String,
@@ -84,19 +98,29 @@ pub struct GoalRun {
     pub status: GoalStatus,
     pub nudges_sent: u32,
     pub idle_ticks: u32,
+    /// Consecutive ticks with no readable screen text while Running — the
+    /// spawn watchdog (surfaces only spawn once mapped + visible).
+    pub no_text_ticks: u32,
     pub started_epoch: u64,
     pub wall_clock_minutes: u32,
     pub last_escalation_epoch: u64,
+    /// Set when this run executes a graph node.
+    pub graph: Option<GraphLink>,
+}
+
+/// Repo-relative iteration file path for iteration `n` under `dir_rel`.
+pub fn iteration_rel(dir_rel: &str, n: u32) -> String {
+    format!("{dir_rel}/iteration-{n}.md")
 }
 
 impl GoalRun {
-    /// Repo-relative iteration file path for iteration `n`.
-    pub fn output_rel(n: u32) -> String {
-        format!("docs/roadmap/iteration-{n}.md")
+    /// Repo-relative iteration file path for iteration `n` of this run.
+    pub fn output_rel(&self, n: u32) -> String {
+        iteration_rel(&self.output_dir_rel, n)
     }
 
     pub fn output_abs(&self, n: u32) -> PathBuf {
-        Path::new(&self.cwd).join(Self::output_rel(n))
+        Path::new(&self.cwd).join(self.output_rel(n))
     }
 
     pub fn to_json(&self) -> serde_json::Value {
@@ -112,9 +136,11 @@ impl GoalRun {
             "runner": self.runner_name,
             "status": self.status.as_str(),
             "detail": self.status.detail(),
-            "output": Self::output_rel(self.iteration),
+            "output": self.output_rel(self.iteration),
             "nudges_sent": self.nudges_sent,
             "started_epoch": self.started_epoch,
+            "graph": self.graph.as_ref().map(|g| g.graph.clone()),
+            "node": self.graph.as_ref().map(|g| g.node.clone()),
         })
     }
 }
@@ -144,11 +170,15 @@ fn guidance_template() -> String {
 }
 
 /// Compose the master agent's seed prompt for one iteration.
+/// `upstream_refs` are repo-relative iteration files of completed upstream
+/// graph nodes, passed by reference (never inlined) to keep context small.
 pub fn compose_seed(
     goal_name: &str,
     goal_text: &str,
     iteration: u32,
+    output_dir_rel: &str,
     feedback_ref: Option<&str>,
+    upstream_refs: &[String],
 ) -> String {
     let feedback = match feedback_ref {
         Some(rel) => format!(
@@ -157,11 +187,25 @@ pub fn compose_seed(
         ),
         None => String::new(),
     };
+    let upstream = if upstream_refs.is_empty() {
+        String::new()
+    } else {
+        let list = upstream_refs
+            .iter()
+            .map(|r| format!("- `{r}`"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        format!(
+            "\nThis goal depends on completed upstream work. Read these iteration \
+             reports first (sections 3 and 4 carry the hand-off):\n{list}\n"
+        )
+    };
     guidance_template()
         .replace("{goal_name}", goal_name)
         .replace("{iteration}", &iteration.to_string())
-        .replace("{output_path}", &GoalRun::output_rel(iteration))
+        .replace("{output_path}", &iteration_rel(output_dir_rel, iteration))
         .replace("{feedback}", &feedback)
+        .replace("{upstream}", &upstream)
         .replace("{goal_text}", goal_text)
 }
 
@@ -210,6 +254,40 @@ pub fn launch_command(
     parts.join(" ")
 }
 
+/// Walk up from `start` to the nearest directory containing `.git`.
+pub fn find_git_root(start: &Path) -> Option<PathBuf> {
+    let mut dir = Some(start);
+    while let Some(d) = dir {
+        if d.join(".git").exists() {
+            return Some(d.to_path_buf());
+        }
+        dir = d.parent();
+    }
+    None
+}
+
+/// Resolve a runner by configured name. Empty name = stock claude (or the
+/// settings default when one is configured).
+pub fn resolve_runner_by_name(
+    name: &str,
+    settings: &crate::settings::GoalSettings,
+) -> Result<(String, GoalRunner), String> {
+    let name = if name.is_empty() {
+        settings.default_runner.as_str()
+    } else {
+        name
+    };
+    if name.is_empty() {
+        return Ok(("claude".to_string(), GoalRunner::default()));
+    }
+    settings
+        .runners
+        .get(name)
+        .cloned()
+        .map(|r| (name.to_string(), r))
+        .ok_or_else(|| format!("unknown runner '{name}' (configure it in settings goal.runners)"))
+}
+
 /// Whether ClaudeState screen classification (and nudging) applies to this
 /// runner. Custom runners are poll-only unless they opt in.
 pub fn state_detection_is_claude(runner: &GoalRunner) -> bool {
@@ -231,9 +309,9 @@ pub fn seed_dir(workspace_id: Uuid) -> PathBuf {
 }
 
 /// Next iteration number: one past the highest existing
-/// `iteration-<n>.md` in `<cwd>/docs/roadmap/`.
-pub fn next_iteration_number(cwd: &str) -> u32 {
-    let dir = Path::new(cwd).join("docs/roadmap");
+/// `iteration-<n>.md` in `<cwd>/<dir_rel>/`.
+pub fn next_iteration_number(cwd: &str, dir_rel: &str) -> u32 {
+    let dir = Path::new(cwd).join(dir_rel);
     let mut max = 0u32;
     if let Ok(entries) = std::fs::read_dir(&dir) {
         for e in entries.flatten() {
@@ -288,8 +366,10 @@ pub fn start_driver(state: Rc<AppState>) {
     });
 }
 
-/// One driver pass over every non-terminal goal run.
+/// One driver pass: graph scheduling first (it consumes terminal goal
+/// states), then every non-terminal goal run.
 fn tick(state: &Rc<AppState>) {
+    graph::scheduler_tick(state);
     let goal_ids: Vec<Uuid> = {
         let goals = lock_or_recover(&state.shared.goals);
         goals
@@ -339,7 +419,7 @@ fn drive_one(state: &Rc<AppState>, ws_id: Uuid, settings: &crate::settings::Goal
                 &format!(
                     "goal '{}': {} exists but has no `status:` front matter",
                     run.goal_name,
-                    GoalRun::output_rel(run.iteration)
+                    run.output_rel(run.iteration)
                 ),
             );
             return;
@@ -377,9 +457,33 @@ fn drive_one(state: &Rc<AppState>, ws_id: Uuid, settings: &crate::settings::Goal
             .get(&run.panel_id)
             .and_then(|s| s.read_screen_text());
         let Some(text) = text else {
-            // Surface not spawned/ready yet — don't count this as idle.
+            // Surface not spawned/ready yet — don't count this as idle, but
+            // watchdog it: surfaces only spawn once mapped and visible, so a
+            // workspace created while the window is hidden never starts.
+            let ticks = run.no_text_ticks + 1;
+            set_run(state, ws_id, |r| r.no_text_ticks = ticks);
+            if ticks == 30 {
+                escalate(
+                    state,
+                    ws_id,
+                    GoalStatus::NeedsAttention("agent surface never spawned".into()),
+                    &format!(
+                        "goal '{}' has not started — open its workspace (terminals \
+                         only spawn once visible)",
+                        run.goal_name
+                    ),
+                );
+            }
             return;
         };
+        if run.no_text_ticks != 0 {
+            set_run(state, ws_id, |r| {
+                r.no_text_ticks = 0;
+                if matches!(r.status, GoalStatus::NeedsAttention(_)) {
+                    r.status = GoalStatus::Running;
+                }
+            });
+        }
         let title = {
             let tm = lock_or_recover(&state.shared.tab_manager);
             tm.workspace(ws_id)
@@ -434,7 +538,7 @@ fn drive_one(state: &Rc<AppState>, ws_id: Uuid, settings: &crate::settings::Goal
                     &format!(
                         "goal '{}': the agent process exited without writing {}",
                         run.goal_name,
-                        GoalRun::output_rel(run.iteration)
+                        run.output_rel(run.iteration)
                     ),
                 );
                 return;
@@ -484,7 +588,7 @@ fn on_iteration_file(
                 &format!(
                     "'{}' finished: {}",
                     run.goal_name,
-                    GoalRun::output_rel(run.iteration)
+                    run.output_rel(run.iteration)
                 ),
                 true,
             );
@@ -493,32 +597,19 @@ fn on_iteration_file(
             // Feed the feedback forward and start the next iteration
             // in-session. (Fresh-session relaunch lands with headless spawn —
             // see the design doc.)
-            let next = run.iteration + 1;
-            let prev_rel = GoalRun::output_rel(run.iteration);
-            let next_rel = GoalRun::output_rel(next);
-            let prompt = format!(
-                "Iteration {} reported status: blocked. Begin iteration {}: re-read \
-                 `{}` (especially section 4), address the blockers with reasonable \
-                 assumptions, continue working the goal, and when finished write \
-                 `{}` in the same four-section format with front-matter status \
-                 done or blocked. Then run: jmux goal complete",
-                run.iteration, next, prev_rel, next_rel
-            );
-            let sent = state.send_input_to_panel(run.panel_id, &format!("{prompt}\r"));
-            if sent {
-                set_run(state, ws_id, |r| {
-                    r.iteration = next;
-                    r.idle_ticks = 0;
-                    r.nudges_sent = 0;
-                    r.status = GoalStatus::Running;
-                });
-                notify(
+            match advance_iteration(
+                &state.shared,
+                ws_id,
+                &format!("Iteration {} reported status: blocked.", run.iteration),
+            ) {
+                Ok(next) => notify(
                     state,
                     ws_id,
                     "Goal iterating",
                     &format!("'{}' starting iteration {next}", run.goal_name),
                     false,
-                );
+                ),
+                Err(e) => tracing::warn!(goal = %run.goal_name, "auto-iteration failed: {e}"),
             }
         }
         "blocked" => {
@@ -529,7 +620,7 @@ fn on_iteration_file(
                 &format!(
                     "goal '{}' is blocked — see {} section 4",
                     run.goal_name,
-                    GoalRun::output_rel(run.iteration)
+                    run.output_rel(run.iteration)
                 ),
             );
         }
@@ -541,7 +632,7 @@ fn on_iteration_file(
                 &format!(
                     "goal '{}' wrote an unknown status '{other}' in {}",
                     run.goal_name,
-                    GoalRun::output_rel(run.iteration)
+                    run.output_rel(run.iteration)
                 ),
             );
         }
@@ -599,6 +690,177 @@ pub fn register(shared: &Arc<SharedState>, run: GoalRun) {
 
 pub type GoalRegistry = HashMap<Uuid, GoalRun>;
 
+/// Send the "begin iteration N+1" prompt into a run's master (in-session)
+/// and update the registry. Thread-safe: input is routed via the UI event
+/// channel, so both the driver and socket handlers can call this. `reason`
+/// is the first sentence of the prompt ("Iteration 2 reported blocked." /
+/// "The reviewer asked for another iteration.").
+pub fn advance_iteration(
+    shared: &Arc<SharedState>,
+    ws_id: Uuid,
+    reason: &str,
+) -> Result<u32, String> {
+    let run = lock_or_recover(&shared.goals)
+        .get(&ws_id)
+        .cloned()
+        .ok_or_else(|| "no goal registered for that workspace".to_string())?;
+    let next = run.iteration + 1;
+    let prev_rel = run.output_rel(run.iteration);
+    let next_rel = run.output_rel(next);
+    let prompt = format!(
+        "{reason} Begin iteration {next}: re-read `{prev_rel}` (especially \
+         section 4), address the feedback with reasonable assumptions, continue \
+         working the goal, and when finished write `{next_rel}` in the same \
+         four-section format with front-matter status done or blocked. Then \
+         run: jmux goal complete"
+    );
+    if !shared.send_ui_event(crate::app::UiEvent::SendInput {
+        panel_id: run.panel_id,
+        text: format!("{prompt}\r"),
+    }) {
+        return Err("no UI event channel".into());
+    }
+    if let Some(r) = lock_or_recover(&shared.goals).get_mut(&ws_id) {
+        r.iteration = next;
+        r.idle_ticks = 0;
+        r.nudges_sent = 0;
+        r.no_text_ticks = 0;
+        r.status = GoalStatus::Running;
+    }
+    Ok(next)
+}
+
+/// Everything needed to launch a goal run. Built by the `goal.create` socket
+/// handler and by the graph scheduler (which is why launching is not inlined
+/// in the handler).
+pub struct LaunchSpec {
+    pub goal_name: String,
+    /// Display-only origin ("/path/to/goal.md" or "<graph>:<node>").
+    pub goal_path: String,
+    pub goal_text: String,
+    pub cwd: String,
+    pub output_dir_rel: String,
+    pub upstream_refs: Vec<String>,
+    pub runner_name: String,
+    pub runner: GoalRunner,
+    pub max_iterations: u32,
+    pub permission_mode: String,
+    pub wall_clock_minutes: u32,
+    pub title: Option<String>,
+    pub graph: Option<GraphLink>,
+    /// Sidebar group the workspace joins (graph nodes).
+    pub group_id: Option<Uuid>,
+}
+
+/// Create the workspace, launch the runner, and register the run.
+/// Returns the `goal.create` result payload.
+pub fn launch_goal(
+    shared: &Arc<SharedState>,
+    spec: LaunchSpec,
+) -> Result<serde_json::Value, String> {
+    let cwd = Path::new(&spec.cwd);
+    let out_dir = cwd.join(&spec.output_dir_rel);
+    std::fs::create_dir_all(&out_dir).map_err(|e| format!("cannot create {out_dir:?}: {e}"))?;
+
+    let iteration = next_iteration_number(&spec.cwd, &spec.output_dir_rel);
+    let feedback_rel = (iteration > 1).then(|| iteration_rel(&spec.output_dir_rel, iteration - 1));
+    let feedback_ref = feedback_rel.as_deref().filter(|rel| cwd.join(rel).exists());
+
+    let session_id = Uuid::new_v4().to_string();
+    let seed = compose_seed(
+        &spec.goal_name,
+        &spec.goal_text,
+        iteration,
+        &spec.output_dir_rel,
+        feedback_ref,
+        &spec.upstream_refs,
+    );
+
+    let mut ws = Workspace::with_directory(&spec.cwd);
+    let ws_id = ws.id;
+    ws.custom_title = Some(
+        spec.title
+            .clone()
+            .unwrap_or_else(|| format!("goal: {}", spec.goal_name)),
+    );
+
+    let sd = seed_dir(ws_id);
+    std::fs::create_dir_all(&sd).map_err(|e| format!("cannot create seed dir: {e}"))?;
+    let seed_file = sd.join(format!("iteration-{iteration}.md"));
+    std::fs::write(&seed_file, &seed).map_err(|e| format!("cannot write seed file: {e}"))?;
+
+    let command = launch_command(
+        &spec.runner,
+        &session_id,
+        &seed,
+        &seed_file,
+        &spec.permission_mode,
+    );
+    let is_claude = spec.runner.agent != "custom";
+
+    let Some(panel_id) = ws.panels.keys().next().copied() else {
+        return Err("new workspace has no panel".into());
+    };
+    if let Some(panel) = ws.panels.get_mut(&panel_id) {
+        panel.command = Some(command);
+        if is_claude {
+            // Stamp the session identity at launch: `command=`-launched panes
+            // never run shell integration, so the reporting path that
+            // normally fills agent_session_id does not apply.
+            panel.agent_session_id = Some(session_id.clone());
+        }
+    }
+    // Mirror the master's Task-tool sub-agents beside it (claude only).
+    ws.subagent_monitor = is_claude;
+    if let Some(gid) = spec.group_id {
+        ws.group_id = Some(gid);
+    }
+
+    {
+        let mut tm = lock_or_recover(&shared.tab_manager);
+        let placement = crate::settings::load().new_workspace_placement;
+        // Selected on creation: surfaces spawn their command on first
+        // visible allocation, so a background workspace would never start
+        // (headless spawn is future work — see the design doc).
+        tm.add_workspace_with_placement(ws, placement);
+    }
+    shared.notify_ui_refresh();
+
+    register(
+        shared,
+        GoalRun {
+            workspace_id: ws_id,
+            panel_id,
+            session_id: session_id.clone(),
+            goal_name: spec.goal_name.clone(),
+            goal_path: spec.goal_path.clone(),
+            cwd: spec.cwd.clone(),
+            output_dir_rel: spec.output_dir_rel.clone(),
+            iteration,
+            max_iterations: spec.max_iterations,
+            runner_name: spec.runner_name.clone(),
+            runner: spec.runner.clone(),
+            status: GoalStatus::Running,
+            nudges_sent: 0,
+            idle_ticks: 0,
+            no_text_ticks: 0,
+            started_epoch: epoch_now(),
+            wall_clock_minutes: spec.wall_clock_minutes,
+            last_escalation_epoch: 0,
+            graph: spec.graph.clone(),
+        },
+    );
+
+    Ok(serde_json::json!({
+        "workspace_id": ws_id.to_string(),
+        "session_id": session_id,
+        "goal": spec.goal_name,
+        "iteration": iteration,
+        "output": iteration_rel(&spec.output_dir_rel, iteration),
+        "runner": spec.runner_name,
+    }))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -611,13 +873,22 @@ mod tests {
 
     #[test]
     fn compose_seed_replaces_placeholders() {
-        let seed = compose_seed("mapsite", "Build a map.", 2, Some("docs/roadmap/iteration-1.md"));
+        let seed = compose_seed(
+            "mapsite",
+            "Build a map.",
+            2,
+            "docs/roadmap",
+            Some("docs/roadmap/iteration-1.md"),
+            &["docs/roadmap/g/dep/iteration-3.md".to_string()],
+        );
         assert!(seed.contains("mapsite"));
         assert!(seed.contains("Build a map."));
         assert!(seed.contains("docs/roadmap/iteration-2.md"));
         assert!(seed.contains("iteration-1.md"));
+        assert!(seed.contains("g/dep/iteration-3.md"));
         assert!(!seed.contains("{goal_text}"));
         assert!(!seed.contains("{output_path}"));
+        assert!(!seed.contains("{upstream}"));
     }
 
     #[test]
@@ -661,9 +932,9 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("jmux-goal-scan-{}", std::process::id()));
         let roadmap = dir.join("docs/roadmap");
         std::fs::create_dir_all(&roadmap).unwrap();
-        assert_eq!(next_iteration_number(dir.to_str().unwrap()), 1);
+        assert_eq!(next_iteration_number(dir.to_str().unwrap(), "docs/roadmap"), 1);
         std::fs::write(roadmap.join("iteration-3.md"), "x").unwrap();
-        assert_eq!(next_iteration_number(dir.to_str().unwrap()), 4);
+        assert_eq!(next_iteration_number(dir.to_str().unwrap(), "docs/roadmap"), 4);
         let _ = std::fs::remove_dir_all(&dir);
     }
 }
