@@ -1242,6 +1242,9 @@ fn build_workspace_from_snapshot(
             "notes" => crate::model::PanelType::Notes,
             "history" => crate::model::PanelType::History,
             "vault" => crate::model::PanelType::Vault,
+            // Must restore as Graph: its `command` field holds the graph
+            // name, which a Terminal fallback would execute as a shell command.
+            "graph" => crate::model::PanelType::Graph,
             _ => crate::model::PanelType::Terminal,
         };
         let panel = crate::model::panel::Panel {

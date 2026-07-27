@@ -338,6 +338,33 @@ pub(super) fn install_css() {
                 transparent calc(50% + 1px));
         }
 
+        /* ── Graph panel (jmux graph control pane) ── */
+        .graph-panel .graph-status {
+            padding: 1px 10px;
+            border-radius: 999px;
+            font-size: 0.8em;
+            font-weight: 700;
+        }
+        .graph-status-running  { background: alpha(#3584e4, 0.2); color: #7db6f5; }
+        .graph-status-done     { background: alpha(#33d17a, 0.18); color: #6fe0a0; }
+        .graph-status-review   { background: alpha(#e5a50a, 0.2); color: #f2c14e; }
+        .graph-status-paused   { background: alpha(#e01b24, 0.16); color: #ff8888; }
+
+        .graph-chip {
+            padding: 2px 10px;
+            border-radius: 8px;
+            font-size: 0.9em;
+            font-weight: 600;
+            border: 1px solid alpha(@theme_fg_color, 0.2);
+            background-image: none;
+        }
+        .graph-chip-pending     { opacity: 0.55; }
+        .graph-chip-running     { border-color: alpha(#3584e4, 0.8); }
+        .graph-chip-review      { border-color: alpha(#e5a50a, 0.8); }
+        .graph-chip-done        { border-color: alpha(#33d17a, 0.7); }
+        .graph-chip-blocked     { border-color: alpha(#e01b24, 0.7); }
+        .graph-chip-interrupted { border-color: alpha(#e01b24, 0.45); opacity: 0.7; }
+
         /* ── Progress bar (capsule style) ── */
         .sidebar-progress {
             min-height: 3px;

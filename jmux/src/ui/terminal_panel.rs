@@ -113,6 +113,13 @@ pub fn create_panel_widget(
         PanelType::AgentMonitor => {
             super::agent_monitor_panel::create_agent_monitor_widget(panel, is_focused, state)
         }
+        // Live goal-graph control panel (plain GTK, renders the in-app
+        // graph registry). The `command` field holds the graph name.
+        PanelType::Graph => super::graph_panel::create_graph_widget(
+            panel.command.as_deref().unwrap_or(""),
+            state,
+            is_attention_source,
+        ),
     }
 }
 

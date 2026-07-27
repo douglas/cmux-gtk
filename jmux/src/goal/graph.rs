@@ -511,6 +511,11 @@ pub fn create_graph(
             panel.agent_session_id = Some(session_id);
         }
     }
+    // Live graph control panel beside the orchestrator.
+    ws.insert_panel(
+        crate::model::Panel::new_graph(name),
+        crate::model::panel::SplitOrientation::Horizontal,
+    );
     {
         let mut tm = lock_or_recover(&shared.tab_manager);
         let placement = crate::settings::load().new_workspace_placement;

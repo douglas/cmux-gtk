@@ -259,6 +259,8 @@ impl Workspace {
             // Monitor panes are created only by the subagent monitor with a
             // real transcript path; a generic split falls back to a terminal.
             PanelType::AgentMonitor => Panel::new_terminal(),
+            // Graph panels need a graph name; a generic split falls back too.
+            PanelType::Graph => Panel::new_terminal(),
         };
         let new_id = new_panel.id;
         self.panels.insert(new_id, new_panel);
