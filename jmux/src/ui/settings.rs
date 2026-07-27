@@ -324,6 +324,14 @@ pub fn show_settings(
     flash_row.set_active(current_settings.pane_flash_enabled);
     behavior_group.add(&flash_row);
 
+    let auto_subagent_row = adw::SwitchRow::new();
+    auto_subagent_row.set_title("Auto Sub-agent Monitor");
+    auto_subagent_row.set_subtitle(
+        "Automatically open the read-only sub-agent panes while Claude runs sub-agents, and close them when finished",
+    );
+    auto_subagent_row.set_active(current_settings.auto_subagent_monitor);
+    behavior_group.add(&auto_subagent_row);
+
     let remote_ssh_row = adw::SwitchRow::new();
     remote_ssh_row.set_title("Remote SSH Workspaces");
     remote_ssh_row
@@ -1493,6 +1501,7 @@ pub fn show_settings(
                 ),
                 preferred_editor: preferred_editor_row.text().trim().to_string(),
                 ai_auto_naming: ai_auto_naming_row.is_active(),
+                auto_subagent_monitor: auto_subagent_row.is_active(),
                 quick_terminal: settings::QuickTerminalSettings {
                     enabled: qt_enabled_row.is_active(),
                     hotkey: qt_hotkey_row.text().trim().to_string(),

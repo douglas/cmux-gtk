@@ -65,15 +65,31 @@ fn toggle_toast(ws: &Workspace) -> String {
 }
 
 /// Install the periodic sync on the GTK main loop. Cheap when no workspace has
-/// the monitor enabled (one flag check per workspace per tick).
+/// the monitor enabled (one flag check per workspace per tick) and the
+/// `auto_subagent_monitor` setting is off.
+///
+/// With `auto_subagent_monitor` enabled, the monitor's visibility tracks live
+/// sub-agents in every workspace: each tick opens the monitor where sub-agents
+/// have appeared and closes it where they have finished, so no manual toggle is
+/// needed. This costs a subagents directory scan per workspace per tick.
 pub fn start_ticker(shared: Arc<SharedState>) {
     glib::timeout_add_local(
         std::time::Duration::from_millis(SYNC_INTERVAL_MS),
         move || {
+            let auto = crate::settings::load().auto_subagent_monitor;
             let mut changed = false;
             {
                 let mut tm = lock_or_recover(&shared.tab_manager);
                 for ws in tm.iter_mut() {
+                    if auto {
+                        // Auto mode owns the flag: the monitor is on iff the
+                        // workspace has live sub-agents right now.
+                        let has_live = !discover_subagents(ws).is_empty();
+                        if ws.subagent_monitor != has_live {
+                            ws.subagent_monitor = has_live;
+                            changed = true;
+                        }
+                    }
                     if ws.subagent_monitor {
                         changed |= sync_workspace(ws);
                     }

@@ -107,6 +107,12 @@ pub struct AppSettings {
     /// API, using ANTHROPIC_API_KEY) when an agent finishes, if it has no title.
     #[serde(default)]
     pub ai_auto_naming: bool,
+    /// Opt-in: automatically open the read-only sub-agent monitor in a workspace
+    /// while its Claude session is running sub-agents, and close it again once
+    /// they finish — no manual toggle needed. When enabled the monitor's
+    /// visibility tracks live sub-agents in every workspace.
+    #[serde(default)]
+    pub auto_subagent_monitor: bool,
     /// Quake-style drop-down "quick terminal" (slides in from the top edge,
     /// toggled by a global hotkey). Requires a `quick-terminal` feature build.
     #[serde(default)]
@@ -963,6 +969,7 @@ impl Default for AppSettings {
             file_explorer_open_action: FileOpenAction::default(),
             preferred_editor: String::new(),
             ai_auto_naming: false,
+            auto_subagent_monitor: false,
             quick_terminal: QuickTerminalSettings::default(),
             shortcuts: shortcuts::ShortcutConfig::default(),
         }

@@ -93,6 +93,21 @@ pub fn create_agent_monitor_widget(
     badge.set_can_target(false);
     overlay.add_overlay(&badge);
 
+    // The animated "working" Claude sprite in the top-left — the same octopus
+    // the sidebar/overview use — marks the pane as a non-interactive sub-agent
+    // that's busy working, not a terminal awaiting input.
+    let sprite = crate::ui::state_sprite::sprite_image(
+        crate::model::claude_state::ClaudeState::Working,
+        &container,
+    );
+    sprite.set_tooltip_text(Some("Sub-agent working (read-only)"));
+    sprite.set_halign(gtk4::Align::Start);
+    sprite.set_valign(gtk4::Align::Start);
+    sprite.set_margin_top(6);
+    sprite.set_margin_start(6);
+    sprite.set_can_target(false);
+    overlay.add_overlay(&sprite);
+
     overlay.upcast()
 }
 
