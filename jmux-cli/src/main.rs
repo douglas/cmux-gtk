@@ -927,12 +927,13 @@ fn run_graph(cli: &Cli) -> anyhow::Result<()> {
     };
 
     let response = rpc::send_request(&cli.socket, method, params, cli.window.as_deref())?;
-    if cli.json || method != "graph.status" {
+    let ok = response.get("ok").and_then(|v| v.as_bool()) == Some(true);
+    if cli.json || method != "graph.status" || !ok {
         println!("{}", serde_json::to_string_pretty(&response)?);
     } else {
         print_graph_status(&response);
     }
-    if response.get("ok").and_then(|v| v.as_bool()) != Some(true) {
+    if !ok {
         std::process::exit(1);
     }
     Ok(())
