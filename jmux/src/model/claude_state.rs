@@ -46,6 +46,14 @@ pub fn classify(text: &str, raw_title: &str) -> Option<ClaudeState> {
     None
 }
 
+/// A hard selection menu is on screen (pointer menu or "enter to select"
+/// footer). This is the STRICT NeedsInput test used by the goal auto-driver:
+/// the soft "last response ends in ?" heuristic in [`classify`] is fine for a
+/// sidebar badge but far too twitchy to pause an autonomous run on.
+pub fn has_selection_menu(text: &str) -> bool {
+    has_pointer_menu(text) || has_menu_footer(text)
+}
+
 /// Whether a terminal pane's title looks like a plain shell rather than an
 /// agent — "user@host:~/path" or a bare shell name. Such panes never carry a
 /// Claude state.

@@ -500,6 +500,8 @@ pub struct SharedState {
     pub remote_sessions: Mutex<HashMap<Uuid, crate::remote::session::SharedRemoteSession>>,
     /// Panels whose agent process group is currently hibernated (SIGSTOP'd).
     pub hibernated_panels: Mutex<HashSet<Uuid>>,
+    /// Active goal runs (`jmux goal`), keyed by workspace id.
+    pub goals: Mutex<crate::goal::GoalRegistry>,
 }
 
 impl SharedState {
@@ -512,6 +514,7 @@ impl SharedState {
             ui_event_txs: Mutex::new(HashMap::new()),
             remote_sessions: Mutex::new(HashMap::new()),
             hibernated_panels: Mutex::new(HashSet::new()),
+            goals: Mutex::new(crate::goal::GoalRegistry::new()),
         }
     }
 
@@ -667,6 +670,7 @@ pub fn run() -> i32 {
     {
         let shared_for_socket = shared.clone();
         let shared_for_ports = shared.clone();
+        let state_for_goal = state.clone();
         app.connect_startup(move |startup_app| {
             // Use the bundled app icon for windows / alt-tab / taskbar.
             gtk4::Window::set_default_icon_name("com.jacobbriggs.jmux");
@@ -685,6 +689,9 @@ pub fn run() -> i32 {
             // Sub-agent monitor sync (no-op per tick unless a workspace has
             // the monitor toggled on).
             crate::agent_monitor::start_ticker(shared_for_ports.clone());
+
+            // Goal auto-driver (no-op per tick unless a goal is registered).
+            crate::goal::start_driver(state_for_goal.clone());
 
             // Register the quick-terminal global hotkey (GlobalShortcuts portal)
             // if the feature build + setting are enabled.

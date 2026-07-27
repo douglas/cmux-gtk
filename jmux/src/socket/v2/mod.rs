@@ -11,6 +11,7 @@
 //! ```
 
 mod file;
+mod goal;
 mod group;
 mod helpers;
 mod markdown;
@@ -242,6 +243,11 @@ pub fn dispatch(json_line: &str, state: &Arc<SharedState>) -> Response {
         "agent.spawn_subagent" => {
             workspace::handle_agent_spawn_subagent(id, &req.params, state)
         }
+
+        // Goal commands (autonomous loop — docs/roadmap/DESIGN-goal-graph.md)
+        "goal.create" => goal::handle_goal_create(id, &req.params, state),
+        "goal.status" => goal::handle_goal_status(id, &req.params, state),
+        "goal.complete" => goal::handle_goal_complete(id, &req.params, state),
 
         // App commands
         "app.focus_override.set" => workspace::handle_app_focus_override(id, &req.params, state),

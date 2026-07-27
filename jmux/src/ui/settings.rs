@@ -1502,6 +1502,9 @@ pub fn show_settings(
                 preferred_editor: preferred_editor_row.text().trim().to_string(),
                 ai_auto_naming: ai_auto_naming_row.is_active(),
                 auto_subagent_monitor: auto_subagent_row.is_active(),
+                // Runners are configured via the settings file / CLI for now;
+                // the dialog preserves them untouched.
+                goal: current_settings.goal.clone(),
                 quick_terminal: settings::QuickTerminalSettings {
                     enabled: qt_enabled_row.is_active(),
                     hotkey: qt_hotkey_row.text().trim().to_string(),

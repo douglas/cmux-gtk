@@ -113,6 +113,9 @@ pub struct AppSettings {
     /// visibility tracks live sub-agents in every workspace.
     #[serde(default)]
     pub auto_subagent_monitor: bool,
+    /// Goal-driven agent workspaces (`jmux goal`): runners + driver tuning.
+    #[serde(default)]
+    pub goal: GoalSettings,
     /// Quake-style drop-down "quick terminal" (slides in from the top edge,
     /// toggled by a global hotkey). Requires a `quick-terminal` feature build.
     #[serde(default)]
@@ -929,6 +932,60 @@ impl RemotePortRange {
     }
 }
 
+/// A named goal runner: which agent CLI + model + effort executes a goal
+/// (see docs/roadmap/DESIGN-goal-graph.md).
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+#[serde(default, deny_unknown_fields)]
+pub struct GoalRunner {
+    /// Adapter: "claude" (default — full state detection + sub-agent
+    /// mirroring) or "custom" (uses `command_template`).
+    pub agent: String,
+    /// Model passed to the agent CLI (empty = the CLI's default).
+    pub model: String,
+    /// Effort level passed to the agent CLI (empty = default).
+    pub effort: String,
+    /// Extra args appended to the claude command line.
+    pub extra_args: Vec<String>,
+    /// For `agent = "custom"`: the full launch command. Placeholders:
+    /// `{sid}`, `{model}`, `{effort}`, `{seed}` (shell-quoted seed text),
+    /// `{seed_file}` (shell-quoted path to a file containing the seed).
+    pub command_template: String,
+    /// "claude" | "none" — whether ClaudeState screen classification (and
+    /// nudging) applies. Empty = "claude" for the claude adapter, "none"
+    /// for custom runners.
+    pub state_detection: String,
+}
+
+/// Settings for goal-driven agent workspaces (`jmux goal`).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(default, deny_unknown_fields)]
+pub struct GoalSettings {
+    /// Runner used when a goal doesn't name one. An empty/unknown name
+    /// falls back to a stock claude runner.
+    pub default_runner: String,
+    /// Named runners selectable via `jmux goal --runner <name>` or per
+    /// graph node.
+    pub runners: std::collections::HashMap<String, GoalRunner>,
+    /// Consecutive idle driver ticks (2 s each) before a nudge is sent.
+    pub idle_ticks_before_nudge: u32,
+    /// Nudges sent before the driver escalates instead.
+    pub nudge_budget: u32,
+    /// Per-goal wall-clock cap in minutes (0 = uncapped).
+    pub wall_clock_minutes: u32,
+}
+
+impl Default for GoalSettings {
+    fn default() -> Self {
+        Self {
+            default_runner: String::new(),
+            runners: std::collections::HashMap::new(),
+            idle_ticks_before_nudge: 5,
+            nudge_budget: 3,
+            wall_clock_minutes: 120,
+        }
+    }
+}
+
 impl Default for AppSettings {
     fn default() -> Self {
         Self {
@@ -970,6 +1027,7 @@ impl Default for AppSettings {
             preferred_editor: String::new(),
             ai_auto_naming: false,
             auto_subagent_monitor: false,
+            goal: GoalSettings::default(),
             quick_terminal: QuickTerminalSettings::default(),
             shortcuts: shortcuts::ShortcutConfig::default(),
         }

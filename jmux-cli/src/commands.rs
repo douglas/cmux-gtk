@@ -92,6 +92,64 @@ pub enum Commands {
     /// Control the sidebar visibility
     #[command(subcommand)]
     Sidebar(SidebarCommands),
+
+    /// Goal-driven agent workspaces (autonomous loop)
+    #[command(args_conflicts_with_subcommands = true)]
+    Goal {
+        #[command(subcommand)]
+        command: Option<GoalCommands>,
+        /// Path to a goal markdown file — launches a master agent on it
+        path: Option<String>,
+        /// Block until the goal completes; prints the iteration file path
+        #[arg(long)]
+        wait: bool,
+        /// Working directory (default: nearest git root above the goal file)
+        #[arg(long)]
+        cwd: Option<String>,
+        /// Named runner from settings (goal.runners)
+        #[arg(long)]
+        runner: Option<String>,
+        /// Agent adapter override: claude | custom
+        #[arg(long)]
+        agent: Option<String>,
+        /// Model override (e.g. opus, fable, sonnet)
+        #[arg(long)]
+        model: Option<String>,
+        /// Effort override (e.g. high)
+        #[arg(long)]
+        effort: Option<String>,
+        /// Auto-continue up to N iterations while the agent reports blocked
+        #[arg(long)]
+        max_iterations: Option<u32>,
+        /// Bypass all permission checks (opt-in; amplifies prompt-injection risk)
+        #[arg(long)]
+        full_auto: bool,
+        /// Stock interactive permission prompting (you babysit approvals)
+        #[arg(long, conflicts_with = "full_auto")]
+        supervised: bool,
+        /// Workspace title (default: "goal: <name>")
+        #[arg(long)]
+        title: Option<String>,
+    },
+}
+
+#[derive(Subcommand)]
+pub enum GoalCommands {
+    /// Agent fast-path: mark the current goal iteration finished
+    /// (the iteration file's front matter is the source of truth)
+    Complete {
+        /// done | blocked (fallback when the file has no front matter)
+        #[arg(long)]
+        status: Option<String>,
+        /// Goal workspace UUID (default: $JMUX_WORKSPACE_ID)
+        #[arg(long)]
+        workspace: Option<String>,
+    },
+    /// Show goal run status (all goals, or one workspace)
+    Status {
+        /// Goal workspace UUID
+        workspace: Option<String>,
+    },
 }
 
 #[derive(Subcommand)]

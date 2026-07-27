@@ -184,8 +184,15 @@ fn main() -> anyhow::Result<()> {
         return Ok(());
     }
 
+    // Goal commands: launch involves optional completion polling (--wait),
+    // so handle the whole family before the single-dispatch match below.
+    if let Commands::Goal { .. } = &cli.command {
+        return run_goal(&cli);
+    }
+
     let (method, params) = match &cli.command {
         Commands::Themes { .. } => unreachable!(),
+        Commands::Goal { .. } => unreachable!(), // handled above
         Commands::Config(_) => unreachable!(),
         Commands::Top { .. } => unreachable!(), // handled above
         Commands::Agent(AgentCommands::Hook { .. }) => unreachable!(), // handled above
@@ -849,6 +856,196 @@ fn main() -> anyhow::Result<()> {
     }
 
     Ok(())
+}
+
+/// `jmux goal …` — launch / track goal-driven agent workspaces
+/// (docs/roadmap/DESIGN-goal-graph.md).
+fn run_goal(cli: &Cli) -> anyhow::Result<()> {
+    let Commands::Goal {
+        command,
+        path,
+        wait,
+        cwd,
+        runner,
+        agent,
+        model,
+        effort,
+        max_iterations,
+        full_auto,
+        supervised,
+        title,
+    } = &cli.command
+    else {
+        unreachable!()
+    };
+
+    if let Some(cmd) = command {
+        let (method, params) = match cmd {
+            GoalCommands::Complete { status, workspace } => {
+                let ws = workspace
+                    .clone()
+                    .or_else(|| std::env::var("JMUX_WORKSPACE_ID").ok());
+                let Some(ws) = ws else {
+                    eprintln!(
+                        "goal complete: no workspace — pass --workspace or run inside a jmux pane"
+                    );
+                    std::process::exit(1);
+                };
+                (
+                    "goal.complete",
+                    serde_json::json!({"workspace": ws, "status": status}),
+                )
+            }
+            GoalCommands::Status { workspace } => {
+                ("goal.status", serde_json::json!({"workspace": workspace}))
+            }
+        };
+        let response = rpc::send_request(&cli.socket, method, params, cli.window.as_deref())?;
+        println!("{}", serde_json::to_string_pretty(&response)?);
+        if response.get("ok").and_then(|v| v.as_bool()) != Some(true) {
+            std::process::exit(1);
+        }
+        return Ok(());
+    }
+
+    let Some(path) = path else {
+        eprintln!("usage: jmux goal <goal.md> [--wait] [--runner NAME | --agent/--model/--effort]");
+        std::process::exit(2);
+    };
+    let abs = std::fs::canonicalize(path)
+        .map_err(|e| anyhow::anyhow!("cannot resolve goal file '{path}': {e}"))?;
+
+    let permission_mode = if *full_auto {
+        "bypassPermissions"
+    } else if *supervised {
+        "supervised"
+    } else {
+        "acceptEdits"
+    };
+    let mut params = serde_json::json!({
+        "goal": abs.to_string_lossy(),
+        "permission_mode": permission_mode,
+    });
+    let obj = params.as_object_mut().expect("params is an object");
+    if let Some(v) = cwd {
+        obj.insert("cwd".into(), serde_json::json!(v));
+    }
+    if let Some(v) = runner {
+        obj.insert("runner".into(), serde_json::json!(v));
+    }
+    if let Some(v) = agent {
+        obj.insert("agent".into(), serde_json::json!(v));
+    }
+    if let Some(v) = model {
+        obj.insert("model".into(), serde_json::json!(v));
+    }
+    if let Some(v) = effort {
+        obj.insert("effort".into(), serde_json::json!(v));
+    }
+    if let Some(v) = max_iterations {
+        obj.insert("max_iterations".into(), serde_json::json!(v));
+    }
+    if let Some(v) = title {
+        obj.insert("title".into(), serde_json::json!(v));
+    }
+
+    let response = rpc::send_request(&cli.socket, "goal.create", params, cli.window.as_deref())?;
+    if response.get("ok").and_then(|v| v.as_bool()) != Some(true) {
+        eprintln!(
+            "goal launch failed: {}",
+            response
+                .get("error")
+                .and_then(|e| e.get("message"))
+                .and_then(|m| m.as_str())
+                .unwrap_or("unknown error")
+        );
+        std::process::exit(1);
+    }
+    let result = &response["result"];
+    let workspace_id = result["workspace_id"].as_str().unwrap_or("").to_string();
+    if cli.json && !*wait {
+        println!("{}", serde_json::to_string_pretty(&response)?);
+        return Ok(());
+    }
+    println!(
+        "goal '{}' launched (runner {}, iteration {})",
+        result["goal"].as_str().unwrap_or("?"),
+        result["runner"].as_str().unwrap_or("?"),
+        result["iteration"].as_u64().unwrap_or(1),
+    );
+    println!("  workspace: {workspace_id}");
+    println!("  output:    {}", result["output"].as_str().unwrap_or("?"));
+    if !*wait {
+        return Ok(());
+    }
+
+    // Poll goal.status until the run reaches a terminal state. Polling (not a
+    // blocking RPC) survives app restarts and socket drops.
+    let mut last_printed = String::new();
+    let mut consecutive_failures = 0u32;
+    loop {
+        std::thread::sleep(std::time::Duration::from_secs(1));
+        let resp = rpc::send_request(
+            &cli.socket,
+            "goal.status",
+            serde_json::json!({"workspace": workspace_id}),
+            cli.window.as_deref(),
+        );
+        let resp = match resp {
+            Ok(r) => {
+                consecutive_failures = 0;
+                r
+            }
+            Err(e) => {
+                consecutive_failures += 1;
+                if consecutive_failures == 1 {
+                    eprintln!("(connection lost, retrying: {e})");
+                }
+                if consecutive_failures > 120 {
+                    eprintln!("goal --wait: gave up after {consecutive_failures} failed polls");
+                    std::process::exit(1);
+                }
+                std::thread::sleep(std::time::Duration::from_secs(2));
+                continue;
+            }
+        };
+        if resp.get("ok").and_then(|v| v.as_bool()) != Some(true) {
+            // The app restarted and forgot the run, or the workspace closed.
+            eprintln!(
+                "goal --wait: status unavailable ({}); check the iteration file",
+                resp.get("error")
+                    .and_then(|e| e.get("message"))
+                    .and_then(|m| m.as_str())
+                    .unwrap_or("unknown")
+            );
+            std::process::exit(1);
+        }
+        let r = &resp["result"];
+        let status = r["status"].as_str().unwrap_or("");
+        let detail = r["detail"].as_str().unwrap_or("");
+        let line = format!("{status} {detail}");
+        match status {
+            "done" => {
+                println!("goal done: {}", r["output"].as_str().unwrap_or("?"));
+                return Ok(());
+            }
+            "blocked" => {
+                eprintln!(
+                    "goal blocked ({detail}): see {}",
+                    r["output"].as_str().unwrap_or("?")
+                );
+                std::process::exit(2);
+            }
+            _ => {
+                if line != last_printed {
+                    if status == "needs-attention" {
+                        eprintln!("goal needs attention: {detail}");
+                    }
+                    last_printed = line;
+                }
+            }
+        }
+    }
 }
 
 /// Run the live `jmux top` process viewer, refreshing at `interval` seconds.
