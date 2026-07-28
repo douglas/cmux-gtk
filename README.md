@@ -51,6 +51,25 @@ prompt but the lookup times out.
 
 ## Highlights
 
+### Goal & Graph — autonomous agent loops with human gates
+
+Point jmux at a goal file and it runs a master agent to completion
+(`jmux goal`); point it at a big goal and an orchestrator decomposes it
+into a **DAG of parallel sub-goals** (`jmux graph`) — each node its own
+agent workspace in its own git worktree, scheduled by jmux, reviewed by
+you at editor-based gates, with every iteration written to a
+`docs/roadmap/…/iteration-N.md` audit trail. A live **graph panel**
+shows the DAG as clickable status chips: click a node for its status,
+its per-iteration reports (openable/editable in the notes editor — the
+feedback section steers the next loop), and an inline goal editor.
+
+**[Full walkthrough with an end-to-end demo → docs/GOAL-GRAPH.md](docs/GOAL-GRAPH.md)**
+
+```sh
+jmux goal  ~/src/myrepo/goal.md --wait          # one goal, one master agent
+jmux graph mysite --goal top.md --max-concurrency 3   # the full DAG
+```
+
 ### Run a fleet of agents, see them all at a glance
 
 **Pane Overview** — a status grid of every pane in the workspace: busy / idle / attention dots (detected from each pane's foreground process), a one-line activity snippet, and click-to-jump. Open it from the header grid button, the palette, or a configurable shortcut.

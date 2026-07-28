@@ -672,6 +672,29 @@ pub fn graph_status(shared: &Arc<SharedState>, name: Option<&str>) -> Result<ser
     }
 }
 
+/// Edit a node's goal text (UI detail card). Applies to future launches and
+/// iterations — a running master keeps the seed it started with.
+pub fn update_node_goal(
+    shared: &Arc<SharedState>,
+    name: &str,
+    node_id: &str,
+    goal_text: &str,
+) -> Result<(), String> {
+    if goal_text.trim().is_empty() {
+        return Err("goal text cannot be empty".into());
+    }
+    let mut registry = lock_or_recover(&shared.graphs);
+    let spec = registry
+        .get_mut(name)
+        .ok_or_else(|| format!("unknown graph '{name}'"))?;
+    let node = spec
+        .node_mut(node_id)
+        .ok_or_else(|| format!("unknown node '{node_id}'"))?;
+    node.goal = goal_text.to_string();
+    save_graph(spec);
+    Ok(())
+}
+
 /// Human accepted a node's current iteration (Gate 2): finish it now.
 pub fn accept_node(shared: &Arc<SharedState>, ws_id: Uuid) -> Result<(), String> {
     let link = lock_or_recover(&shared.goals)

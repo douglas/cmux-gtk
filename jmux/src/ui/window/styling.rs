@@ -358,6 +358,18 @@ pub(super) fn install_css() {
             border: 1px solid alpha(@theme_fg_color, 0.2);
             background-image: none;
         }
+        .graph-chip-selected {
+            background-color: alpha(@theme_fg_color, 0.14);
+        }
+        .graph-detail {
+            padding: 10px;
+            border-radius: 10px;
+            border: 1px solid alpha(@theme_fg_color, 0.18);
+            background-color: alpha(@theme_fg_color, 0.04);
+        }
+        .graph-goal-editor {
+            padding: 6px;
+        }
         .graph-chip-pending     { opacity: 0.55; }
         .graph-chip-running     { border-color: alpha(#3584e4, 0.8); }
         .graph-chip-review      { border-color: alpha(#e5a50a, 0.8); }
