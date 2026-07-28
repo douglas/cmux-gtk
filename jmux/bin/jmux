@@ -1180,6 +1180,14 @@ case "$command" in
     _jmux_send "remote_control ${*}"
     ;;
 
+  # ── Goal / graph autonomous loops: delegate to the typed Rust CLI,
+  #    which implements the full flag surface (incl. --wait polling). ──
+  goal|graph)
+    cli="$(dirname "$(readlink -f "$0")")/jmux-cli"
+    [[ -x "$cli" ]] || cli="jmux-cli"
+    exec "$cli" "$command" "$@"
+    ;;
+
   # ── Pass-through: any unrecognized command is sent as V1 text ──
   *)
     _jmux_send "$command ${*}"
