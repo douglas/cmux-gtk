@@ -1044,11 +1044,20 @@ fn bind_sidebar_selection(list_box: &gtk4::ListBox, content_box: &gtk4::Box, sta
             return;
         };
 
-        let index = row.index();
-        if index < 0 {
+        // The workspace index is carried in the row's widget name ("ws-N").
+        // row.index() is the row's VISUAL position, which drifts from the
+        // workspace index as soon as a group header row sits above it —
+        // using it selected the wrong workspace and cascaded through
+        // refreshes until the last one stuck.
+        let name = row.widget_name();
+        let Some(index) = name
+            .as_str()
+            .strip_prefix("ws-")
+            .and_then(|s| s.parse::<usize>().ok())
+        else {
             return;
-        }
-        if !event_handler::select_workspace_by_index(&state, index as usize) {
+        };
+        if !event_handler::select_workspace_by_index(&state, index) {
             return;
         }
 
