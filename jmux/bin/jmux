@@ -444,6 +444,28 @@ Agent integrations
   omo [args...]              Launch OpenCode / oh-my-openagent; subagents open
                              as native jmux panes (tmux shim)
 
+Autonomous loops (docs/GOAL-GRAPH.md)
+  goal <goal.md>             Run a master agent on a goal file to completion
+                             (--wait, --runner NAME, --model/--effort,
+                              --max-iterations N, --supervised, --full-auto)
+  goal status [workspace]    Show goal run state (all runs, or one)
+  goal complete              Agent fast-path: mark the iteration finished
+                             (the iteration file's front matter is authoritative)
+  goal continue <workspace>  Reviewer: run another iteration (edit section 4
+                             of the latest iteration-N.md first to steer it)
+  goal accept <workspace>    Reviewer: accept as final (merge + unblock deps)
+  graph <name> --goal <top.md>
+                             Decompose a goal into a DAG of parallel goal
+                             workspaces (--max-concurrency K, --no-review,
+                              --review-iterations, --runner NAME)
+  graph status [name]        Show DAG + node states
+  graph approve <name>       Gate 1: approve the proposal (re-reads your
+                             edits to proposal.json)
+  graph revise <name> --note <text>   Ask the orchestrator to re-plan
+  graph pause|resume|stop <name>      Control the scheduler (resume also
+                             relaunches interrupted nodes / retries merges)
+  (run 'jmux goal --help' / 'jmux graph --help' for the full flag surface)
+
 Misc
   status / progress / log    Update sidebar metadata for the current workspace
   notify <title> [message]   Post a notification
