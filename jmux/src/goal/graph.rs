@@ -403,10 +403,21 @@ pub fn create_graph(
         return Err("graph name must be lowercase letters, digits, hyphens".into());
     }
     ensure_loaded(shared);
-    if lock_or_recover(&shared.graphs).contains_key(name) {
-        return Err(format!(
-            "graph '{name}' already exists (jmux graph status {name}, or stop it first)"
-        ));
+    // A stopped or completed graph releases its name; anything live must be
+    // stopped explicitly first.
+    {
+        let mut registry = lock_or_recover(&shared.graphs);
+        if let Some(existing) = registry.get(name) {
+            if matches!(existing.status, GraphState::Stopped | GraphState::Complete) {
+                registry.remove(name);
+            } else {
+                return Err(format!(
+                    "graph '{name}' is {:?} — jmux graph status {name} to inspect, \
+                     jmux graph stop {name} to replace it",
+                    existing.status
+                ));
+            }
+        }
     }
     let goal_text =
         std::fs::read_to_string(goal_path).map_err(|e| format!("cannot read goal file: {e}"))?;
@@ -450,6 +461,11 @@ pub fn create_graph(
             .get("runner")
             .and_then(|v| v.as_str())
             .map(str::to_string),
+        // Only accept a proposal written after this create — a stale
+        // proposal.json left by a previous run of the same graph name must
+        // not short-circuit the new orchestrator. (`graph approve` re-reads
+        // the file unconditionally, so a human can still force the old one.)
+        min_proposal_mtime: Some(super::epoch_now()),
         ..GraphSpec::default()
     };
     std::fs::create_dir_all(spec.dir()).map_err(|e| format!("cannot create graph dir: {e}"))?;
