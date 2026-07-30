@@ -209,16 +209,20 @@ pub fn compose_seed(
         .replace("{goal_text}", goal_text)
 }
 
-/// Build the launch command for a runner. `seed_file` always contains the
-/// seed on disk (audit trail + `{seed_file}` templates); claude runners get
-/// the seed inline as a quoted argv.
+/// Build the launch command for a runner. The seed is NEVER inlined into
+/// the command string: panel commands must be a single line (the app
+/// rejects commands containing control characters and falls back to a
+/// plain shell — see `terminal_surface_for`), and the seed is a multi-line
+/// document. Instead the command reads `seed_file` at spawn time via
+/// `"$(cat '<seed_file>')"`.
 pub fn launch_command(
     runner: &GoalRunner,
     session_id: &str,
-    seed: &str,
+    _seed: &str,
     seed_file: &Path,
     permission_mode: &str,
 ) -> String {
+    let seed_arg = format!("\"$(cat {})\"", shell_quote(&seed_file.to_string_lossy()));
     if runner.agent == "custom" && !runner.command_template.is_empty() {
         return runner
             .command_template
@@ -226,7 +230,7 @@ pub fn launch_command(
             .replace("{model}", &runner.model)
             .replace("{effort}", &runner.effort)
             .replace("{seed_file}", &shell_quote(&seed_file.to_string_lossy()))
-            .replace("{seed}", &shell_quote(seed));
+            .replace("{seed}", &seed_arg);
     }
     // claude adapter
     let mut parts: Vec<String> = vec![
@@ -250,7 +254,7 @@ pub fn launch_command(
     for a in &runner.extra_args {
         parts.push(shell_quote(a));
     }
-    parts.push(shell_quote(seed));
+    parts.push(seed_arg);
     parts.join(" ")
 }
 
@@ -897,8 +901,12 @@ mod tests {
         let cmd = launch_command(&runner, "abc", "do it", Path::new("/tmp/s.md"), "acceptEdits");
         assert!(cmd.starts_with("claude --session-id abc"));
         assert!(cmd.contains("--permission-mode 'acceptEdits'"));
-        assert!(cmd.ends_with("'do it'"));
+        // Seed is read from the seed file at spawn — never inlined (panel
+        // commands must be a single line; the app rejects control chars).
+        assert!(cmd.ends_with("\"$(cat '/tmp/s.md')\""));
+        assert!(!cmd.contains("do it"));
         assert!(!cmd.contains("--model"));
+        assert!(!cmd.contains('\n'));
     }
 
     #[test]
@@ -911,6 +919,13 @@ mod tests {
         };
         let cmd = launch_command(&runner, "abc", "seed", Path::new("/tmp/s.md"), "acceptEdits");
         assert_eq!(cmd, "codex exec --model gpt-sol '/tmp/s.md'");
+        let runner_inline = GoalRunner {
+            agent: "custom".into(),
+            command_template: "mytool {seed}".into(),
+            ..Default::default()
+        };
+        let cmd = launch_command(&runner_inline, "abc", "multi\nline", Path::new("/tmp/s.md"), "");
+        assert_eq!(cmd, "mytool \"$(cat '/tmp/s.md')\"");
     }
 
     #[test]
