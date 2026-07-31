@@ -151,57 +151,19 @@ fn rebuild(content: &gtk4::Box, graph_name: &str, state: &Rc<AppState>, selectio
         }
     }
 
-    // Nodes by dependency depth (level 0 = no deps). Click selects.
+    // DAG canvas: chips laid out by dependency depth with cairo-drawn
+    // curved edges. Click a chip to toggle its detail card.
     let selected_id = selection.borrow().clone();
-    for level in levels(&nodes) {
-        let row = gtk4::FlowBox::new();
-        row.set_selection_mode(gtk4::SelectionMode::None);
-        row.set_column_spacing(6);
-        row.set_row_spacing(6);
-        row.set_max_children_per_line(6);
-        for node_id in level {
-            let Some(node) = nodes.iter().find(|n| n.id == node_id) else { continue };
-            let chip = gtk4::Button::new();
-            chip.add_css_class("graph-chip");
-            chip.add_css_class(if proposal_mode {
-                "graph-chip-proposed"
-            } else {
-                chip_class(node.status)
-            });
-            if selected_id.as_deref() == Some(node.id.as_str()) {
-                chip.add_css_class("graph-chip-selected");
-            }
-            chip.set_label(&format!("{} {}", node.id, glyph(node.status)));
-            let mut tip = node.title.clone();
-            if let Some(d) = &node.detail {
-                tip.push_str(&format!("\n{d}"));
-            }
-            tip.push_str("\nClick for status, iterations, and editing");
-            chip.set_tooltip_text(Some(&tip));
-            // Click → toggle this node's detail card.
-            {
-                let selection = selection.clone();
-                let state = state.clone();
-                let name = graph_name.to_string();
-                let id = node.id.clone();
-                let weak = content.downgrade();
-                chip.connect_clicked(move |_| {
-                    {
-                        let mut sel = selection.borrow_mut();
-                        *sel = if sel.as_deref() == Some(id.as_str()) {
-                            None
-                        } else {
-                            Some(id.clone())
-                        };
-                    }
-                    if let Some(content) = weak.upgrade() {
-                        rebuild(&content, &name, &state, &selection);
-                    }
-                });
-            }
-            row.append(&chip);
-        }
-        content.append(&row);
+    if !nodes.is_empty() {
+        content.append(&build_dag_canvas(
+            &nodes,
+            proposal_mode,
+            selected_id.as_deref(),
+            state,
+            graph_name,
+            selection,
+            content,
+        ));
     }
 
     // Detail card for the selected node.
@@ -210,6 +172,223 @@ fn rebuild(content: &gtk4::Box, graph_name: &str, state: &Rc<AppState>, selectio
             content.append(&detail_card(&spec, node, state, graph_name, proposal_mode));
         }
     }
+}
+
+// ───────────────────────── DAG canvas ─────────────────────────
+
+/// One drawn dependency edge, in canvas coordinates.
+struct EdgeLine {
+    x1: f64,
+    y1: f64,
+    x2: f64,
+    y2: f64,
+    rgba: (f64, f64, f64, f64),
+    emphasized: bool,
+}
+
+/// Lay the nodes out as a layered DAG (depth = longest path from a root,
+/// barycenter ordering within each layer to reduce crossings) and render
+/// clickable chip buttons over a cairo underlay of curved, arrowed,
+/// state-colored dependency edges.
+fn build_dag_canvas(
+    nodes: &[GraphNode],
+    proposal_mode: bool,
+    selected_id: Option<&str>,
+    state: &Rc<AppState>,
+    graph_name: &str,
+    selection: &Selection,
+    content: &gtk4::Box,
+) -> gtk4::Widget {
+    use std::collections::HashMap;
+
+    const H_GAP: f64 = 22.0;
+    const V_GAP: f64 = 46.0;
+    const MARGIN: f64 = 10.0;
+
+    // Chips first, so real (natural) sizes drive the layout.
+    let mut chips: HashMap<String, gtk4::Button> = HashMap::new();
+    let mut sizes: HashMap<String, (f64, f64)> = HashMap::new();
+    for node in nodes {
+        let chip = gtk4::Button::new();
+        chip.add_css_class("graph-chip");
+        chip.add_css_class(if proposal_mode {
+            "graph-chip-proposed"
+        } else {
+            chip_class(node.status)
+        });
+        if selected_id == Some(node.id.as_str()) {
+            chip.add_css_class("graph-chip-selected");
+        }
+        chip.set_label(&format!("{} {}", node.id, glyph(node.status)));
+        let mut tip = node.title.clone();
+        if let Some(d) = &node.detail {
+            tip.push_str(&format!("\n{d}"));
+        }
+        tip.push_str("\nClick for status, iterations, and editing");
+        chip.set_tooltip_text(Some(&tip));
+        {
+            let selection = selection.clone();
+            let state = state.clone();
+            let name = graph_name.to_string();
+            let id = node.id.clone();
+            let weak = content.downgrade();
+            chip.connect_clicked(move |_| {
+                {
+                    let mut sel = selection.borrow_mut();
+                    *sel = if sel.as_deref() == Some(id.as_str()) {
+                        None
+                    } else {
+                        Some(id.clone())
+                    };
+                }
+                if let Some(content) = weak.upgrade() {
+                    rebuild(&content, &name, &state, &selection);
+                }
+            });
+        }
+        let (_, nat_w, _, _) = chip.measure(gtk4::Orientation::Horizontal, -1);
+        let (_, nat_h, _, _) = chip.measure(gtk4::Orientation::Vertical, -1);
+        sizes.insert(node.id.clone(), (f64::from(nat_w), f64::from(nat_h)));
+        chips.insert(node.id.clone(), chip);
+    }
+
+    // Order each layer by the mean x-center of its deps (barycenter) so
+    // edges mostly flow straight down instead of crossing.
+    let lvls = levels(nodes);
+    let mut pos: HashMap<String, (f64, f64, f64, f64)> = HashMap::new(); // x, y, w, h
+    let mut y = MARGIN;
+    let mut rows: Vec<(Vec<String>, f64)> = Vec::new(); // (ordered ids, row width)
+    for (li, level) in lvls.iter().enumerate() {
+        let mut ordered = level.clone();
+        if li > 0 {
+            let center_of = |id: &str| -> f64 {
+                let deps = nodes
+                    .iter()
+                    .find(|n| n.id == id)
+                    .map(|n| n.deps.clone())
+                    .unwrap_or_default();
+                let centers: Vec<f64> = deps
+                    .iter()
+                    .filter_map(|d| pos.get(d.as_str()).map(|(x, _, w, _)| x + w / 2.0))
+                    .collect();
+                if centers.is_empty() {
+                    f64::MAX // dep-less strays sort last
+                } else {
+                    centers.iter().sum::<f64>() / centers.len() as f64
+                }
+            };
+            ordered.sort_by(|a, b| {
+                center_of(a)
+                    .partial_cmp(&center_of(b))
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            });
+        }
+        let row_h = ordered
+            .iter()
+            .filter_map(|id| sizes.get(id.as_str()).map(|(_, h)| *h))
+            .fold(0.0_f64, f64::max);
+        let mut x = 0.0;
+        for id in &ordered {
+            let (w, h) = sizes.get(id.as_str()).copied().unwrap_or((80.0, 30.0));
+            pos.insert(id.clone(), (x, y + (row_h - h) / 2.0, w, h));
+            x += w + H_GAP;
+        }
+        let row_w = (x - H_GAP).max(0.0);
+        rows.push((ordered, row_w));
+        y += row_h + V_GAP;
+    }
+    let canvas_h = (y - V_GAP + MARGIN).max(40.0);
+    let max_row_w = rows.iter().map(|(_, w)| *w).fold(0.0_f64, f64::max);
+    let canvas_w = max_row_w + 2.0 * MARGIN;
+    // Center each row against the widest one.
+    for (ordered, row_w) in &rows {
+        let shift = MARGIN + (max_row_w - row_w) / 2.0;
+        for id in ordered {
+            if let Some(p) = pos.get_mut(id.as_str()) {
+                p.0 += shift;
+            }
+        }
+    }
+
+    // Edges: dep bottom-center → node top-center, colored by the DOWNSTREAM
+    // node's state; edges touching the selected node are emphasized.
+    let mut edges: Vec<EdgeLine> = Vec::new();
+    for node in nodes {
+        let Some(&(cx, cy, cw, _)) = pos.get(node.id.as_str()) else {
+            continue;
+        };
+        for dep in &node.deps {
+            let Some(&(px, py, pw, ph)) = pos.get(dep.as_str()) else {
+                continue;
+            };
+            let rgba = if proposal_mode {
+                (0.898, 0.647, 0.039, 0.55) // amber
+            } else {
+                match node.status {
+                    NodeState::Running | NodeState::Review => (0.208, 0.518, 0.894, 0.85),
+                    NodeState::Done => (0.200, 0.820, 0.478, 0.75),
+                    NodeState::Blocked | NodeState::Interrupted => (0.878, 0.106, 0.141, 0.8),
+                    NodeState::Pending => (0.55, 0.55, 0.60, 0.5),
+                }
+            };
+            let emphasized = selected_id == Some(node.id.as_str())
+                || selected_id == Some(dep.as_str());
+            edges.push(EdgeLine {
+                x1: px + pw / 2.0,
+                y1: py + ph,
+                x2: cx + cw / 2.0,
+                y2: cy,
+                rgba,
+                emphasized,
+            });
+        }
+    }
+    let dim_others = selected_id.is_some();
+
+    let area = gtk4::DrawingArea::new();
+    area.set_content_width(canvas_w as i32);
+    area.set_content_height(canvas_h as i32);
+    area.set_draw_func(move |_, cr, _, _| {
+        // Unemphasized first so highlighted edges draw on top.
+        for pass in [false, true] {
+            for e in edges.iter().filter(|e| e.emphasized == pass) {
+                let (r, g, b, mut a) = e.rgba;
+                if dim_others && !e.emphasized {
+                    a *= 0.35;
+                }
+                cr.set_source_rgba(r, g, b, a);
+                cr.set_line_width(if e.emphasized { 2.6 } else { 1.8 });
+                let dy = ((e.y2 - e.y1) * 0.5).max(12.0);
+                cr.move_to(e.x1, e.y1);
+                cr.curve_to(e.x1, e.y1 + dy, e.x2, e.y2 - dy, e.x2, e.y2 - 6.0);
+                let _ = cr.stroke();
+                // Arrowhead into the downstream chip.
+                cr.move_to(e.x2, e.y2);
+                cr.line_to(e.x2 - 4.5, e.y2 - 7.5);
+                cr.line_to(e.x2 + 4.5, e.y2 - 7.5);
+                cr.close_path();
+                let _ = cr.fill();
+            }
+        }
+    });
+
+    let fixed = gtk4::Fixed::new();
+    fixed.put(&area, 0.0, 0.0);
+    for node in nodes {
+        if let (Some(chip), Some(&(x, y, _, _))) =
+            (chips.get(node.id.as_str()), pos.get(node.id.as_str()))
+        {
+            fixed.put(chip, x, y);
+        }
+    }
+
+    // Wide DAGs scroll horizontally inside their own strip; the panel body
+    // itself never scrolls sideways.
+    let sw = gtk4::ScrolledWindow::new();
+    sw.set_policy(gtk4::PolicyType::Automatic, gtk4::PolicyType::Never);
+    sw.set_min_content_height(canvas_h as i32);
+    sw.set_child(Some(&fixed));
+    sw.upcast()
 }
 
 // ───────────────────────── node detail card ─────────────────────────
