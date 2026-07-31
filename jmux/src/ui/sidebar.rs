@@ -207,6 +207,32 @@ thread_local! {
 
 /// Refresh the workspace list from shared state.
 pub fn refresh_sidebar(list_box: &gtk4::ListBox, state: &Rc<AppState>) {
+    // Re-entrancy guard — checked BEFORE the signature bookkeeping so a
+    // skipped inner call cannot record a signature for rows it never built.
+    // The append loop below calls `select_row`, which fires `row-selected`
+    // synchronously → the handler calls refresh_ui → back into this
+    // function. If the model changed mid-rebuild (socket threads mutate
+    // tab_manager — e.g. graph.create adding a workspace), the inner rebuild
+    // would clear and refill the list while the outer loop then appends its
+    // remaining rows on top: duplicated sidebar rows. The trailing throttled
+    // refresh from the selection handler repaints any staleness ~120 ms
+    // later.
+    thread_local! {
+        static REBUILDING: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    }
+    if REBUILDING.with(|r| r.get()) {
+        tracing::debug!("skipping re-entrant sidebar rebuild");
+        return;
+    }
+    REBUILDING.with(|r| r.set(true));
+    struct Guard;
+    impl Drop for Guard {
+        fn drop(&mut self) {
+            REBUILDING.with(|r| r.set(false));
+        }
+    }
+    let _guard = Guard;
+
     // Skip the rebuild when nothing the sidebar renders has changed. The
     // signature hashes the Debug form of every workspace and group plus the
     // selection and display settings — deliberately over-inclusive (a change

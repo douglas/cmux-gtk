@@ -470,10 +470,12 @@ pub fn create_graph(
     };
     std::fs::create_dir_all(spec.dir()).map_err(|e| format!("cannot create graph dir: {e}"))?;
 
-    // Sidebar group for the whole graph.
+    // Sidebar group for the whole graph — reuse an existing group with this
+    // name (re-creates would otherwise accumulate duplicate groups).
     let group_id = {
         let mut tm = lock_or_recover(&shared.tab_manager);
-        Some(tm.create_group(name, None))
+        let existing = tm.groups().iter().find(|g| g.name == name).map(|g| g.id);
+        Some(existing.unwrap_or_else(|| tm.create_group(name, None)))
     };
     spec.group_id = group_id;
 
@@ -637,6 +639,12 @@ pub fn resume_graph(shared: &Arc<SharedState>, name: &str) -> Result<serde_json:
     let spec = registry
         .get_mut(name)
         .ok_or_else(|| format!("unknown graph '{name}'"))?;
+    if spec.nodes.is_empty() {
+        return Err(format!(
+            "graph '{name}' has no approved nodes yet — review the proposal and \
+             run: jmux graph approve {name}"
+        ));
+    }
     for n in &mut spec.nodes {
         if n.status == NodeState::Interrupted {
             n.status = NodeState::Pending;
@@ -656,7 +664,22 @@ pub fn resume_graph(shared: &Arc<SharedState>, name: &str) -> Result<serde_json:
 }
 
 pub fn stop_graph(shared: &Arc<SharedState>, name: &str) -> Result<serde_json::Value, String> {
-    set_graph_state(shared, name, GraphState::Stopped)
+    let result = set_graph_state(shared, name, GraphState::Stopped)?;
+    // Remove the graph's sidebar group if nothing lives in it any more —
+    // stopped test runs otherwise leave zombie group headers behind.
+    let group_id = lock_or_recover(&shared.graphs)
+        .get(name)
+        .and_then(|s| s.group_id);
+    if let Some(gid) = group_id {
+        let mut tm = lock_or_recover(&shared.tab_manager);
+        let empty = !tm.iter().any(|ws| ws.group_id == Some(gid));
+        if empty {
+            tm.remove_group(gid);
+            drop(tm);
+            shared.notify_metadata_refresh();
+        }
+    }
+    Ok(result)
 }
 
 fn set_graph_state(
@@ -686,6 +709,43 @@ pub fn graph_status(shared: &Arc<SharedState>, name: Option<&str>) -> Result<ser
             "graphs": registry.values().map(GraphSpec::to_json).collect::<Vec<_>>()
         })),
     }
+}
+
+/// Edit a proposed node's goal text in `proposal.json` (in-panel review,
+/// pre-approval). Approve re-reads the file, so the edit always counts.
+pub fn update_proposal_node(
+    shared: &Arc<SharedState>,
+    name: &str,
+    node_id: &str,
+    goal_text: &str,
+) -> Result<(), String> {
+    if goal_text.trim().is_empty() {
+        return Err("goal text cannot be empty".into());
+    }
+    let path = {
+        let registry = lock_or_recover(&shared.graphs);
+        let spec = registry
+            .get(name)
+            .ok_or_else(|| format!("unknown graph '{name}'"))?;
+        spec.proposal_json()
+    };
+    let text =
+        std::fs::read_to_string(&path).map_err(|e| format!("cannot read proposal: {e}"))?;
+    let mut v: serde_json::Value =
+        serde_json::from_str(&text).map_err(|e| format!("proposal.json is invalid: {e}"))?;
+    let node = v
+        .get_mut("nodes")
+        .and_then(|n| n.as_array_mut())
+        .and_then(|nodes| {
+            nodes
+                .iter_mut()
+                .find(|n| n.get("id").and_then(|i| i.as_str()) == Some(node_id))
+        })
+        .ok_or_else(|| format!("node '{node_id}' not found in proposal"))?;
+    node["goal"] = serde_json::Value::String(goal_text.to_string());
+    let out = serde_json::to_string_pretty(&v).map_err(|e| e.to_string())?;
+    std::fs::write(&path, out).map_err(|e| format!("cannot write proposal: {e}"))?;
+    Ok(())
 }
 
 /// Edit a node's goal text (UI detail card). Applies to future launches and
@@ -850,6 +910,13 @@ fn tick_proposing(shared: &Arc<SharedState>, spec: &mut GraphSpec) {
 }
 
 fn tick_running(shared: &Arc<SharedState>, spec: &mut GraphSpec) {
+    // A running graph with no nodes is a broken state (e.g. resumed before
+    // approval) — never let it vacuously "complete"; send it back to
+    // proposing so the normal flow re-engages.
+    if spec.nodes.is_empty() {
+        spec.status = GraphState::Proposing;
+        return;
+    }
     sync_node_states(shared, spec);
 
     // All done?

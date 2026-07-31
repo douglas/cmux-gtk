@@ -371,6 +371,7 @@ pub(super) fn install_css() {
             padding: 6px;
         }
         .graph-chip-pending     { opacity: 0.55; }
+        .graph-chip-proposed    { border-color: alpha(#e5a50a, 0.65); }
         .graph-chip-running     { border-color: alpha(#3584e4, 0.8); }
         .graph-chip-review      { border-color: alpha(#e5a50a, 0.8); }
         .graph-chip-done        { border-color: alpha(#33d17a, 0.7); }

@@ -928,13 +928,42 @@ fn run_graph(cli: &Cli) -> anyhow::Result<()> {
 
     let response = rpc::send_request(&cli.socket, method, params, cli.window.as_deref())?;
     let ok = response.get("ok").and_then(|v| v.as_bool()) == Some(true);
-    if cli.json || method != "graph.status" || !ok {
-        println!("{}", serde_json::to_string_pretty(&response)?);
-    } else {
-        print_graph_status(&response);
-    }
     if !ok {
+        eprintln!(
+            "error: {}",
+            response
+                .get("error")
+                .and_then(|e| e.get("message"))
+                .and_then(|m| m.as_str())
+                .unwrap_or("unknown error")
+        );
         std::process::exit(1);
+    }
+    if cli.json {
+        println!("{}", serde_json::to_string_pretty(&response)?);
+        return Ok(());
+    }
+    let r = &response["result"];
+    match method {
+        "graph.status" => print_graph_status(&response),
+        "graph.create" => {
+            println!(
+                "graph '{}' created — the orchestrator is decomposing your goal.",
+                r["graph"].as_str().unwrap_or("?")
+            );
+            println!("  watch it in the new workspace; the proposed plan appears in the graph panel");
+            println!("  when ready: review there (or edit proposal.json), then Approve & Run");
+        }
+        "graph.approve" => println!(
+            "graph '{}' approved — {} nodes running",
+            r["graph"].as_str().unwrap_or("?"),
+            r["nodes"].as_u64().unwrap_or(0)
+        ),
+        "graph.revise" => println!("revision sent to the orchestrator — a new proposal will follow"),
+        "graph.pause" => println!("graph paused — running nodes finish, nothing new launches"),
+        "graph.resume" => println!("graph resumed"),
+        "graph.stop" => println!("graph stopped"),
+        _ => println!("{}", serde_json::to_string_pretty(&response)?),
     }
     Ok(())
 }

@@ -95,43 +95,79 @@ fn rebuild(content: &gtk4::Box, graph_name: &str, state: &Rc<AppState>, selectio
         return;
     };
 
+    content.append(&header_row(&spec));
+    content.append(&actions_row(&spec, state));
+
+    // Which nodes to render: approved nodes from graph.json, or — during the
+    // review gate — the PROPOSED nodes parsed straight from proposal.json,
+    // so the plan is reviewed (and edited) right here in the panel.
+    let in_review = matches!(spec.status, GraphState::Proposing | GraphState::Proposed);
+    let (nodes, proposal_mode) = if !spec.nodes.is_empty() {
+        (spec.nodes.clone(), false)
+    } else if in_review {
+        match crate::goal::graph::parse_proposal(&spec.proposal_json()) {
+            Ok(nodes) => (nodes, true),
+            Err(e) => {
+                let msg = if spec.proposal_json().exists() {
+                    format!("Proposal has a problem: {e}")
+                } else {
+                    "The orchestrator (left pane) is decomposing the goal — \
+                     its proposed plan will appear here for review."
+                        .to_string()
+                };
+                let label = gtk4::Label::new(Some(&msg));
+                label.add_css_class("dim-label");
+                label.set_halign(gtk4::Align::Start);
+                label.set_wrap(true);
+                content.append(&label);
+                (Vec::new(), true)
+            }
+        }
+    } else {
+        let label = gtk4::Label::new(Some("No nodes."));
+        label.add_css_class("dim-label");
+        label.set_halign(gtk4::Align::Start);
+        content.append(&label);
+        (Vec::new(), false)
+    };
+
+    if proposal_mode && !nodes.is_empty() {
+        let hint = gtk4::Label::new(Some(
+            "Proposed plan — click a node to inspect or edit its goal, then Approve & Run.",
+        ));
+        hint.add_css_class("dim-label");
+        hint.set_halign(gtk4::Align::Start);
+        hint.set_wrap(true);
+        content.append(&hint);
+    }
+
     // Drop a stale selection (node renamed away by a re-proposal).
     {
         let mut sel = selection.borrow_mut();
         if let Some(id) = sel.clone() {
-            if spec.node(&id).is_none() {
+            if !nodes.iter().any(|n| n.id == id) {
                 *sel = None;
             }
         }
     }
 
-    content.append(&header_row(&spec));
-    content.append(&actions_row(&spec, state));
-
-    if spec.nodes.is_empty() {
-        let label = gtk4::Label::new(Some(match spec.status {
-            GraphState::Proposing => "Waiting for the orchestrator's proposal…",
-            GraphState::Proposed => "Proposal ready — review it, then Approve.",
-            _ => "No nodes.",
-        }));
-        label.add_css_class("dim-label");
-        label.set_halign(gtk4::Align::Start);
-        content.append(&label);
-    }
-
     // Nodes by dependency depth (level 0 = no deps). Click selects.
     let selected_id = selection.borrow().clone();
-    for level in levels(&spec) {
+    for level in levels(&nodes) {
         let row = gtk4::FlowBox::new();
         row.set_selection_mode(gtk4::SelectionMode::None);
         row.set_column_spacing(6);
         row.set_row_spacing(6);
         row.set_max_children_per_line(6);
         for node_id in level {
-            let Some(node) = spec.node(&node_id) else { continue };
+            let Some(node) = nodes.iter().find(|n| n.id == node_id) else { continue };
             let chip = gtk4::Button::new();
             chip.add_css_class("graph-chip");
-            chip.add_css_class(chip_class(node.status));
+            chip.add_css_class(if proposal_mode {
+                "graph-chip-proposed"
+            } else {
+                chip_class(node.status)
+            });
             if selected_id.as_deref() == Some(node.id.as_str()) {
                 chip.add_css_class("graph-chip-selected");
             }
@@ -170,21 +206,23 @@ fn rebuild(content: &gtk4::Box, graph_name: &str, state: &Rc<AppState>, selectio
 
     // Detail card for the selected node.
     if let Some(id) = selected_id {
-        if let Some(node) = spec.node(&id) {
-            content.append(&detail_card(&spec, node, state, graph_name, selection));
+        if let Some(node) = nodes.iter().find(|n| n.id == id) {
+            content.append(&detail_card(&spec, node, state, graph_name, proposal_mode));
         }
     }
 }
 
 // ───────────────────────── node detail card ─────────────────────────
 
-/// Status + per-iteration monitoring + goal editing for one node.
+/// Status + per-iteration monitoring + goal editing for one node. In
+/// `proposal_mode` (review gate) the card edits the PROPOSED node in
+/// proposal.json and hides run-only sections.
 fn detail_card(
     spec: &GraphSpec,
     node: &GraphNode,
     state: &Rc<AppState>,
     graph_name: &str,
-    selection: &Selection,
+    proposal_mode: bool,
 ) -> gtk4::Widget {
     let card = gtk4::Box::new(gtk4::Orientation::Vertical, 8);
     card.add_css_class("graph-detail");
@@ -196,7 +234,12 @@ fn detail_card(
     title.set_halign(gtk4::Align::Start);
     title.set_hexpand(true);
     head.append(&title);
-    let status = gtk4::Label::new(Some(&format!("{} {:?}", glyph(node.status), node.status)));
+    let status_text = if proposal_mode {
+        "proposed".to_string()
+    } else {
+        format!("{} {:?}", glyph(node.status), node.status)
+    };
+    let status = gtk4::Label::new(Some(&status_text));
     status.add_css_class("graph-status");
     head.append(&status);
     card.append(&head);
@@ -211,18 +254,24 @@ fn detail_card(
     // Facts line: runner, deps, iteration, live driver state.
     let run = node
         .workspace
+        .filter(|_| !proposal_mode)
         .and_then(|ws| lock_or_recover(&state.shared.goals).get(&ws).cloned());
     let mut facts = format!(
-        "runner: {} · deps: {} · iteration {}/{}",
+        "runner: {} · deps: {}",
         node.runner.as_deref().unwrap_or("default"),
         if node.deps.is_empty() {
             "none".to_string()
         } else {
             node.deps.join(", ")
         },
-        node.iteration.max(run.as_ref().map(|r| r.iteration).unwrap_or(0)),
-        spec.max_iterations,
     );
+    if !proposal_mode {
+        facts.push_str(&format!(
+            " · iteration {}/{}",
+            node.iteration.max(run.as_ref().map(|r| r.iteration).unwrap_or(0)),
+            spec.max_iterations,
+        ));
+    }
     if let Some(r) = &run {
         facts.push_str(&format!(
             " · driver: {}{} · nudges {}",
@@ -237,9 +286,9 @@ fn detail_card(
     facts_label.set_wrap(true);
     card.append(&facts_label);
 
-    // Actions: jump to workspace + Gate 2 verdicts.
+    // Actions: jump to workspace + Gate 2 verdicts (run mode only).
     let actions = gtk4::Box::new(gtk4::Orientation::Horizontal, 6);
-    if let Some(ws_id) = node.workspace {
+    if let Some(ws_id) = node.workspace.filter(|_| !proposal_mode) {
         let open = gtk4::Button::with_label("Open workspace");
         let state_c = state.clone();
         open.connect_clicked(move |_| {
@@ -251,7 +300,7 @@ fn detail_card(
         });
         actions.append(&open);
     }
-    if node.status == NodeState::Review {
+    if node.status == NodeState::Review && !proposal_mode {
         if let Some(ws_id) = node.workspace {
             let cont = gtk4::Button::with_label("Continue");
             cont.set_tooltip_text(Some(
@@ -288,7 +337,8 @@ fn detail_card(
     card.append(&actions);
 
     // Iterations: one row per existing iteration-N.md, each opening in the
-    // notes editor (edit section 4 to steer the next loop).
+    // notes editor (edit section 4 to steer the next loop). Run mode only —
+    // proposed nodes have no iterations yet.
     let node_cwd = run
         .as_ref()
         .map(|r| r.cwd.clone())
@@ -310,7 +360,7 @@ fn detail_card(
         }
     }
     iterations.sort_by_key(|(n, _)| *n);
-    if !iterations.is_empty() {
+    if !iterations.is_empty() && !proposal_mode {
         let hdr = gtk4::Label::new(Some("Iterations"));
         hdr.add_css_class("dim-label");
         hdr.set_halign(gtk4::Align::Start);
@@ -336,7 +386,11 @@ fn detail_card(
     }
 
     // Goal editor: applies to future launches/iterations.
-    let goal_hdr = gtk4::Label::new(Some("Goal (edits apply to future launches/iterations)"));
+    let goal_hdr = gtk4::Label::new(Some(if proposal_mode {
+        "Goal (edit before approving — Approve & Run uses what's saved here)"
+    } else {
+        "Goal (edits apply to future launches/iterations)"
+    }));
     goal_hdr.add_css_class("dim-label");
     goal_hdr.set_halign(gtk4::Align::Start);
     card.append(&goal_hdr);
@@ -358,11 +412,17 @@ fn detail_card(
         let name = graph_name.to_string();
         let node_id = node.id.clone();
         let buffer = text.buffer();
-        let selection = selection.clone();
         save.connect_clicked(move |btn| {
             let (start, end) = buffer.bounds();
             let goal_text = buffer.text(&start, &end, false).to_string();
-            match goal::graph::update_node_goal(&state.shared, &name, &node_id, &goal_text) {
+            // Review gate edits go to proposal.json (what Approve reads);
+            // post-approval edits go to the authoritative graph.json.
+            let result = if proposal_mode {
+                goal::graph::update_proposal_node(&state.shared, &name, &node_id, &goal_text)
+            } else {
+                goal::graph::update_node_goal(&state.shared, &name, &node_id, &goal_text)
+            };
+            match result {
                 Ok(()) => {
                     let _ = state
                         .shared
@@ -373,7 +433,6 @@ fn detail_card(
                     if let Some(root) = btn.root() {
                         root.set_focus(None::<&gtk4::Widget>);
                     }
-                    let _ = selection; // keep the card open
                 }
                 Err(e) => {
                     let _ = state
@@ -552,11 +611,11 @@ fn chip_class(s: NodeState) -> &'static str {
 
 /// Node ids grouped by dependency depth (level 0 first). Cycle-safe: the
 /// proposal validator rejects cycles, but cap the depth walk anyway.
-fn levels(spec: &GraphSpec) -> Vec<Vec<String>> {
+fn levels(nodes: &[GraphNode]) -> Vec<Vec<String>> {
     use std::collections::HashMap;
     let mut depth: HashMap<&str, usize> = HashMap::new();
     fn depth_of<'a>(
-        spec: &'a GraphSpec,
+        nodes: &'a [GraphNode],
         id: &'a str,
         depth: &mut std::collections::HashMap<&'a str, usize>,
         guard: usize,
@@ -567,12 +626,13 @@ fn levels(spec: &GraphSpec) -> Vec<Vec<String>> {
         if let Some(d) = depth.get(id) {
             return *d;
         }
-        let d = spec
-            .node(id)
+        let d = nodes
+            .iter()
+            .find(|n| n.id == id)
             .map(|n| {
                 n.deps
                     .iter()
-                    .map(|dep| depth_of(spec, dep.as_str(), depth, guard + 1) + 1)
+                    .map(|dep| depth_of(nodes, dep.as_str(), depth, guard + 1) + 1)
                     .max()
                     .unwrap_or(0)
             })
@@ -580,12 +640,12 @@ fn levels(spec: &GraphSpec) -> Vec<Vec<String>> {
         depth.insert(id, d);
         d
     }
-    for n in &spec.nodes {
-        depth_of(spec, n.id.as_str(), &mut depth, 0);
+    for n in nodes {
+        depth_of(nodes, n.id.as_str(), &mut depth, 0);
     }
     let max_depth = depth.values().copied().max().unwrap_or(0);
     let mut out: Vec<Vec<String>> = vec![Vec::new(); max_depth + 1];
-    for n in &spec.nodes {
+    for n in nodes {
         let d = depth.get(n.id.as_str()).copied().unwrap_or(0);
         out[d].push(n.id.clone());
     }
