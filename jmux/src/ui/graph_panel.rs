@@ -11,7 +11,7 @@
 //! the registry. The tick skips rebuilds while a TextView inside the panel
 //! has focus, so typing in the goal editor is never clobbered.
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::path::Path;
 use std::rc::Rc;
 
@@ -51,22 +51,25 @@ pub fn create_graph_widget(
     container.append(&scroll);
 
     let selection: Selection = Rc::new(RefCell::new(None));
-    rebuild(&content, graph_name, state, &selection);
+    let dragging: Rc<Cell<bool>> = Rc::new(Cell::new(false));
+    rebuild(&content, graph_name, state, &selection, &dragging);
 
     // Live refresh while the widget is alive — but never while the user is
-    // typing into a TextView inside this panel (goal editor).
+    // typing into a TextView inside this panel (goal editor) or dragging a
+    // node chip (a rebuild would destroy the widget mid-drag).
     let weak = content.downgrade();
     let state_tick = state.clone();
     let name_tick = graph_name.to_string();
     let selection_tick = selection.clone();
+    let dragging_tick = dragging.clone();
     glib::timeout_add_local(std::time::Duration::from_millis(2000), move || {
         let Some(content) = weak.upgrade() else {
             return glib::ControlFlow::Break;
         };
-        if text_editor_focused(&content) {
+        if text_editor_focused(&content) || dragging_tick.get() {
             return glib::ControlFlow::Continue;
         }
-        rebuild(&content, &name_tick, &state_tick, &selection_tick);
+        rebuild(&content, &name_tick, &state_tick, &selection_tick, &dragging_tick);
         glib::ControlFlow::Continue
     });
 
@@ -81,7 +84,13 @@ fn text_editor_focused(content: &gtk4::Box) -> bool {
         .is_some_and(|f| f.is::<gtk4::TextView>() && f.is_ancestor(content))
 }
 
-fn rebuild(content: &gtk4::Box, graph_name: &str, state: &Rc<AppState>, selection: &Selection) {
+fn rebuild(
+    content: &gtk4::Box,
+    graph_name: &str,
+    state: &Rc<AppState>,
+    selection: &Selection,
+    dragging: &Rc<Cell<bool>>,
+) {
     while let Some(child) = content.first_child() {
         content.remove(&child);
     }
@@ -152,7 +161,7 @@ fn rebuild(content: &gtk4::Box, graph_name: &str, state: &Rc<AppState>, selectio
     }
 
     // DAG canvas: chips laid out by dependency depth with cairo-drawn
-    // curved edges. Click a chip to toggle its detail card.
+    // curved edges. Click a chip to toggle its detail card; drag to move it.
     let selected_id = selection.borrow().clone();
     if !nodes.is_empty() {
         content.append(&build_dag_canvas(
@@ -163,6 +172,7 @@ fn rebuild(content: &gtk4::Box, graph_name: &str, state: &Rc<AppState>, selectio
             graph_name,
             selection,
             content,
+            dragging,
         ));
     }
 
@@ -176,20 +186,13 @@ fn rebuild(content: &gtk4::Box, graph_name: &str, state: &Rc<AppState>, selectio
 
 // ───────────────────────── DAG canvas ─────────────────────────
 
-/// One drawn dependency edge, in canvas coordinates.
-struct EdgeLine {
-    x1: f64,
-    y1: f64,
-    x2: f64,
-    y2: f64,
-    rgba: (f64, f64, f64, f64),
-    emphasized: bool,
-}
-
 /// Lay the nodes out as a layered DAG (depth = longest path from a root,
-/// barycenter ordering within each layer to reduce crossings) and render
-/// clickable chip buttons over a cairo underlay of curved, arrowed,
-/// state-colored dependency edges.
+/// barycenter ordering within each layer; manual drag positions override
+/// the auto-layout and persist) and render clickable, draggable chip
+/// buttons over a cairo underlay of curved, arrowed, state-colored
+/// dependency edges that follow live while dragging. Nodes whose agent
+/// needs input pulse amber; paused (hibernated) agents show ⏸.
+#[allow(clippy::too_many_arguments)]
 fn build_dag_canvas(
     nodes: &[GraphNode],
     proposal_mode: bool,
@@ -198,6 +201,7 @@ fn build_dag_canvas(
     graph_name: &str,
     selection: &Selection,
     content: &gtk4::Box,
+    dragging: &Rc<Cell<bool>>,
 ) -> gtk4::Widget {
     use std::collections::HashMap;
 
@@ -205,10 +209,29 @@ fn build_dag_canvas(
     const V_GAP: f64 = 46.0;
     const MARGIN: f64 = 10.0;
 
+    // Live agent state per node: needs-input (driver escalated) + paused
+    // (agent process hibernated).
+    let mut needs_input: HashMap<String, bool> = HashMap::new();
+    let mut paused: HashMap<String, bool> = HashMap::new();
+    {
+        let goals = lock_or_recover(&state.shared.goals);
+        for node in nodes {
+            if let Some(run) = node.workspace.and_then(|ws| goals.get(&ws)) {
+                needs_input.insert(
+                    node.id.clone(),
+                    matches!(run.status, GoalStatus::NeedsAttention(_)),
+                );
+                paused.insert(node.id.clone(), state.shared.is_hibernated(&run.panel_id));
+            }
+        }
+    }
+
     // Chips first, so real (natural) sizes drive the layout.
     let mut chips: HashMap<String, gtk4::Button> = HashMap::new();
     let mut sizes: HashMap<String, (f64, f64)> = HashMap::new();
     for node in nodes {
+        let att = needs_input.get(&node.id).copied().unwrap_or(false);
+        let pau = paused.get(&node.id).copied().unwrap_or(false);
         let chip = gtk4::Button::new();
         chip.add_css_class("graph-chip");
         chip.add_css_class(if proposal_mode {
@@ -216,15 +239,34 @@ fn build_dag_canvas(
         } else {
             chip_class(node.status)
         });
+        if att {
+            chip.add_css_class("graph-chip-attention");
+        }
+        if pau {
+            chip.add_css_class("graph-chip-paused");
+        }
         if selected_id == Some(node.id.as_str()) {
             chip.add_css_class("graph-chip-selected");
         }
-        chip.set_label(&format!("{} {}", node.id, glyph(node.status)));
+        let glyph_str = if att {
+            "❓"
+        } else if pau {
+            "⏸"
+        } else {
+            glyph(node.status)
+        };
+        chip.set_label(&format!("{} {}", node.id, glyph_str));
         let mut tip = node.title.clone();
+        if att {
+            tip.push_str("\nNeeds your input — open the workspace");
+        }
+        if pau {
+            tip.push_str("\nAgent paused (SIGSTOP)");
+        }
         if let Some(d) = &node.detail {
             tip.push_str(&format!("\n{d}"));
         }
-        tip.push_str("\nClick for status, iterations, and editing");
+        tip.push_str("\nClick for details · drag to move");
         chip.set_tooltip_text(Some(&tip));
         {
             let selection = selection.clone();
@@ -232,6 +274,7 @@ fn build_dag_canvas(
             let name = graph_name.to_string();
             let id = node.id.clone();
             let weak = content.downgrade();
+            let dragging = dragging.clone();
             chip.connect_clicked(move |_| {
                 {
                     let mut sel = selection.borrow_mut();
@@ -242,7 +285,7 @@ fn build_dag_canvas(
                     };
                 }
                 if let Some(content) = weak.upgrade() {
-                    rebuild(&content, &name, &state, &selection);
+                    rebuild(&content, &name, &state, &selection, &dragging);
                 }
             });
         }
@@ -297,9 +340,7 @@ fn build_dag_canvas(
         rows.push((ordered, row_w));
         y += row_h + V_GAP;
     }
-    let canvas_h = (y - V_GAP + MARGIN).max(40.0);
     let max_row_w = rows.iter().map(|(_, w)| *w).fold(0.0_f64, f64::max);
-    let canvas_w = max_row_w + 2.0 * MARGIN;
     // Center each row against the widest one.
     for (ordered, row_w) in &rows {
         let shift = MARGIN + (max_row_w - row_w) / 2.0;
@@ -309,18 +350,31 @@ fn build_dag_canvas(
             }
         }
     }
-
-    // Edges: dep bottom-center → node top-center, colored by the DOWNSTREAM
-    // node's state; edges touching the selected node are emphasized.
-    let mut edges: Vec<EdgeLine> = Vec::new();
+    // Manual drag positions override the auto-layout.
     for node in nodes {
-        let Some(&(cx, cy, cw, _)) = pos.get(node.id.as_str()) else {
-            continue;
-        };
-        for dep in &node.deps {
-            let Some(&(px, py, pw, ph)) = pos.get(dep.as_str()) else {
-                continue;
-            };
+        if let (Some((mx, my)), Some(p)) = (node.pos, pos.get_mut(node.id.as_str())) {
+            p.0 = mx.max(0.0);
+            p.1 = my.max(0.0);
+        }
+    }
+    // Canvas bounds from wherever nodes actually ended up.
+    let canvas_w = pos
+        .values()
+        .map(|(x, _, w, _)| x + w)
+        .fold(0.0_f64, f64::max)
+        + MARGIN;
+    let canvas_h = pos
+        .values()
+        .map(|(_, y, _, h)| y + h)
+        .fold(0.0_f64, f64::max)
+        + MARGIN;
+
+    // Edge definitions (positions resolve live at draw time, so edges
+    // follow chips while dragging). Colored by the DOWNSTREAM node's state;
+    // edges touching the selected node are emphasized.
+    let edge_defs: Vec<(String, String, (f64, f64, f64, f64))> = nodes
+        .iter()
+        .flat_map(|node| {
             let rgba = if proposal_mode {
                 (0.898, 0.647, 0.039, 0.55) // amber
             } else {
@@ -331,62 +385,163 @@ fn build_dag_canvas(
                     NodeState::Pending => (0.55, 0.55, 0.60, 0.5),
                 }
             };
-            let emphasized = selected_id == Some(node.id.as_str())
-                || selected_id == Some(dep.as_str());
-            edges.push(EdgeLine {
-                x1: px + pw / 2.0,
-                y1: py + ph,
-                x2: cx + cw / 2.0,
-                y2: cy,
-                rgba,
-                emphasized,
-            });
-        }
-    }
+            node.deps
+                .iter()
+                .map(move |dep| (node.id.clone(), dep.clone(), rgba))
+        })
+        .collect();
     let dim_others = selected_id.is_some();
+    let selected_owned = selected_id.map(str::to_string);
+
+    // Positions shared between layout, the draw func, and drag handlers.
+    let positions: Rc<RefCell<HashMap<String, (f64, f64, f64, f64)>>> =
+        Rc::new(RefCell::new(pos));
 
     let area = gtk4::DrawingArea::new();
     area.set_content_width(canvas_w as i32);
     area.set_content_height(canvas_h as i32);
-    area.set_draw_func(move |_, cr, _, _| {
-        // Unemphasized first so highlighted edges draw on top.
-        for pass in [false, true] {
-            for e in edges.iter().filter(|e| e.emphasized == pass) {
-                let (r, g, b, mut a) = e.rgba;
-                if dim_others && !e.emphasized {
-                    a *= 0.35;
+    {
+        let positions = positions.clone();
+        area.set_draw_func(move |_, cr, _, _| {
+            let positions = positions.borrow();
+            // Unemphasized first so highlighted edges draw on top.
+            for pass in [false, true] {
+                for (child, dep, rgba) in &edge_defs {
+                    let emphasized = selected_owned.as_deref() == Some(child.as_str())
+                        || selected_owned.as_deref() == Some(dep.as_str());
+                    if emphasized != pass {
+                        continue;
+                    }
+                    let (Some(&(cx, cy, cw, _)), Some(&(px, py, pw, ph))) =
+                        (positions.get(child.as_str()), positions.get(dep.as_str()))
+                    else {
+                        continue;
+                    };
+                    let (x1, y1) = (px + pw / 2.0, py + ph);
+                    let (x2, y2) = (cx + cw / 2.0, cy);
+                    let (r, g, b, mut a) = *rgba;
+                    if dim_others && !emphasized {
+                        a *= 0.35;
+                    }
+                    cr.set_source_rgba(r, g, b, a);
+                    cr.set_line_width(if emphasized { 2.6 } else { 1.8 });
+                    let dy = ((y2 - y1) * 0.5).max(12.0);
+                    cr.move_to(x1, y1);
+                    cr.curve_to(x1, y1 + dy, x2, y2 - dy, x2, y2 - 6.0);
+                    let _ = cr.stroke();
+                    // Arrowhead into the downstream chip.
+                    cr.move_to(x2, y2);
+                    cr.line_to(x2 - 4.5, y2 - 7.5);
+                    cr.line_to(x2 + 4.5, y2 - 7.5);
+                    cr.close_path();
+                    let _ = cr.fill();
                 }
-                cr.set_source_rgba(r, g, b, a);
-                cr.set_line_width(if e.emphasized { 2.6 } else { 1.8 });
-                let dy = ((e.y2 - e.y1) * 0.5).max(12.0);
-                cr.move_to(e.x1, e.y1);
-                cr.curve_to(e.x1, e.y1 + dy, e.x2, e.y2 - dy, e.x2, e.y2 - 6.0);
-                let _ = cr.stroke();
-                // Arrowhead into the downstream chip.
-                cr.move_to(e.x2, e.y2);
-                cr.line_to(e.x2 - 4.5, e.y2 - 7.5);
-                cr.line_to(e.x2 + 4.5, e.y2 - 7.5);
-                cr.close_path();
-                let _ = cr.fill();
             }
-        }
-    });
+        });
+    }
 
     let fixed = gtk4::Fixed::new();
     fixed.put(&area, 0.0, 0.0);
     for node in nodes {
-        if let (Some(chip), Some(&(x, y, _, _))) =
-            (chips.get(node.id.as_str()), pos.get(node.id.as_str()))
-        {
+        if let Some(chip) = chips.get(node.id.as_str()) {
+            let (x, y) = positions
+                .borrow()
+                .get(node.id.as_str())
+                .map(|&(x, y, _, _)| (x, y))
+                .unwrap_or((MARGIN, MARGIN));
             fixed.put(chip, x, y);
         }
     }
 
+    // Drag-and-drop node repositioning: claim the sequence once movement
+    // passes a threshold (so plain clicks still toggle the detail card),
+    // move the chip + redraw edges live, persist the position on release.
+    for node in nodes {
+        let Some(chip) = chips.get(node.id.as_str()) else { continue };
+        let drag = gtk4::GestureDrag::new();
+        let origin: Rc<Cell<(f64, f64)>> = Rc::new(Cell::new((0.0, 0.0)));
+        let moved: Rc<Cell<bool>> = Rc::new(Cell::new(false));
+        {
+            let positions = positions.clone();
+            let origin = origin.clone();
+            let moved = moved.clone();
+            let dragging = dragging.clone();
+            let id = node.id.clone();
+            drag.connect_drag_begin(move |_, _, _| {
+                if let Some(&(x, y, _, _)) = positions.borrow().get(id.as_str()) {
+                    origin.set((x, y));
+                }
+                moved.set(false);
+                dragging.set(true);
+            });
+        }
+        {
+            let positions = positions.clone();
+            let origin = origin.clone();
+            let moved = moved.clone();
+            let id = node.id.clone();
+            let fixed = fixed.clone();
+            let chip = chip.clone();
+            let area = area.clone();
+            drag.connect_drag_update(move |g, dx, dy| {
+                if !moved.get() {
+                    if dx * dx + dy * dy < 16.0 {
+                        return; // below threshold: still a click
+                    }
+                    moved.set(true);
+                    g.set_state(gtk4::EventSequenceState::Claimed);
+                }
+                let (ox, oy) = origin.get();
+                let nx = (ox + dx).max(0.0);
+                let ny = (oy + dy).max(0.0);
+                if let Some(p) = positions.borrow_mut().get_mut(id.as_str()) {
+                    p.0 = nx;
+                    p.1 = ny;
+                }
+                fixed.move_(&chip, nx, ny);
+                area.queue_draw();
+            });
+        }
+        {
+            let positions = positions.clone();
+            let moved = moved.clone();
+            let dragging = dragging.clone();
+            let id = node.id.clone();
+            let state = state.clone();
+            let name = graph_name.to_string();
+            drag.connect_drag_end(move |_, _, _| {
+                dragging.set(false);
+                if !moved.get() {
+                    return;
+                }
+                if let Some(&(x, y, _, _)) = positions.borrow().get(id.as_str()) {
+                    if let Err(e) =
+                        goal::graph::update_node_position(&state.shared, &name, &id, x, y)
+                    {
+                        tracing::warn!(node = %id, "could not persist node position: {e}");
+                    }
+                }
+            });
+        }
+        {
+            // A broken grab (popup, workspace switch, touch cancel) emits
+            // `cancel`, not `drag-end` — without this the dragging flag
+            // stays set and the 2 s refresh never runs again.
+            let dragging = dragging.clone();
+            drag.connect_cancel(move |_, _| {
+                dragging.set(false);
+            });
+        }
+        chip.add_controller(drag);
+    }
+
     // Wide DAGs scroll horizontally inside their own strip; the panel body
-    // itself never scrolls sideways.
+    // itself never scrolls sideways. The canvas takes the pane's remaining
+    // vertical space — the graph IS the pane.
     let sw = gtk4::ScrolledWindow::new();
-    sw.set_policy(gtk4::PolicyType::Automatic, gtk4::PolicyType::Never);
-    sw.set_min_content_height(canvas_h as i32);
+    sw.set_policy(gtk4::PolicyType::Automatic, gtk4::PolicyType::Automatic);
+    sw.set_min_content_height((canvas_h as i32).min(420));
+    sw.set_vexpand(true);
     sw.set_child(Some(&fixed));
     sw.upcast()
 }
@@ -465,7 +620,8 @@ fn detail_card(
     facts_label.set_wrap(true);
     card.append(&facts_label);
 
-    // Actions: jump to workspace + Gate 2 verdicts (run mode only).
+    // Actions: jump to workspace, pause/resume the agent, Gate 2 verdicts
+    // (run mode only).
     let actions = gtk4::Box::new(gtk4::Orientation::Horizontal, 6);
     if let Some(ws_id) = node.workspace.filter(|_| !proposal_mode) {
         let open = gtk4::Button::with_label("Open workspace");
@@ -478,6 +634,26 @@ fn detail_card(
             state_c.shared.notify_ui_refresh();
         });
         actions.append(&open);
+    }
+    if let Some(r) = &run {
+        let panel_id = r.panel_id;
+        let is_paused = state.shared.is_hibernated(&panel_id);
+        let btn = gtk4::Button::with_label(if is_paused { "Resume agent" } else { "Pause agent" });
+        btn.set_tooltip_text(Some(if is_paused {
+            "Wake the node's agent process (SIGCONT)"
+        } else {
+            "Freeze the node's agent process (SIGSTOP) — the driver stops nudging it too"
+        }));
+        let state_c = state.clone();
+        btn.connect_clicked(move |_| {
+            if state_c.shared.is_hibernated(&panel_id) {
+                state_c.shared.wake_panel(panel_id);
+            } else {
+                state_c.shared.hibernate_panel(panel_id);
+            }
+            state_c.shared.notify_metadata_refresh();
+        });
+        actions.append(&btn);
     }
     if node.status == NodeState::Review && !proposal_mode {
         if let Some(ws_id) = node.workspace {

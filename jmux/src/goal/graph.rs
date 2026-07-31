@@ -75,6 +75,9 @@ pub struct GraphNode {
     pub branch: Option<String>,
     pub worktree: Option<String>,
     pub detail: Option<String>,
+    /// Manual canvas position (drag-and-drop in the graph panel); None =
+    /// auto-layout.
+    pub pos: Option<(f64, f64)>,
 }
 
 impl Default for GraphNode {
@@ -91,6 +94,7 @@ impl Default for GraphNode {
             branch: None,
             worktree: None,
             detail: None,
+            pos: None,
         }
     }
 }
@@ -118,7 +122,9 @@ pub struct GraphSpec {
     pub group_id: Option<Uuid>,
     /// Only accept a proposal written after this mtime (revise cycles).
     pub min_proposal_mtime: Option<u64>,
-    /// Scheduler-internal wait counter (not persisted meaningfully).
+    /// Scheduler-internal wait counter. Not serialized: it changes every
+    /// tick while waiting, and persisting it would rewrite graph.json 2×/s.
+    #[serde(skip)]
     pub proposal_wait_ticks: u32,
     pub nodes: Vec<GraphNode>,
 }
@@ -299,6 +305,9 @@ struct ProposalNode {
     deps: Vec<String>,
     #[serde(default)]
     runner: Option<String>,
+    /// Manual canvas position (written back by the panel during review).
+    #[serde(default)]
+    pos: Option<(f64, f64)>,
 }
 
 fn valid_node_id(id: &str) -> bool {
@@ -334,12 +343,17 @@ pub fn parse_proposal(path: &Path) -> Result<Vec<GraphNode>, String> {
         if n.goal.trim().is_empty() {
             return Err(format!("node '{}' has an empty goal", n.id));
         }
+        let mut seen_deps: HashSet<&str> = HashSet::new();
         for d in &n.deps {
             if !ids.contains(d.as_str()) {
                 return Err(format!("node '{}' depends on unknown node '{d}'", n.id));
             }
             if d == &n.id {
                 return Err(format!("node '{}' depends on itself", n.id));
+            }
+            // Duplicate deps would also break the Kahn indegree accounting.
+            if !seen_deps.insert(d.as_str()) {
+                return Err(format!("node '{}' lists dep '{d}' twice", n.id));
             }
         }
     }
@@ -385,6 +399,7 @@ pub fn parse_proposal(path: &Path) -> Result<Vec<GraphNode>, String> {
             goal: n.goal,
             deps: n.deps,
             runner: n.runner,
+            pos: n.pos,
             ..GraphNode::default()
         })
         .collect())
@@ -607,6 +622,14 @@ pub fn revise_graph(
     let Some(panel_id) = panel_id else {
         return Err("orchestrator workspace is gone — edit proposal.json directly".into());
     };
+    // Never type into a pane without a live agent — an idle shell would
+    // execute the prompt.
+    if !crate::session::claude_resume::all_local_claude_cwds().contains_key(&panel_id) {
+        return Err(
+            "the orchestrator agent is not running — edit proposal.json directly, then approve"
+                .into(),
+        );
+    }
     let prompt = format!(
         "Revision requested: {note}\nUpdate {} (and the .md rendering) \
          accordingly — same JSON schema — then reply with a short summary and stop.",
@@ -645,18 +668,22 @@ pub fn resume_graph(shared: &Arc<SharedState>, name: &str) -> Result<serde_json:
              run: jmux graph approve {name}"
         ));
     }
+    let mut merge_retries: Vec<String> = Vec::new();
     for n in &mut spec.nodes {
         if n.status == NodeState::Interrupted {
             n.status = NodeState::Pending;
             n.detail = None;
         }
-        // Merge-pending blocks are retried by the scheduler.
+        // Merge-pending blocks are retried right now (nothing else in the
+        // scheduler ever re-drives a blocked node).
         if n.status == NodeState::Blocked
             && n.detail.as_deref().is_some_and(|d| d.starts_with("merge"))
         {
-            n.status = NodeState::Review;
-            n.detail = Some("retrying merge".into());
+            merge_retries.push(n.id.clone());
         }
+    }
+    for id in &merge_retries {
+        finish_node(shared, spec, id);
     }
     spec.status = GraphState::Running;
     save_graph(spec);
@@ -665,6 +692,16 @@ pub fn resume_graph(shared: &Arc<SharedState>, name: &str) -> Result<serde_json:
 
 pub fn stop_graph(shared: &Arc<SharedState>, name: &str) -> Result<serde_json::Value, String> {
     let result = set_graph_state(shared, name, GraphState::Stopped)?;
+    // Terminate the graph's goal runs so the driver stops nudging agents of
+    // a stopped graph toward goals nobody wants any more.
+    {
+        let mut goals = lock_or_recover(&shared.goals);
+        for run in goals.values_mut() {
+            if run.graph.as_ref().is_some_and(|l| l.graph == name) && !run.status.is_terminal() {
+                run.status = super::GoalStatus::Blocked("graph stopped".into());
+            }
+        }
+    }
     // Remove the graph's sidebar group if nothing lives in it any more —
     // stopped test runs otherwise leave zombie group headers behind.
     let group_id = lock_or_recover(&shared.graphs)
@@ -711,6 +748,60 @@ pub fn graph_status(shared: &Arc<SharedState>, name: Option<&str>) -> Result<ser
     }
 }
 
+/// Write `path` WITHOUT advancing its mtime. The Proposing→Proposed gate
+/// keys on orchestrator-written proposal mtimes (`min_proposal_mtime`);
+/// panel edits (goal text, drag positions) must not trip it — a pre-revision
+/// proposal touched by a drag would otherwise be accepted as the revision.
+fn write_preserving_mtime(path: &Path, contents: &str) -> Result<(), String> {
+    let prev = std::fs::metadata(path).and_then(|m| m.modified()).ok();
+    std::fs::write(path, contents).map_err(|e| format!("cannot write {path:?}: {e}"))?;
+    if let Some(t) = prev {
+        if let Ok(f) = std::fs::OpenOptions::new().write(true).open(path) {
+            let _ = f.set_modified(t);
+        }
+    }
+    Ok(())
+}
+
+/// Persist a node's dragged canvas position. Approved nodes store it in
+/// graph.json; during review it's written into proposal.json (and carried
+/// across approve, which parses it back out).
+pub fn update_node_position(
+    shared: &Arc<SharedState>,
+    name: &str,
+    node_id: &str,
+    x: f64,
+    y: f64,
+) -> Result<(), String> {
+    let mut registry = lock_or_recover(&shared.graphs);
+    let spec = registry
+        .get_mut(name)
+        .ok_or_else(|| format!("unknown graph '{name}'"))?;
+    if let Some(node) = spec.node_mut(node_id) {
+        node.pos = Some((x, y));
+        save_graph(spec);
+        return Ok(());
+    }
+    // Review gate: the node lives only in proposal.json.
+    let path = spec.proposal_json();
+    drop(registry);
+    let text = std::fs::read_to_string(&path).map_err(|e| format!("cannot read proposal: {e}"))?;
+    let mut v: serde_json::Value =
+        serde_json::from_str(&text).map_err(|e| format!("proposal.json is invalid: {e}"))?;
+    let node = v
+        .get_mut("nodes")
+        .and_then(|n| n.as_array_mut())
+        .and_then(|nodes| {
+            nodes
+                .iter_mut()
+                .find(|n| n.get("id").and_then(|i| i.as_str()) == Some(node_id))
+        })
+        .ok_or_else(|| format!("node '{node_id}' not found"))?;
+    node["pos"] = serde_json::json!([x, y]);
+    let out = serde_json::to_string_pretty(&v).map_err(|e| e.to_string())?;
+    write_preserving_mtime(&path, &out)
+}
+
 /// Edit a proposed node's goal text in `proposal.json` (in-panel review,
 /// pre-approval). Approve re-reads the file, so the edit always counts.
 pub fn update_proposal_node(
@@ -744,8 +835,7 @@ pub fn update_proposal_node(
         .ok_or_else(|| format!("node '{node_id}' not found in proposal"))?;
     node["goal"] = serde_json::Value::String(goal_text.to_string());
     let out = serde_json::to_string_pretty(&v).map_err(|e| e.to_string())?;
-    std::fs::write(&path, out).map_err(|e| format!("cannot write proposal: {e}"))?;
-    Ok(())
+    write_preserving_mtime(&path, &out)
 }
 
 /// Edit a node's goal text (UI detail card). Applies to future launches and
@@ -817,19 +907,25 @@ pub fn scheduler_tick(state: &Rc<AppState>) {
 }
 
 fn process_graph(shared: &Arc<SharedState>, name: &str) {
-    let Some(mut spec) = lock_or_recover(&shared.graphs).get(name).cloned() else {
+    // Mutate IN PLACE under the registry lock. A clone → mutate → write-back
+    // window would silently revert any socket/UI mutation that landed while
+    // the tick ran (approve, goal.accept, pause/stop, dragged node
+    // positions) and then persist the stale state to graph.json. Handlers
+    // block briefly on the mutex instead. Lock order here and everywhere:
+    // graphs → goals → tab_manager.
+    let mut registry = lock_or_recover(&shared.graphs);
+    let Some(spec) = registry.get_mut(name) else {
         return;
     };
-    let before = serde_json::to_string(&spec).unwrap_or_default();
+    let before = serde_json::to_string(&*spec).unwrap_or_default();
     match spec.status {
-        GraphState::Proposing => tick_proposing(shared, &mut spec),
-        GraphState::Running => tick_running(shared, &mut spec),
+        GraphState::Proposing => tick_proposing(shared, spec),
+        GraphState::Running => tick_running(shared, spec),
         _ => return,
     }
-    let after = serde_json::to_string(&spec).unwrap_or_default();
+    let after = serde_json::to_string(&*spec).unwrap_or_default();
     if before != after {
-        save_graph(&spec);
-        lock_or_recover(&shared.graphs).insert(name.to_string(), spec);
+        save_graph(spec);
     }
 }
 
@@ -1141,17 +1237,22 @@ fn launch_node(shared: &Arc<SharedState>, spec: &mut GraphSpec, node_id: &str) -
     let (cwd, branch, worktree) = if spec.use_worktrees {
         let wt = format!("{}-worktrees/{}", spec.base_cwd.trim_end_matches('/'), node_id);
         let branch = format!("graph/{}/{}", spec.name, node_id);
-        if !Path::new(&wt).exists() {
-            if let Some(parent) = Path::new(&wt).parent() {
-                std::fs::create_dir_all(parent)
-                    .map_err(|e| format!("cannot create worktrees dir: {e}"))?;
-            }
-            git(
-                &spec.base_cwd,
-                &["worktree", "add", "-B", &branch, &wt, "HEAD"],
-            )
-            .map_err(|e| format!("git worktree add failed: {e}"))?;
+        if Path::new(&wt).exists() {
+            // A previous run's worktree — recreate it fresh. Reusing the
+            // stale branch/dirty tree would resurrect old work into the
+            // eventual merge.
+            let _ = git(&spec.base_cwd, &["worktree", "remove", "--force", &wt]);
+            let _ = std::fs::remove_dir_all(&wt);
         }
+        if let Some(parent) = Path::new(&wt).parent() {
+            std::fs::create_dir_all(parent)
+                .map_err(|e| format!("cannot create worktrees dir: {e}"))?;
+        }
+        git(
+            &spec.base_cwd,
+            &["worktree", "add", "-B", &branch, &wt, "HEAD"],
+        )
+        .map_err(|e| format!("git worktree add failed: {e}"))?;
         (wt.clone(), Some(branch), Some(wt))
     } else {
         (spec.base_cwd.clone(), None, None)

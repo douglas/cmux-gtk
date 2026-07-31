@@ -1061,10 +1061,24 @@ fn run_goal(cli: &Cli) -> anyhow::Result<()> {
                 ("goal.status", serde_json::json!({"workspace": workspace}))
             }
             GoalCommands::Continue { workspace } => {
-                ("goal.continue", serde_json::json!({"workspace": workspace}))
+                let ws = workspace
+                    .clone()
+                    .or_else(|| std::env::var("JMUX_WORKSPACE_ID").ok());
+                let Some(ws) = ws else {
+                    eprintln!("goal continue: no workspace — pass one or run inside a jmux pane");
+                    std::process::exit(1);
+                };
+                ("goal.continue", serde_json::json!({"workspace": ws}))
             }
             GoalCommands::Accept { workspace } => {
-                ("goal.accept", serde_json::json!({"workspace": workspace}))
+                let ws = workspace
+                    .clone()
+                    .or_else(|| std::env::var("JMUX_WORKSPACE_ID").ok());
+                let Some(ws) = ws else {
+                    eprintln!("goal accept: no workspace — pass one or run inside a jmux pane");
+                    std::process::exit(1);
+                };
+                ("goal.accept", serde_json::json!({"workspace": ws}))
             }
         };
         let response = rpc::send_request(&cli.socket, method, params, cli.window.as_deref())?;

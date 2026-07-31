@@ -431,7 +431,14 @@ fn drive_one(state: &Rc<AppState>, ws_id: Uuid, settings: &crate::settings::Goal
         None => {}
     }
 
-    // 2) Wall-clock cap.
+    // 2) Paused (hibernated) agent: the human froze it on purpose — no
+    //    wall clock, no nudging, nothing until it's resumed. (Completion
+    //    via the file check above still counts.)
+    if state.shared.is_hibernated(&run.panel_id) {
+        return;
+    }
+
+    // 3) Wall-clock cap.
     if run.wall_clock_minutes > 0
         && epoch_now().saturating_sub(run.started_epoch) > u64::from(run.wall_clock_minutes) * 60
     {
@@ -447,11 +454,8 @@ fn drive_one(state: &Rc<AppState>, ws_id: Uuid, settings: &crate::settings::Goal
         return;
     }
 
-    // 3) Screen-state driving (claude runners only; others are poll-only).
+    // 4) Screen-state driving (claude runners only; others are poll-only).
     if !state_detection_is_claude(&run.runner) {
-        return;
-    }
-    if state.shared.is_hibernated(&run.panel_id) {
         return;
     }
     let (text, raw_title) = {
@@ -665,10 +669,13 @@ fn escalate(state: &Rc<AppState>, ws_id: Uuid, status: GoalStatus, message: &str
         let mut goals = lock_or_recover(&state.shared.goals);
         if let Some(run) = goals.get_mut(&ws_id) {
             // Re-escalating the same state repeatedly is the flood case the
-            // rate limit exists for.
-            if run.status != status || now.saturating_sub(run.last_escalation_epoch) >= ESCALATION_MIN_SECS
-            {
-                should_notify = now.saturating_sub(run.last_escalation_epoch) >= ESCALATION_MIN_SECS;
+            // rate limit exists for. A transition into a TERMINAL state
+            // always notifies, though — the run leaves the driver's tick
+            // filter, so a suppressed notification would never re-fire.
+            let rate_ok = now.saturating_sub(run.last_escalation_epoch) >= ESCALATION_MIN_SECS;
+            let entering_terminal = status.is_terminal() && !run.status.is_terminal();
+            if run.status != status || rate_ok {
+                should_notify = rate_ok || entering_terminal;
                 run.status = status;
                 if should_notify {
                     run.last_escalation_epoch = now;
@@ -708,6 +715,29 @@ pub fn advance_iteration(
         .get(&ws_id)
         .cloned()
         .ok_or_else(|| "no goal registered for that workspace".to_string())?;
+    // Guard: the current iteration must have actually finished — a
+    // double-fired continue would bump the counter past the file the agent
+    // was told to write and the driver would poll a file that never comes.
+    if parse_iteration_file(&run.output_abs(run.iteration))
+        .flatten()
+        .is_none()
+    {
+        return Err(format!(
+            "iteration {} has no finished iteration file yet",
+            run.iteration
+        ));
+    }
+    // Guard: never type into a pane without a live agent — an idle shell
+    // would EXECUTE the prompt (same rule as the nudge path). Claude
+    // runners only; custom runners have no process fingerprint to check.
+    if state_detection_is_claude(&run.runner) {
+        let live = crate::session::claude_resume::all_local_claude_cwds();
+        if !live.contains_key(&run.panel_id) {
+            return Err(
+                "the agent process is not running in that pane — resume it first".into(),
+            );
+        }
+    }
     let next = run.iteration + 1;
     let prev_rel = run.output_rel(run.iteration);
     let next_rel = run.output_rel(next);

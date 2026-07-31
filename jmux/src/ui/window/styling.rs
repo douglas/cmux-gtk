@@ -372,6 +372,19 @@ pub(super) fn install_css() {
         }
         .graph-chip-pending     { opacity: 0.55; }
         .graph-chip-proposed    { border-color: alpha(#e5a50a, 0.65); }
+
+        /* Node whose agent is waiting on the human — pulsing amber glow. */
+        @keyframes graph-attention-pulse {
+            0%   { box-shadow: 0 0 2px alpha(#e5a50a, 0.35); }
+            50%  { box-shadow: 0 0 10px alpha(#e5a50a, 0.85); }
+            100% { box-shadow: 0 0 2px alpha(#e5a50a, 0.35); }
+        }
+        .graph-chip-attention {
+            border-color: #e5a50a;
+            animation: graph-attention-pulse 1.4s ease-in-out infinite;
+        }
+        /* Paused (hibernated) agent. */
+        .graph-chip-paused { opacity: 0.7; }
         .graph-chip-running     { border-color: alpha(#3584e4, 0.8); }
         .graph-chip-review      { border-color: alpha(#e5a50a, 0.8); }
         .graph-chip-done        { border-color: alpha(#33d17a, 0.7); }

@@ -207,14 +207,14 @@ pub enum GoalCommands {
     /// Reviewer verdict: run another iteration (seeded with the current
     /// iteration file's feedback — edit section 4 first to steer it)
     Continue {
-        /// Goal workspace UUID
-        workspace: String,
+        /// Goal workspace UUID (default: $JMUX_WORKSPACE_ID)
+        workspace: Option<String>,
     },
     /// Reviewer verdict: accept the current iteration as final
     /// (graph nodes merge + unblock dependents)
     Accept {
-        /// Goal workspace UUID
-        workspace: String,
+        /// Goal workspace UUID (default: $JMUX_WORKSPACE_ID)
+        workspace: Option<String>,
     },
 }
 
