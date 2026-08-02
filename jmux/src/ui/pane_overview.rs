@@ -243,8 +243,13 @@ fn build_tile(
 
     let panel_id = tile.panel_id;
     let state = Rc::clone(state);
-    let dialog = dialog.clone();
+    // WEAK: the button is a descendant of the dialog — a strong capture
+    // leaked the whole overview (and kept its sprite timers alive) per open.
+    let dialog = dialog.downgrade();
     button.connect_clicked(move |_| {
+        let Some(dialog) = dialog.upgrade() else {
+            return;
+        };
         {
             let mut tm = lock_or_recover(&state.shared.tab_manager);
             tm.select_by_id(workspace_id);

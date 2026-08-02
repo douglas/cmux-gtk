@@ -448,8 +448,15 @@ fn build_tab_button(
     let rename_action = gio::SimpleAction::new("rename", None);
     {
         let state = Rc::clone(state);
-        let tab_ref = tab.clone();
+        // WEAK: this action lives in the group inserted on `tab` itself — a
+        // strong capture is a tab → group → action → closure → tab cycle
+        // that leaked the tab (and, via its click closure, the whole pane
+        // stack with every panel subtree) on every layout rebuild.
+        let tab_ref = tab.downgrade();
         rename_action.connect_activate(move |_, _| {
+            let Some(tab_ref) = tab_ref.upgrade() else {
+                return;
+            };
             let root = tab_ref.root();
             let window = root
                 .as_ref()
@@ -512,10 +519,15 @@ fn build_tab_button(
     let click = gtk4::GestureClick::new();
     click.set_button(1);
     {
-        let stack = stack.clone();
+        // WEAK: defensive — if the tab ever outlives a rebuild, a strong
+        // stack capture would pin every page (all panel subtrees) with it.
+        let stack = stack.downgrade();
         let state = Rc::clone(state);
         let close_btn_ref = close_btn.clone();
         click.connect_pressed(move |gesture, _n, x, _y| {
+            let Some(stack) = stack.upgrade() else {
+                return;
+            };
             // Don't steal clicks from the close button — compare x against
             // the tab's total width minus the close button's width.
             let Some(tab_widget) = gesture.widget() else {

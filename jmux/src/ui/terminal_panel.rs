@@ -42,7 +42,6 @@ pub fn hide_vim_badge(panel_id: Uuid) {
 }
 
 /// Remove a vim badge (cleanup when panel is destroyed).
-#[allow(dead_code)]
 pub fn unregister_vim_badge(panel_id: &Uuid) {
     VIM_BADGES.with(|map| {
         map.borrow_mut().remove(panel_id);

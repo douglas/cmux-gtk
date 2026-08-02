@@ -374,6 +374,17 @@ pub fn start_driver(state: Rc<AppState>) {
 /// states), then every non-terminal goal run.
 fn tick(state: &Rc<AppState>) {
     graph::scheduler_tick(state);
+    // Purge terminal runs whose workspace is gone — they're invisible to
+    // the driver (filtered below) and to status queries by workspace, so
+    // without this the registry only ever grows.
+    {
+        let live: std::collections::HashSet<Uuid> = {
+            let tm = lock_or_recover(&state.shared.tab_manager);
+            tm.iter().map(|ws| ws.id).collect()
+        };
+        lock_or_recover(&state.shared.goals)
+            .retain(|ws_id, run| !run.status.is_terminal() || live.contains(ws_id));
+    }
     let goal_ids: Vec<Uuid> = {
         let goals = lock_or_recover(&state.shared.goals);
         goals

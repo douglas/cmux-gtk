@@ -52,7 +52,8 @@ pub fn create_graph_widget(
 
     let selection: Selection = Rc::new(RefCell::new(None));
     let dragging: Rc<Cell<bool>> = Rc::new(Cell::new(false));
-    rebuild(&content, graph_name, state, &selection, &dragging);
+    let last_sig: Rc<Cell<u64>> = Rc::new(Cell::new(0));
+    rebuild(&content, graph_name, state, &selection, &dragging, &last_sig);
 
     // Live refresh while the widget is alive — but never while the user is
     // typing into a TextView inside this panel (goal editor) or dragging a
@@ -62,6 +63,7 @@ pub fn create_graph_widget(
     let name_tick = graph_name.to_string();
     let selection_tick = selection.clone();
     let dragging_tick = dragging.clone();
+    let last_sig_tick = last_sig.clone();
     glib::timeout_add_local(std::time::Duration::from_millis(2000), move || {
         let Some(content) = weak.upgrade() else {
             return glib::ControlFlow::Break;
@@ -69,7 +71,14 @@ pub fn create_graph_widget(
         if text_editor_focused(&content) || dragging_tick.get() {
             return glib::ControlFlow::Continue;
         }
-        rebuild(&content, &name_tick, &state_tick, &selection_tick, &dragging_tick);
+        rebuild(
+            &content,
+            &name_tick,
+            &state_tick,
+            &selection_tick,
+            &dragging_tick,
+            &last_sig_tick,
+        );
         glib::ControlFlow::Continue
     });
 
@@ -90,13 +99,53 @@ fn rebuild(
     state: &Rc<AppState>,
     selection: &Selection,
     dragging: &Rc<Cell<bool>>,
+    last_sig: &Rc<Cell<u64>>,
 ) {
-    while let Some(child) = content.first_child() {
-        content.remove(&child);
-    }
     let spec = lock_or_recover(&state.shared.graphs)
         .get(graph_name)
         .cloned();
+
+    // Skip the teardown/rebuild when nothing rendered has changed —
+    // rebuilding a full widget tree (DrawingArea backing included) every
+    // 2 s is pure churn, and churn is what leaks amplify.
+    let sig = {
+        use std::hash::{Hash, Hasher};
+        let mut h = std::collections::hash_map::DefaultHasher::new();
+        match &spec {
+            Some(s) => {
+                serde_json::to_string(s).unwrap_or_default().hash(&mut h);
+                let goals = lock_or_recover(&state.shared.goals);
+                for node in &s.nodes {
+                    if let Some(run) = node.workspace.and_then(|ws| goals.get(&ws)) {
+                        run.status.as_str().hash(&mut h);
+                        run.status.detail().hash(&mut h);
+                        run.iteration.hash(&mut h);
+                        run.nudges_sent.hash(&mut h);
+                        state.shared.is_hibernated(&run.panel_id).hash(&mut h);
+                    }
+                }
+                // Review gate renders straight from proposal.json.
+                if matches!(s.status, GraphState::Proposing | GraphState::Proposed) {
+                    let meta = std::fs::metadata(s.proposal_json()).ok();
+                    meta.as_ref().map(|m| m.len()).hash(&mut h);
+                    meta.and_then(|m| m.modified().ok())
+                        .map(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                        .hash(&mut h);
+                }
+            }
+            None => 0u8.hash(&mut h),
+        }
+        selection.borrow().hash(&mut h);
+        h.finish()
+    };
+    if last_sig.get() == sig && content.first_child().is_some() {
+        return;
+    }
+    last_sig.set(sig);
+
+    while let Some(child) = content.first_child() {
+        content.remove(&child);
+    }
     let Some(spec) = spec else {
         let label = gtk4::Label::new(Some(&format!("graph '{graph_name}' is not loaded")));
         label.add_css_class("dim-label");
@@ -173,6 +222,7 @@ fn rebuild(
             selection,
             content,
             dragging,
+            last_sig,
         ));
     }
 
@@ -202,6 +252,7 @@ fn build_dag_canvas(
     selection: &Selection,
     content: &gtk4::Box,
     dragging: &Rc<Cell<bool>>,
+    last_sig: &Rc<Cell<u64>>,
 ) -> gtk4::Widget {
     use std::collections::HashMap;
 
@@ -275,6 +326,7 @@ fn build_dag_canvas(
             let id = node.id.clone();
             let weak = content.downgrade();
             let dragging = dragging.clone();
+            let last_sig = last_sig.clone();
             chip.connect_clicked(move |_| {
                 {
                     let mut sel = selection.borrow_mut();
@@ -285,7 +337,7 @@ fn build_dag_canvas(
                     };
                 }
                 if let Some(content) = weak.upgrade() {
-                    rebuild(&content, &name, &state, &selection, &dragging);
+                    rebuild(&content, &name, &state, &selection, &dragging, &last_sig);
                 }
             });
         }
@@ -480,9 +532,14 @@ fn build_dag_canvas(
             let origin = origin.clone();
             let moved = moved.clone();
             let id = node.id.clone();
-            let fixed = fixed.clone();
-            let chip = chip.clone();
-            let area = area.clone();
+            // WEAK widget refs only: this closure is owned by a controller
+            // attached to `chip`, and `fixed` is `chip`'s ancestor — strong
+            // captures form a GObject reference cycle that immortalizes the
+            // whole canvas (DrawingArea backing included) on every rebuild.
+            // That cycle was the 47 GB OOM.
+            let fixed = fixed.downgrade();
+            let chip = chip.downgrade();
+            let area = area.downgrade();
             drag.connect_drag_update(move |g, dx, dy| {
                 if !moved.get() {
                     if dx * dx + dy * dy < 16.0 {
@@ -491,6 +548,11 @@ fn build_dag_canvas(
                     moved.set(true);
                     g.set_state(gtk4::EventSequenceState::Claimed);
                 }
+                let (Some(fixed), Some(chip), Some(area)) =
+                    (fixed.upgrade(), chip.upgrade(), area.upgrade())
+                else {
+                    return;
+                };
                 let (ox, oy) = origin.get();
                 let nx = (ox + dx).max(0.0);
                 let ny = (oy + dy).max(0.0);

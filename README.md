@@ -49,6 +49,22 @@ prompt but the lookup times out.
 
 ---
 
+### Crash resilience
+
+jmux autosaves session structure every 8 s (off the main loop) and a memory
+watchdog force-saves the *full* session — scrollback included — if RSS ever
+climbs past 4 GB, so even an OOM kill lands after a fresh save. On restart,
+layouts and scrollback restore and agent panes relaunch via `claude
+--resume`. To have systemd bring the UI back automatically after a crash,
+add a drop-in for the autostart unit:
+
+```ini
+# ~/.config/systemd/user/app-com.jacobbriggs.jmux@autostart.service.d/50-restart.conf
+[Service]
+Restart=on-failure
+RestartSec=3
+```
+
 ## Highlights
 
 ### Goal & Graph — autonomous agent loops with human gates

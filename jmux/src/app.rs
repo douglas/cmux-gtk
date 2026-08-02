@@ -263,6 +263,9 @@ impl AppState {
         }
 
         self.terminal_cache.borrow_mut().remove(&panel_id);
+        crate::ui::terminal_panel::unregister_vim_badge(&panel_id);
+        crate::ui::textbox::unregister(&panel_id);
+        lock_or_recover(&self.shared.hibernated_panels).remove(&panel_id);
         crate::ui::window::request_terminal_focus();
         self.shared.notify_ui_refresh();
         tracing::debug!(%panel_id, process_alive, "closed terminal panel");

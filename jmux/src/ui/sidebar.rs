@@ -244,16 +244,28 @@ pub fn refresh_sidebar(list_box: &gtk4::ListBox, state: &Rc<AppState>) {
     // dropped clicks that landed while the rows were being torn down). On the
     // unchanged path we move the highlight in place instead (see below).
     let signature = {
-        use std::hash::{Hash, Hasher};
+        use std::hash::Hasher;
+        // Stream Debug output straight into the hasher — the old
+        // format!("{ws:?}") built multi-MB temporary strings (a Workspace's
+        // Debug includes log entries and metadata blocks) up to 5×/s while
+        // an agent's title spinner was animating.
+        struct HashWriter<'a, H: Hasher>(&'a mut H);
+        impl<H: Hasher> std::fmt::Write for HashWriter<'_, H> {
+            fn write_str(&mut self, s: &str) -> std::fmt::Result {
+                self.0.write(s.as_bytes());
+                Ok(())
+            }
+        }
+        use std::fmt::Write as _;
         let tab_manager = lock_or_recover(&state.shared.tab_manager);
         let mut h = std::collections::hash_map::DefaultHasher::new();
         for ws in tab_manager.iter() {
-            format!("{ws:?}").hash(&mut h);
+            let _ = write!(HashWriter(&mut h), "{ws:?}");
         }
         for group in tab_manager.groups() {
-            format!("{group:?}").hash(&mut h);
+            let _ = write!(HashWriter(&mut h), "{group:?}");
         }
-        format!("{:?}", crate::settings::load().sidebar).hash(&mut h);
+        let _ = write!(HashWriter(&mut h), "{:?}", crate::settings::load().sidebar);
         h.finish()
     };
     let key = list_box.as_ptr() as usize;
@@ -2244,10 +2256,16 @@ fn build_color_swatch_grid(
             btn.add_css_class(&format!("color-swatch-{key}"));
         }
         let action = action_for(key);
-        let popover = popover.clone();
+        // WEAK: this grid is a child of the popover — a strong capture in a
+        // closure owned by the grid's own button is a GObject cycle that
+        // leaked the whole popover subtree on every sidebar rebuild (up to
+        // 5×/s while an agent's title spinner runs).
+        let popover = popover.downgrade();
         btn.connect_clicked(move |b| {
             let _ = b.activate_action(&action, None);
-            popover.popdown();
+            if let Some(popover) = popover.upgrade() {
+                popover.popdown();
+            }
         });
         flow.append(&btn);
     }

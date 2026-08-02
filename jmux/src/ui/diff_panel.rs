@@ -285,9 +285,15 @@ fn attach_comment_handler(text_view: &gtk4::TextView, dir: &str, rerender: impl 
     let gesture = gtk4::GestureClick::new();
     gesture.set_button(3);
     let dir = dir.to_string();
-    let tv = text_view.clone();
+    // WEAK: the gesture is attached to the text view — a strong capture is a
+    // textview → gesture → closure → textview cycle that leaked the whole
+    // rendered diff buffer per rebuild.
+    let tv = text_view.downgrade();
     let rerender = Rc::new(rerender);
     gesture.connect_pressed(move |gesture, _n, x, y| {
+        let Some(tv) = tv.upgrade() else {
+            return;
+        };
         let (bx, by) =
             tv.window_to_buffer_coords(gtk4::TextWindowType::Widget, x as i32, y as i32);
         let Some(iter) = tv.iter_at_location(bx, by) else {

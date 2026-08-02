@@ -338,12 +338,19 @@ pub fn create_notes_widget(
     plus.add_css_class("flat");
     plus.set_tooltip_text(Some("New note"));
     {
-        let notebook = notebook.clone();
+        // WEAK: the "+" button is the notebook's action widget — strong
+        // captures here (and in the per-item closures, which live inside a
+        // popover parented to this button) cycle back to the notebook and
+        // leaked the whole notes subtree per rebuild.
+        let notebook = notebook.downgrade();
         let reserved = reserved.clone();
         let scope_infos = scope_infos.clone();
         plus.connect_clicked(move |btn| {
+            let Some(strong_notebook) = notebook.upgrade() else {
+                return;
+            };
             if scope_infos.len() == 1 {
-                new_note_in(&notebook, &scope_infos[0], &reserved);
+                new_note_in(&strong_notebook, &scope_infos[0], &reserved);
                 return;
             }
             // Multiple scopes — let the user pick which group to add to.
@@ -360,18 +367,32 @@ pub fn create_notes_widget(
                 let item = gtk4::Button::new();
                 item.set_child(Some(&row));
                 item.add_css_class("flat");
-                let notebook = notebook.clone();
+                let notebook = strong_notebook.downgrade();
                 let reserved = reserved.clone();
                 let si = si.clone();
-                let popover_w = popover.clone();
+                let popover_w = popover.downgrade();
                 item.connect_clicked(move |_| {
-                    new_note_in(&notebook, &si, &reserved);
-                    popover_w.popdown();
+                    if let Some(nb) = notebook.upgrade() {
+                        new_note_in(&nb, &si, &reserved);
+                    }
+                    if let Some(p) = popover_w.upgrade() {
+                        p.popdown();
+                    }
                 });
                 vbox.append(&item);
             }
             popover.set_child(Some(&vbox));
             popover.set_parent(btn);
+            // The popover is parented to the button and would otherwise
+            // accumulate one instance per click for the button's lifetime.
+            popover.connect_closed(|p| {
+                let weak = p.downgrade();
+                glib::idle_add_local_once(move || {
+                    if let Some(p) = weak.upgrade() {
+                        p.unparent();
+                    }
+                });
+            });
             popover.popup();
         });
     }
@@ -468,11 +489,16 @@ fn build_tab_label(
     }
 
     let apply_rename = {
-        let label = label.clone();
-        let entry = entry.clone();
+        // WEAK: this Rc is held by signal handlers ON the entry itself —
+        // strong entry/label captures pinned them (and the tab) forever.
+        let label = label.downgrade();
+        let entry = entry.downgrade();
         let path_ref = path_ref.clone();
         let reserved = reserved.clone();
         Rc::new(move || {
+            let (Some(label), Some(entry)) = (label.upgrade(), entry.upgrade()) else {
+                return;
+            };
             entry.set_visible(false);
             label.set_visible(true);
             let Some(name) = sanitize_filename(&entry.text()) else {
@@ -555,16 +581,18 @@ fn build_note_editor_inner(
     // Debounced auto-save: write when there's content, delete when emptied.
     let pending = Rc::new(Cell::new(false));
     {
-        let buffer_w = buffer.clone();
         let path_ref = path_ref.clone();
         let status = status.clone();
         let pending = pending.clone();
-        buffer.connect_changed(move |_| {
+        // The buffer arrives as the signal argument — capturing it strongly
+        // would be a buffer → signal → closure → buffer cycle (every note's
+        // text immortal per rebuild).
+        buffer.connect_changed(move |buf| {
             status.set_text("editing…");
             if pending.replace(true) {
                 return;
             }
-            let buffer_w = buffer_w.clone();
+            let buffer_w = buf.clone();
             let path_ref = path_ref.clone();
             let status = status.clone();
             let pending = pending.clone();
@@ -590,8 +618,11 @@ fn build_note_editor_inner(
         let buffer_w = buffer.clone();
         let path_ref = path_ref.clone();
         let reserved = reserved.clone();
-        let notebook = notebook.clone();
-        let editor = container.clone();
+        // WEAK: this controller sits on the text view, a descendant of both
+        // the editor container and the notebook — strong captures pinned the
+        // whole notebook subtree per rebuild.
+        let notebook = notebook.downgrade();
+        let editor = container.downgrade();
         let focus = gtk4::EventControllerFocus::new();
         focus.connect_leave(move |_| {
             let text = buffer_text(&buffer_w);
@@ -606,6 +637,10 @@ fn build_note_editor_inner(
                 let notebook = notebook.clone();
                 let editor = editor.clone();
                 glib::idle_add_local_once(move || {
+                    let (Some(notebook), Some(editor)) = (notebook.upgrade(), editor.upgrade())
+                    else {
+                        return;
+                    };
                     if notebook.n_pages() > 1 {
                         if let Some(n) = notebook.page_num(&editor) {
                             notebook.remove_page(Some(n));

@@ -175,9 +175,15 @@ pub fn create_markdown_widget(
     }
     // Ctrl +/-/0 keyboard zoom on the panel.
     {
-        let wv = web_view.clone();
+        // WEAK: the controller is attached to the web view itself — a strong
+        // capture is a webview → controller → closure → webview cycle that
+        // leaked a whole WebKit WebView per rebuild.
+        let wv = web_view.downgrade();
         let key_controller = gtk4::EventControllerKey::new();
         key_controller.connect_key_pressed(move |_, keyval, _, modifier| {
+            let Some(wv) = wv.upgrade() else {
+                return glib::Propagation::Proceed;
+            };
             if !modifier.contains(gdk4::ModifierType::CONTROL_MASK) {
                 return glib::Propagation::Proceed;
             }

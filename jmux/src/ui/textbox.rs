@@ -69,10 +69,15 @@ pub fn create_textbox(panel_id: Uuid, state: &Rc<AppState>) -> gtk4::Widget {
     container.append(&send_btn);
 
     // Send helper: paste the composed text + Enter into the terminal, then clear.
+    // WEAK text_view: a copy of this closure is held by the key controller
+    // ON the text view — a strong capture is a cycle.
     let send = {
         let state = Rc::clone(state);
-        let text_view = text_view.clone();
+        let text_view = text_view.downgrade();
         move || {
+            let Some(text_view) = text_view.upgrade() else {
+                return;
+            };
             let buffer = text_view.buffer();
             let (start, end) = buffer.bounds();
             let text = buffer.text(&start, &end, false).to_string();
@@ -130,4 +135,11 @@ pub fn create_textbox(panel_id: Uuid, state: &Rc<AppState>) -> gtk4::Widget {
     }
 
     container.upcast()
+}
+
+/// Drop a closed panel's composer entry (called from `close_panel`).
+pub fn unregister(panel_id: &Uuid) {
+    TEXTBOXES.with(|m| {
+        m.borrow_mut().remove(panel_id);
+    });
 }
