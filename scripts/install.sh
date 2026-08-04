@@ -42,6 +42,16 @@ else
 fi
 
 install -Dm755 "$REL/jmux-app" "$PREFIX/bin/jmux-app"
+
+# Bundled runtime libraries (vendored ghostty + friends). The binary's rpath
+# prefers $ORIGIN/../lib/jmux, so these — not any system copy from an old
+# package — are what the loader resolves. Skipping this step would silently
+# fall back to /usr/lib versions with long-fixed bugs.
+dest_lib="$PREFIX/lib/jmux"
+mkdir -p "$dest_lib"
+for so in "$REL"/libghostty.so "$REL"/libghostty-vt.so* "$REL"/libglad.so; do
+  [[ -e "$so" ]] && install -Dm755 "$so" "$dest_lib/$(basename "$so")"
+done
 # Bash CLI wrapper is the canonical `jmux` (matches the in-terminal PATH prepend).
 install -Dm755 "$REPO_ROOT/jmux/bin/jmux" "$PREFIX/bin/jmux"
 # Typed Rust CLI client (optional companion).

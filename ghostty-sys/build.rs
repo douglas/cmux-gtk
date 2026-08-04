@@ -180,6 +180,13 @@ pub fn main() !void {
 
     println!("cargo:rustc-link-search=native={}", lib_dir.display());
     println!("cargo:rustc-link-lib=dylib=glad");
+    // NOTE: dylib resolution is pinned via rpath (see jmux/build.rs) to the
+    // binary's own directory and /usr/local/lib/jmux, where install.sh ships
+    // the vendored .so. Without that, the loader fell back to whatever
+    // libghostty.so it found first — on this machine a months-old
+    // /usr/lib/libghostty.so from a stale cmux-gtk package, silently
+    // reintroducing fixed bugs (the ghostty_surface_free_text arity leak
+    // behind the 47 GB OOM).
     println!("cargo:rustc-link-lib=dylib=ghostty");
     println!(
         "cargo:rustc-env=GHOSTTY_BUNDLED_RESOURCES_DIR={}",
