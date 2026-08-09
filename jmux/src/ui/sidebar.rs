@@ -87,6 +87,24 @@ pub fn create_sidebar(state: &Rc<AppState>) -> SidebarWidgets {
 
     refresh_sidebar(&list_box, state);
 
+    // Claude-state sprites depend on terminal screen text, which changes
+    // without firing any UI event — refresh_sidebar is otherwise purely
+    // event-driven, so a state change with no accompanying model change
+    // (e.g. a turn finishing after the title spinner already stopped) would
+    // never be picked up. Re-check at 1 Hz; the signature skip keeps the
+    // common no-change tick to a hash + classify with no widget churn.
+    {
+        let state = state.clone();
+        let list_box_weak = list_box.downgrade();
+        glib::timeout_add_local(std::time::Duration::from_secs(1), move || {
+            let Some(list_box) = list_box_weak.upgrade() else {
+                return glib::ControlFlow::Break;
+            };
+            refresh_sidebar(&list_box, &state);
+            glib::ControlFlow::Continue
+        });
+    }
+
     // Double-click on empty sidebar space creates a new workspace
     let dbl_click = gtk4::GestureClick::new();
     dbl_click.set_button(1);
@@ -261,6 +279,17 @@ pub fn refresh_sidebar(list_box: &gtk4::ListBox, state: &Rc<AppState>) {
         let mut h = std::collections::hash_map::DefaultHasher::new();
         for ws in tab_manager.iter() {
             let _ = write!(HashWriter(&mut h), "{ws:?}");
+            // The Claude-state sprite is classified from live terminal screen
+            // text, which can change without any model event (a turn ending,
+            // a background shell finishing). Fold the classified state in so
+            // those transitions invalidate the signature — otherwise the last
+            // built sprite animates forever on an idle pane. The 1 Hz tick in
+            // create_sidebar re-runs this check between model events.
+            let _ = write!(
+                HashWriter(&mut h),
+                "{:?}",
+                crate::ui::state_sprite::workspace_claude_state(ws, state)
+            );
         }
         for group in tab_manager.groups() {
             let _ = write!(HashWriter(&mut h), "{group:?}");
