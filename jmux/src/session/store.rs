@@ -476,13 +476,22 @@ pub fn create_snapshot(
         }
     };
 
-    // Group workspaces by window_id
+    // Group workspaces by window_id. Workspaces created at runtime (socket,
+    // goal/graph, palette) carry window_id None while restored ones carry
+    // Some(id) — bucketing them separately would split every new workspace
+    // into its own phantom window snapshot and scramble the sidebar order on
+    // the next restart. Fold None into the primary window's bucket instead:
+    // tm.iter() order then lands interleaved, exactly as the sidebar shows it.
     let window_sizes = lock_or_recover(&state.shared.window_sizes);
     let mut window_map: std::collections::BTreeMap<
         Option<uuid::Uuid>,
         Vec<SessionWorkspaceSnapshot>,
     > = std::collections::BTreeMap::new();
     let quick_window = crate::ui::quick_terminal::quick_window_id();
+    let primary_window: Option<uuid::Uuid> = tm
+        .iter()
+        .filter(|ws| ws.window_id != Some(quick_window))
+        .find_map(|ws| ws.window_id);
     for ws in tm.iter() {
         // The quick-terminal drop-down is recreated on demand — never persist it
         // (otherwise it restores as an extra normal window).
@@ -490,7 +499,7 @@ pub fn create_snapshot(
             continue;
         }
         window_map
-            .entry(ws.window_id)
+            .entry(ws.window_id.or(primary_window))
             .or_default()
             .push(make_ws_snapshot(ws));
     }
@@ -505,7 +514,10 @@ pub fn create_snapshot(
             let groups: Vec<crate::session::snapshot::SessionGroupSnapshot> = tm
                 .groups()
                 .iter()
-                .filter(|g| g.window_id == window_id)
+                // Same None → primary normalization as the workspaces above,
+                // or runtime-created groups (e.g. graph groups) would never
+                // be persisted.
+                .filter(|g| g.window_id.or(primary_window) == window_id)
                 .map(|g| crate::session::snapshot::SessionGroupSnapshot {
                     id: g.id,
                     name: g.name.clone(),
