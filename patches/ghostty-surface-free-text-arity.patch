@@ -1,0 +1,19 @@
+diff --git a/src/apprt/embedded.zig b/src/apprt/embedded.zig
+index 46134b854..74ce4945a 100644
+--- a/src/apprt/embedded.zig
++++ b/src/apprt/embedded.zig
+@@ -1744,7 +1744,13 @@ pub const CAPI = struct {
+         return true;
+     }
+ 
+-    export fn ghostty_surface_free_text(ptr: *Text) void {
++    // NOTE: the signature must match ghostty.h (surface + text). It was
++    // exported with only the text pointer, so C callers passing
++    // (surface, text) had the SURFACE reinterpreted as *Text: the real dump
++    // buffer from dumpTextLocked leaked on every read (the 47 GB OOM), and
++    // deinit could free a wild pointer read out of Surface memory.
++    export fn ghostty_surface_free_text(surface: *Surface, ptr: *Text) void {
++        _ = surface;
+         ptr.deinit();
+     }
+ 

@@ -33,6 +33,13 @@ fn main() {
             )
         });
 
+    // The ghostty submodule tracks douglas/ghostty (not our repo), so the
+    // ghostty_surface_free_text arity fix (the 47 GB OOM leak) is carried as
+    // a patch here instead of a submodule commit. Skip it once the checkout
+    // has the fixed (surface, text) signature — whether from the patch or an
+    // upstream fix.
+    apply_free_text_arity_patch(workspace_dir, &ghostty_dir);
+
     // Build libghostty as a static library using zig build
     let output_dir = PathBuf::from(env::var("OUT_DIR").unwrap());
 
@@ -196,6 +203,46 @@ pub fn main() !void {
     // Rerun if ghostty source changes or feature flag changes
     println!("cargo:rerun-if-changed={}", ghostty_dir.display());
     println!("cargo:rerun-if-env-changed=CARGO_FEATURE_LINK_GHOSTTY");
+}
+
+fn apply_free_text_arity_patch(workspace_dir: &std::path::Path, ghostty_dir: &std::path::Path) {
+    let patch = workspace_dir
+        .join("patches")
+        .join("ghostty-surface-free-text-arity.patch");
+    println!("cargo:rerun-if-changed={}", patch.display());
+
+    let embedded = ghostty_dir.join("src").join("apprt").join("embedded.zig");
+    let source = fs::read_to_string(&embedded)
+        .unwrap_or_else(|error| panic!("failed to read {}: {}", embedded.display(), error));
+    let signature = source
+        .split_once("fn ghostty_surface_free_text(")
+        .and_then(|(_, rest)| rest.split_once(')'))
+        .map(|(params, _)| params)
+        .unwrap_or_else(|| {
+            panic!(
+                "ghostty_surface_free_text not found in {} — upstream renamed it; \
+                 update patches/ghostty-surface-free-text-arity.patch",
+                embedded.display()
+            )
+        });
+    if signature.contains("*Surface") {
+        return; // already takes (surface, text) — leak is fixed
+    }
+
+    let status = Command::new("git")
+        .arg("-C")
+        .arg(ghostty_dir)
+        .arg("apply")
+        .arg(&patch)
+        .status()
+        .expect("Failed to run git apply");
+    if !status.success() {
+        panic!(
+            "failed to apply {} to the ghostty checkout — upstream changed the \
+             surrounding code; re-fix embedded.zig manually and regenerate the patch",
+            patch.display()
+        );
+    }
 }
 
 fn copy_runtime_libraries(lib_dir: &std::path::Path, destinations: &[&std::path::Path]) {
