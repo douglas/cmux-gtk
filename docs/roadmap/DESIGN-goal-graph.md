@@ -168,6 +168,23 @@ Security note recorded: edge payloads feed upstream agent output into
 downstream prompts — bypass mode amplifies prompt-injection blast radius, so
 bypass is per-invocation opt-in, never a settings default.
 
+Resolved mode = per-invocation flag > runner `permission_mode` >
+`goal.permission_mode` > `acceptEdits`; an unknown value warns and falls
+through. `bypassPermissions` is *enforced* out of both config sources
+(`goal::validate_permission_mode`), because a runner name can be picked by
+the planning agent and a settings default applies to runs nobody opted in
+for. The gap between "asks about everything" and "asks about nothing" is
+closed by per-runner `allowed_tools` → `claude --allowedTools`: pre-approve
+read/build/test commands so `acceptEdits` runs unattended while destructive
+commands still prompt and escalate.
+
+Claude Code's first-run workspace-trust dialog is left to escalate. The only
+non-interactive pre-trust is `projects[<path>].hasTrustDialogAccepted` in
+`~/.claude.json` — a live, credential-bearing config file rewritten wholesale
+by every running claude session; jmux will not read-modify-write it to save
+one keypress. Documented alternative: trust covers ancestors, so trusting the
+directory *above* the repo covers every `<repo>-worktrees/<node>`.
+
 ### `--wait`
 
 Client-side **polling** of `goal.status` (1 s), because the socket protocol is
@@ -198,6 +215,9 @@ completion; exit code reflects `done` (0) / `blocked` (2).
 - Launch ready nodes up to `--max-concurrency` (default **1**; >1 requires
   worktrees, below). Each node = `goal.create` with the node's runner,
   upstream iteration files as `{upstream_refs}`.
+  - With background spawn landed, K>1 no longer costs K focus steals, so the
+    default of 1 is now a *cost/merge-risk* choice rather than a UI limitation.
+    Revisit the default separately — not changed in this phase.
 - Node completion (file-based) ⇒ merge step ⇒ re-evaluate ready set.
 - `blocked` node ⇒ halt dependents, escalate. Graph-level caps: max total
   iterations, wall clock.
@@ -226,14 +246,42 @@ Iteration files are written inside the worktree and merged with the branch.
 - CLI equivalents: `jmux graph approve|revise|note <node> "…"`,
   `jmux goal continue|accept`.
 
-### Background spawn (Phase-0 infrastructure for K>1 / unattended nodes)
+### Background spawn — LANDED
 
-ghostty surfaces spawn their command on first resize, which requires the
-widget to be mapped and visible — background workspaces run nothing until
-visited (verified; see also the GtkStack invariants). The scheduler therefore
-needs **headless spawn**: spawn the pty at surface creation with a synthetic
-size. Until that lands, the scheduler *selects* each node workspace briefly on
-launch (visible spawn), which is acceptable for K=1 and small K.
+ghostty surfaces spawn their command on first resize, which requires the widget
+to be mapped and visible — so background workspaces used to run nothing until
+visited, and the scheduler had to *select* every node workspace on launch.
+
+**Headless spawn** now starts them without visibility. Mechanism:
+
+- `GhosttyGlSurface::spawn_headless(w_px, h_px)` (ghostty-gtk) creates the
+  `ghostty_surface_t` — which is what opens the pty and spawns the child —
+  outside the allocation path, then applies the synthetic size by hand with
+  `ghostty_surface_set_size`. GTK4 realizes on *map*, so an unmapped surface has
+  no GL context and `ghostty_surface_new` would fail in `surfaceInit` (libghostty
+  loads GLAD from the current context); `spawn_headless` therefore calls
+  `realize()` itself, which walks up the parent chain and creates a context
+  without mapping or allocating anything (it will even realize a
+  never-presented window — nothing appears on screen).
+- `AppState::spawn_panel_headless(panel_id)` (jmux) parks the surface in the
+  **spawn nursery**: a `GtkBox` page of the content `GtkStack` that is never made
+  the visible child, so it is never allocated and the "visuals only touch the
+  visible page" invariant is untouched. When the workspace is finally opened, the
+  normal page build reparents the surface out of the nursery; its first real
+  allocation only *resizes* the already-running terminal.
+- A spawn-once guard (`spawn_started`, set before `ghostty_surface_new` and
+  cleared only when creation failed) means the two paths are mutually exclusive:
+  a later real allocation never spawns a second child.
+- Drivers: the goal driver (`ensure_agent_spawned`, every tick) for node runs,
+  and `graph::ensure_orchestrators_spawned` for the orchestrator (which is
+  selected but may still be unmapped with the quake window down).
+
+Consequences: `launch_goal` takes `select`, false for scheduler-launched nodes
+(`TabManager::add_workspace_keep_selection` honours `new_workspace_placement`
+without moving the user's selection), and the driver's "never spawned" watchdog
+is now a fault report rather than an instruction to open the workspace.
+`read_screen_text` needs no mapping (it reads terminal state, not pixels), so
+the driver reads and nudges background agents normally.
 
 ## UI (mockups: goal-graph-ui-mockups artifact)
 
@@ -252,6 +300,12 @@ launch (visible spawn), which is acceptable for K=1 and small K.
 
 ## New surface area
 
+*Superseded by the CLI reference in [`../GOAL-GRAPH.md`](../GOAL-GRAPH.md) §3
+— both launch verbs now take the goal as a file **or** as inline text, runs are
+addressed by name rather than by workspace UUID, `complete` is spelled
+`report`, and `goal stop` / `continue --note` / `goal --plan` exist. The
+socket methods below all still work; `goal.stop` joined them.*
+
 CLI: `jmux goal <path> [--wait --cwd --max-iterations --runner --agent
 --model --effort --full-auto --supervised --graph <name> --node <id>]`,
 `jmux goal complete|status|continue|accept`, `jmux graph <name> --goal <top.md>
@@ -259,8 +313,8 @@ CLI: `jmux goal <path> [--wait --cwd --max-iterations --runner --agent
 `jmux graph approve|revise|note|status|stop|resume`.
 
 Socket: `goal.create`, `goal.status`, `goal.complete`, `goal.continue`,
-`goal.accept`, `graph.create`, `graph.approve`, `graph.revise`, `graph.status`,
-`graph.stop`, `graph.resume`.
+`goal.accept`, `goal.stop`, `graph.create`, `graph.approve`, `graph.revise`,
+`graph.status`, `graph.stop`, `graph.resume`.
 
 ## Build phases
 

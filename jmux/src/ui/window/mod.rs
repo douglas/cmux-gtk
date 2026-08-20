@@ -451,6 +451,13 @@ thread_local! {
     /// keyboard focus on the active pane's terminal so typing goes straight to
     /// the now-focused (left) tab instead of staying on a button or nowhere.
     static FOCUS_ACTIVE_TERMINAL: Cell<bool> = const { Cell::new(false) };
+
+    /// Every window's content `GtkStack`, weakly — used to find a realized
+    /// window to park headless-spawn surfaces in. Weak on purpose: a strong ref
+    /// here would keep a closed window's whole widget tree (and its GL
+    /// surfaces) alive forever.
+    static CONTENT_STACKS: std::cell::RefCell<Vec<glib::WeakRef<gtk4::Stack>>> =
+        const { std::cell::RefCell::new(Vec::new()) };
 }
 
 /// Request that the next `rebuild_content` focus the active pane's terminal.
@@ -500,7 +507,78 @@ fn content_stack(content_box: &gtk4::Box) -> gtk4::Stack {
     // keep the outgoing page mapped (rendering) mid-transition for no benefit.
     stack.set_transition_type(gtk4::StackTransitionType::None);
     content_box.append(&stack);
+    CONTENT_STACKS.with(|stacks| {
+        let mut stacks = stacks.borrow_mut();
+        stacks.retain(|w| w.upgrade().is_some());
+        stacks.push(stack.downgrade());
+    });
     stack
+}
+
+/// Page name of the spawn nursery — see `spawn_nursery`. Not a UUID, so
+/// `prune_workspace_pages` leaves it alone.
+const HEADLESS_PAGE: &str = "::headless-spawn::";
+
+/// A never-visible `GtkBox` inside a realized window, used to park terminal
+/// surfaces that must spawn their command before (or without ever) being shown.
+///
+/// It is a page of the content `GtkStack` that is never made the visible child,
+/// so GTK realizes nothing and allocates nothing on its own — a surface in here
+/// gets no allocation, which is exactly why `spawn_headless` has to realize the
+/// widget itself. Being a `gtk4::Box` matters: the reparenting paths
+/// (`unparent_workspace_widgets`, `create_terminal_widget`) only detach a
+/// surface whose parent is a Box, and that is how a parked surface moves into
+/// its real page when the workspace is finally opened.
+///
+/// Returns `None` until some window can host it (no window yet, or none with a
+/// workspace page); callers retry on their next tick.
+pub(crate) fn spawn_nursery() -> Option<gtk4::Box> {
+    let live: Vec<gtk4::Stack> = CONTENT_STACKS.with(|stacks| {
+        let mut stacks = stacks.borrow_mut();
+        stacks.retain(|w| w.upgrade().is_some());
+        stacks.iter().filter_map(|w| w.upgrade()).collect()
+    });
+    // Prefer a window that is already on screen; a hidden one is only realized
+    // as a fallback (see `nursery_in`).
+    let shown = live
+        .iter()
+        .filter(|s| s.root().is_some_and(|r| r.is_realized()));
+    for stack in shown.chain(live.iter()) {
+        if let Some(nursery) = nursery_in(stack) {
+            return Some(nursery);
+        }
+    }
+    None
+}
+
+/// Get (or create) `stack`'s nursery page, making sure its window is realized so
+/// surfaces parented there can obtain a GL context.
+fn nursery_in(stack: &gtk4::Stack) -> Option<gtk4::Box> {
+    let root: gtk4::Widget = stack.root()?.upcast();
+    if !root.is_realized() {
+        // A window that has never been shown — the quake drop-down at rest —
+        // has no GdkSurface, so no GL context can exist under it. Realizing it
+        // creates the surface *without mapping anything*: nothing appears on
+        // screen (verified), but background agents can start before the user
+        // ever drops the terminal down.
+        tracing::debug!("realizing a hidden window so background terminals can spawn");
+        gtk4::prelude::WidgetExt::realize(&root);
+        if !root.is_realized() {
+            return None;
+        }
+    }
+    if let Some(existing) = stack.child_by_name(HEADLESS_PAGE) {
+        return existing.downcast::<gtk4::Box>().ok();
+    }
+    // A GtkStack adopts the first page added as its visible child, so never add
+    // the nursery to an empty stack — it would become the window's content —
+    // and restore the visible child afterwards.
+    let previous = stack.visible_child()?;
+    let nursery = gtk4::Box::new(gtk4::Orientation::Vertical, 0);
+    nursery.set_widget_name(HEADLESS_PAGE);
+    stack.add_named(&nursery, Some(HEADLESS_PAGE));
+    stack.set_visible_child(&previous);
+    Some(nursery)
 }
 
 /// Fold everything `build_layout`/`build_zoomed` consume into one hash. Two

@@ -209,6 +209,37 @@ impl TabManager {
         }
     }
 
+    /// Add a workspace at the placement's position but leave the user where they
+    /// are: the same workspace stays selected, so nothing steals their view.
+    ///
+    /// Used by the goal-graph scheduler, whose node workspaces run their agent
+    /// headlessly and must not need to be visible. Inserting *before* the
+    /// selected index shifts it by one — the selection follows the workspace,
+    /// not the slot.
+    pub fn add_workspace_keep_selection(
+        &mut self,
+        workspace: Workspace,
+        placement: crate::settings::NewWorkspacePlacement,
+    ) -> Uuid {
+        use crate::settings::NewWorkspacePlacement as P;
+        let id = workspace.id;
+        let insert_at = match placement {
+            P::End => self.workspaces.len(),
+            P::Top => 0,
+            P::AfterCurrent => self
+                .selected_index
+                .map(|i| i + 1)
+                .unwrap_or(self.workspaces.len()),
+        };
+        self.workspaces.insert(insert_at, workspace);
+        if let Some(sel) = self.selected_index {
+            if insert_at <= sel {
+                self.selected_index = Some(sel + 1);
+            }
+        }
+        id
+    }
+
     /// Remove a workspace by index. Returns the removed workspace.
     pub fn remove(&mut self, index: usize) -> Option<Workspace> {
         if index >= self.workspaces.len() {
@@ -1116,5 +1147,65 @@ mod tests {
         tm.record_focus_if_changed();
         assert_eq!(tm.focus_forward(), None); // c no longer reachable forward
         assert_eq!(tm.focus_back(), Some(a));
+    }
+
+    // ── Background (headless) workspace insertion ────────────────────────
+    // A goal-graph node workspace must land in the placement's slot without
+    // moving the user's view; every `add_workspace*` above selects instead.
+
+    #[test]
+    fn keep_selection_end_placement_leaves_selection_put() {
+        use crate::settings::NewWorkspacePlacement as P;
+        let mut tm = TabManager::empty();
+        let a = tm.add_workspace(Workspace::new());
+        let b = tm.add_workspace(Workspace::new());
+        tm.select_by_id(a);
+        let node = tm.add_workspace_keep_selection(Workspace::new(), P::End);
+        assert_eq!(tm.len(), 3);
+        assert_eq!(tm.selected().map(|ws| ws.id), Some(a));
+        assert_eq!(tm.workspaces[2].id, node);
+        assert_eq!(tm.workspaces[1].id, b);
+    }
+
+    #[test]
+    fn keep_selection_top_placement_shifts_the_selected_index() {
+        use crate::settings::NewWorkspacePlacement as P;
+        let mut tm = TabManager::empty();
+        let a = tm.add_workspace(Workspace::new());
+        let b = tm.add_workspace(Workspace::new());
+        tm.select_by_id(b);
+        assert_eq!(tm.selected_index(), Some(1));
+        let node = tm.add_workspace_keep_selection(Workspace::new(), P::Top);
+        // Inserted above the selection: the index moves, the selection doesn't.
+        assert_eq!(tm.selected_index(), Some(2));
+        assert_eq!(tm.selected().map(|ws| ws.id), Some(b));
+        assert_eq!(tm.workspaces[0].id, node);
+        assert_eq!(tm.workspaces[1].id, a);
+    }
+
+    #[test]
+    fn keep_selection_after_current_inserts_below_without_selecting() {
+        use crate::settings::NewWorkspacePlacement as P;
+        let mut tm = TabManager::empty();
+        let a = tm.add_workspace(Workspace::new());
+        let b = tm.add_workspace(Workspace::new());
+        tm.select_by_id(a);
+        let node = tm.add_workspace_keep_selection(Workspace::new(), P::AfterCurrent);
+        assert_eq!(tm.selected_index(), Some(0));
+        assert_eq!(tm.selected().map(|ws| ws.id), Some(a));
+        assert_eq!(tm.workspaces[1].id, node);
+        assert_eq!(tm.workspaces[2].id, b);
+    }
+
+    #[test]
+    fn keep_selection_into_empty_manager_selects_nothing() {
+        use crate::settings::NewWorkspacePlacement as P;
+        let mut tm = TabManager::empty();
+        let node = tm.add_workspace_keep_selection(Workspace::new(), P::AfterCurrent);
+        assert_eq!(tm.len(), 1);
+        assert_eq!(tm.workspaces[0].id, node);
+        // Nothing was selected before, so nothing becomes selected — the UI
+        // refresh's no-empty-app invariant decides what to show.
+        assert_eq!(tm.selected_index(), None);
     }
 }

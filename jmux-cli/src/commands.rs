@@ -98,12 +98,19 @@ pub enum Commands {
     Goal {
         #[command(subcommand)]
         command: Option<GoalCommands>,
-        /// Path to a goal markdown file — launches a master agent on it
-        path: Option<String>,
-        /// Block until the goal completes; prints the iteration file path
+        /// Goal markdown file, or the goal text itself ("add a --version flag")
+        goal: Option<String>,
+        /// Decompose the goal into a plan first (same engine as `jmux graph`)
         #[arg(long)]
+        plan: bool,
+        /// Name for the run (default: derived from the goal file or text)
+        #[arg(long)]
+        name: Option<String>,
+        /// Block until the goal completes; prints the iteration file path
+        #[arg(long, conflicts_with = "plan")]
         wait: bool,
-        /// Working directory (default: nearest git root above the goal file)
+        /// Working directory (default: nearest git root above the goal file,
+        /// or above your current directory for inline goal text)
         #[arg(long)]
         cwd: Option<String>,
         /// Named runner from settings (goal.runners)
@@ -119,6 +126,7 @@ pub enum Commands {
         #[arg(long)]
         effort: Option<String>,
         /// Auto-continue up to N iterations while the agent reports blocked
+        /// (default 3; settings key goal.max_iterations)
         #[arg(long)]
         max_iterations: Option<u32>,
         /// Bypass all permission checks (opt-in; amplifies prompt-injection risk)
@@ -137,30 +145,39 @@ pub enum Commands {
     Graph {
         #[command(subcommand)]
         command: Option<GraphCommands>,
-        /// Graph name (lowercase/digits/hyphens) — creates it with --goal
-        name: Option<String>,
-        /// Path to the top-level goal markdown file
+        /// Goal markdown file, or the goal text itself (with --goal: the
+        /// graph name, the older spelling)
+        goal_or_name: Option<String>,
+        /// Path to the top-level goal markdown file (compatibility form:
+        /// `jmux graph <name> --goal <top.md>`)
         #[arg(long)]
         goal: Option<String>,
-        /// Max nodes running at once (>1 uses per-node git worktrees)
+        /// Graph name (default: the repo directory, or a slug of the goal text)
+        #[arg(long)]
+        name: Option<String>,
+        /// Max nodes running at once
         #[arg(long)]
         max_concurrency: Option<u32>,
         /// Per-node iteration cap
         #[arg(long)]
         max_iterations: Option<u32>,
-        /// Skip the decomposition review gate (auto-approve the proposal)
+        /// Work in your checkout instead of a per-node git worktree
+        #[arg(long)]
+        no_worktrees: bool,
+        /// Skip the plan review: start work as soon as the plan is written
         #[arg(long)]
         no_review: bool,
-        /// Pause each node iteration for human review (Gate 2)
+        /// Iteration review: pause after each node iteration so you can
+        /// accept it or ask for another
         #[arg(long)]
         review_iterations: bool,
         /// Default runner for orchestrator + nodes (settings goal.runners)
         #[arg(long)]
         runner: Option<String>,
-        /// Bypass all permission checks (opt-in)
+        /// Bypass all permission checks (opt-in; amplifies prompt-injection risk)
         #[arg(long)]
         full_auto: bool,
-        /// Stock interactive permission prompting
+        /// Stock interactive permission prompting (you babysit approvals)
         #[arg(long, conflicts_with = "full_auto")]
         supervised: bool,
     },
@@ -185,35 +202,74 @@ pub enum GraphCommands {
     Resume { name: String },
     /// Stop the graph permanently
     Stop { name: String },
+    /// Reviewer verdict on one node: run another iteration
+    Continue {
+        name: String,
+        node: String,
+        /// Steering note injected into the next iteration's prompt
+        #[arg(long)]
+        note: Option<String>,
+    },
+    /// Reviewer verdict on one node: accept the iteration as final
+    Accept { name: String, node: String },
 }
 
 #[derive(Subcommand)]
 pub enum GoalCommands {
-    /// Agent fast-path: mark the current goal iteration finished
-    /// (the iteration file's front matter is the source of truth)
-    Complete {
+    /// Agent-facing fast path: record the current iteration's outcome
+    /// (the iteration file's front matter is the source of truth).
+    /// Spelled `complete` before; both work.
+    #[command(alias = "complete")]
+    Report {
+        /// Goal name ("<graph>/<node>") or workspace UUID
+        /// (default: this pane's run, else the only active run)
+        target: Option<String>,
         /// done | blocked (fallback when the file has no front matter)
         #[arg(long)]
         status: Option<String>,
-        /// Goal workspace UUID (default: $JMUX_WORKSPACE_ID)
+        /// Goal workspace UUID (compatibility alias for the positional)
         #[arg(long)]
         workspace: Option<String>,
     },
-    /// Show goal run status (all goals, or one workspace)
+    /// Show goal run status (everything running, or one run)
     Status {
-        /// Goal workspace UUID
+        /// Goal name ("<graph>/<node>") or workspace UUID
+        target: Option<String>,
+        /// Goal workspace UUID (compatibility alias for the positional)
+        #[arg(long)]
         workspace: Option<String>,
     },
     /// Reviewer verdict: run another iteration (seeded with the current
-    /// iteration file's feedback — edit section 4 first to steer it)
+    /// iteration file's feedback — edit section 4, or pass --note, to steer it)
     Continue {
-        /// Goal workspace UUID (default: $JMUX_WORKSPACE_ID)
+        /// Goal name ("<graph>/<node>") or workspace UUID
+        /// (default: this pane's run, else the only active run)
+        target: Option<String>,
+        /// Steering note injected into the next iteration's prompt
+        #[arg(long)]
+        note: Option<String>,
+        /// Goal workspace UUID (compatibility alias for the positional)
+        #[arg(long)]
         workspace: Option<String>,
     },
     /// Reviewer verdict: accept the current iteration as final
     /// (graph nodes merge + unblock dependents)
     Accept {
-        /// Goal workspace UUID (default: $JMUX_WORKSPACE_ID)
+        /// Goal name ("<graph>/<node>") or workspace UUID
+        /// (default: this pane's run, else the only active run)
+        target: Option<String>,
+        /// Goal workspace UUID (compatibility alias for the positional)
+        #[arg(long)]
+        workspace: Option<String>,
+    },
+    /// Stop driving a run: it stops being nudged and iterated
+    /// (the workspace stays open, so nothing is lost)
+    Stop {
+        /// Goal name ("<graph>/<node>") or workspace UUID
+        /// (default: this pane's run, else the only active run)
+        target: Option<String>,
+        /// Goal workspace UUID (compatibility alias for the positional)
+        #[arg(long)]
         workspace: Option<String>,
     },
 }

@@ -3,7 +3,8 @@
 //! A goal run launches a master agent (via a configurable *runner*: agent CLI
 //! + model + effort) in a fresh workspace seeded with the goal file plus an
 //! operating-contract guidance template. Completion is **file-based**: the
-//! agent writes `docs/roadmap/iteration-N.md` with front-matter
+//! agent writes `<goal.output_dir>/iteration-N.md` (default
+//! `docs/roadmap/…`) with front-matter
 //! `status: done|blocked`, which the driver ticker polls for; the
 //! `jmux goal complete` socket call is only a fast-path notification. See
 //! docs/roadmap/DESIGN-goal-graph.md for the full design.
@@ -87,9 +88,9 @@ pub struct GoalRun {
     pub goal_name: String,
     pub goal_path: String,
     pub cwd: String,
-    /// Repo-relative directory holding this run's iteration files
-    /// ("docs/roadmap" for bare goals, "docs/roadmap/<graph>/<node>" for
-    /// graph nodes).
+    /// Repo-relative directory holding this run's iteration files: the
+    /// configured `goal.output_dir` for bare goals, `<output_dir>/<graph>/
+    /// <node>` for graph nodes.
     pub output_dir_rel: String,
     pub iteration: u32,
     pub max_iterations: u32,
@@ -111,6 +112,110 @@ pub struct GoalRun {
 /// Repo-relative iteration file path for iteration `n` under `dir_rel`.
 pub fn iteration_rel(dir_rel: &str, n: u32) -> String {
     format!("{dir_rel}/iteration-{n}.md")
+}
+
+/// Validate `goal.output_dir`: it names a directory INSIDE the repo, so an
+/// absolute path or a `..` component is a configuration error, not a path to
+/// normalize. Returns the cleaned relative path.
+pub fn validate_output_dir(dir: &str) -> Result<String, String> {
+    let dir = dir.trim();
+    if dir.is_empty() {
+        return Err("output_dir is empty".into());
+    }
+    let mut parts: Vec<&str> = Vec::new();
+    for component in Path::new(dir).components() {
+        match component {
+            std::path::Component::Normal(s) => {
+                parts.push(s.to_str().ok_or("output_dir is not valid UTF-8")?)
+            }
+            std::path::Component::CurDir => {}
+            _ => {
+                return Err(format!(
+                    "output_dir '{dir}' must be a repo-relative path without '..'"
+                ))
+            }
+        }
+    }
+    if parts.is_empty() {
+        return Err(format!("output_dir '{dir}' names no directory"));
+    }
+    Ok(parts.join("/"))
+}
+
+/// The configured output directory, falling back to the default when the
+/// setting is unusable — a bad setting must not break every launch.
+pub fn output_dir_rel(settings: &crate::settings::GoalSettings) -> String {
+    match validate_output_dir(&settings.output_dir) {
+        Ok(d) => d,
+        Err(e) => {
+            tracing::warn!("ignoring goal.output_dir: {e}");
+            crate::settings::DEFAULT_GOAL_OUTPUT_DIR.to_string()
+        }
+    }
+}
+
+/// Permission modes jmux accepts. `supervised` is jmux's own name for stock
+/// prompting (no `--permission-mode` flag at all); the rest are the claude
+/// CLI's own `--permission-mode` choices.
+pub const PERMISSION_MODES: &[&str] = &[
+    "supervised",
+    "acceptEdits",
+    "plan",
+    "auto",
+    "manual",
+    "dontAsk",
+    "bypassPermissions",
+];
+
+/// Validate a permission mode. `allow_bypass` is true only for the
+/// per-invocation request (`--full-auto`): every ambient source (settings,
+/// runner config) is refused bypass, because edge payloads feed upstream
+/// agent output into downstream prompts and a configured bypass would apply
+/// to runs the user never opted in for. See DESIGN-goal-graph.md §Permissions.
+pub fn validate_permission_mode(mode: &str, allow_bypass: bool) -> Result<String, String> {
+    let mode = mode.trim();
+    if !PERMISSION_MODES.contains(&mode) {
+        return Err(format!(
+            "unknown permission mode '{mode}' (expected one of {})",
+            PERMISSION_MODES.join(", ")
+        ));
+    }
+    if mode == "bypassPermissions" && !allow_bypass {
+        return Err(
+            "bypassPermissions is a per-invocation opt-in (`--full-auto`), never a configured \
+             default"
+                .into(),
+        );
+    }
+    Ok(mode.to_string())
+}
+
+/// Resolve the permission mode for a launch. Precedence:
+/// per-invocation request (`--full-auto`/`--supervised`, or an explicit
+/// `permission_mode` socket param) > runner `permission_mode` >
+/// `goal.permission_mode` > `acceptEdits`. A source that doesn't validate is
+/// logged and skipped rather than aborting the launch — a bad setting must
+/// not break every run, and the warning says which source was ignored.
+pub fn resolve_permission_mode(
+    requested: Option<&str>,
+    runner: &GoalRunner,
+    settings: &crate::settings::GoalSettings,
+) -> String {
+    let sources = [
+        ("permission_mode request", requested.unwrap_or(""), true),
+        ("runner permission_mode", runner.permission_mode.as_str(), false),
+        ("goal.permission_mode", settings.permission_mode.as_str(), false),
+    ];
+    for (origin, value, allow_bypass) in sources {
+        if value.trim().is_empty() {
+            continue;
+        }
+        match validate_permission_mode(value, allow_bypass) {
+            Ok(mode) => return mode,
+            Err(e) => tracing::warn!("ignoring {origin}: {e}"),
+        }
+    }
+    crate::settings::DEFAULT_GOAL_PERMISSION_MODE.to_string()
 }
 
 impl GoalRun {
@@ -233,11 +338,25 @@ pub fn launch_command(
             .replace("{seed}", &seed_arg);
     }
     // claude adapter
-    let mut parts: Vec<String> = vec![
-        "claude".into(),
-        "--session-id".into(),
-        session_id.into(),
-    ];
+    let mut parts: Vec<String> = vec!["claude".into()];
+    // Pre-approved tools (Claude Code's `--allowedTools`, verified against
+    // `claude --help`: "Comma or space-separated list of tool names to
+    // allow"). The flag is variadic — it consumes every following argument
+    // up to the next flag — so it is emitted FIRST, terminated by
+    // `--session-id`, which is always present. It must never sit in front of
+    // the trailing seed argument, or the seed would be parsed as a tool
+    // pattern instead of the prompt.
+    let allowed: Vec<&String> = runner
+        .allowed_tools
+        .iter()
+        .filter(|t| !t.trim().is_empty())
+        .collect();
+    if !allowed.is_empty() {
+        parts.push("--allowedTools".into());
+        parts.extend(allowed.into_iter().map(|t| shell_quote(t.trim())));
+    }
+    parts.push("--session-id".into());
+    parts.push(session_id.into());
     if !runner.model.is_empty() {
         parts.push("--model".into());
         parts.push(shell_quote(&runner.model));
@@ -305,11 +424,273 @@ pub fn state_detection_is_claude(runner: &GoalRunner) -> bool {
 /// Directory where seed prompts are kept (out of the repo):
 /// `~/.local/share/jmux/goal-seeds/<workspace>/`.
 pub fn seed_dir(workspace_id: Uuid) -> PathBuf {
+    data_dir().join("goal-seeds").join(workspace_id.to_string())
+}
+
+/// jmux's own data directory (`~/.local/share/jmux`).
+fn data_dir() -> PathBuf {
     dirs::data_dir()
         .or_else(|| dirs::home_dir().map(|h| h.join(".local/share")))
         .unwrap_or_else(|| PathBuf::from("/tmp"))
-        .join("jmux/goal-seeds")
-        .join(workspace_id.to_string())
+        .join("jmux")
+}
+
+/// Where goal files written from inline text live. Never the user's repo —
+/// `jmux goal "text"` must not add a file to the tree the agent then commits.
+pub fn goal_text_dir() -> PathBuf {
+    data_dir().join("goal-texts")
+}
+
+/// Largest goal document accepted (file or inline text).
+const MAX_GOAL_BYTES: usize = 256 * 1024;
+
+/// A run name derived from free goal text: the first few words, lowercase,
+/// hyphen-joined. Always a valid graph/node id.
+pub fn slugify_goal(text: &str) -> String {
+    let mut words: Vec<String> = Vec::new();
+    for raw in text.split_whitespace() {
+        let word: String = raw
+            .chars()
+            .filter(|c| c.is_ascii_alphanumeric())
+            .map(|c| c.to_ascii_lowercase())
+            .collect();
+        if word.is_empty() {
+            continue;
+        }
+        words.push(word);
+        if words.len() == 6 {
+            break;
+        }
+    }
+    let mut slug = words.join("-");
+    // ASCII-only by construction, so truncating on a byte index is safe.
+    if slug.len() > 48 {
+        slug.truncate(48);
+    }
+    let slug = slug.trim_matches('-');
+    if slug.is_empty() {
+        "goal".to_string()
+    } else {
+        slug.to_string()
+    }
+}
+
+/// Where a launch request's goal came from: an existing markdown file, or
+/// inline text (which jmux writes into its own data dir).
+#[derive(Debug)]
+pub struct GoalSource {
+    /// Absolute goal file path — display origin, and what a graph records.
+    pub path: PathBuf,
+    pub text: String,
+    /// Working directory for the run (a git root when derived).
+    pub cwd: PathBuf,
+    /// Name derived from the source: file stem, or a slug of the text.
+    pub name: String,
+    /// Slugified directory name of `cwd` — the graph-flavoured default name.
+    pub repo_name: String,
+    pub inline: bool,
+}
+
+/// Resolve the goal of a `goal.create` / `graph.create` request. Accepts
+/// either `goal` (absolute path to a markdown file) or `goal_text` (literal
+/// goal text); `cwd` overrides the working directory, `client_cwd` is the
+/// caller's directory that inline text derives its git root from.
+/// Err is `(socket error code, message)`.
+pub fn resolve_goal_source(
+    params: &serde_json::Value,
+) -> Result<GoalSource, (&'static str, String)> {
+    let str_param = |key: &str| {
+        params
+            .get(key)
+            .and_then(|v| v.as_str())
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+    };
+    let explicit_cwd = str_param("cwd").map(PathBuf::from);
+    let client_cwd = str_param("client_cwd").map(PathBuf::from);
+
+    let (path, text, cwd, name, inline) = match str_param("goal_text") {
+        Some(text) => {
+            if text.len() > MAX_GOAL_BYTES {
+                return Err(("invalid_params", "Goal text is too large (256 KiB max)".into()));
+            }
+            let cwd = explicit_cwd
+                .clone()
+                .or_else(|| {
+                    client_cwd
+                        .clone()
+                        .map(|c| find_git_root(&c).unwrap_or(c))
+                })
+                .ok_or((
+                    "invalid_params",
+                    "Inline goal text needs a working directory ('cwd' or 'client_cwd')"
+                        .to_string(),
+                ))?;
+            let name = slugify_goal(text);
+            let path = write_inline_goal(&name, text)
+                .map_err(|e| ("internal", e))?;
+            (path, text.to_string(), cwd, name, true)
+        }
+        None => {
+            let Some(goal) = str_param("goal") else {
+                return Err((
+                    "invalid_params",
+                    "Missing 'goal' (a goal .md file) or 'goal_text'".into(),
+                ));
+            };
+            let goal_path = Path::new(goal);
+            if !goal_path.is_absolute() {
+                return Err(("invalid_params", "'goal' must be an absolute path".into()));
+            }
+            let text = std::fs::read_to_string(goal_path)
+                .map_err(|e| ("not_found", format!("Cannot read goal file: {e}")))?;
+            if text.len() > MAX_GOAL_BYTES {
+                return Err(("invalid_params", "Goal file is too large (256 KiB max)".into()));
+            }
+            let parent = goal_path.parent().unwrap_or(Path::new("/"));
+            let cwd = explicit_cwd.clone().unwrap_or_else(|| {
+                find_git_root(parent).unwrap_or_else(|| parent.to_path_buf())
+            });
+            // File stem, or the parent directory when the stem is the
+            // generic "goal".
+            let stem = goal_path
+                .file_stem()
+                .and_then(|s| s.to_str())
+                .unwrap_or("goal")
+                .to_string();
+            let name = if stem == "goal" {
+                goal_path
+                    .parent()
+                    .and_then(|p| p.file_name())
+                    .and_then(|s| s.to_str())
+                    .map(str::to_string)
+                    .unwrap_or(stem)
+            } else {
+                stem
+            };
+            (goal_path.to_path_buf(), text, cwd, name, false)
+        }
+    };
+    if !cwd.is_dir() {
+        return Err(("invalid_params", "Resolved cwd is not a directory".into()));
+    }
+    let repo_name = cwd
+        .file_name()
+        .and_then(|s| s.to_str())
+        .map(slugify_goal)
+        .unwrap_or_else(|| slugify_goal(&name));
+    Ok(GoalSource {
+        path,
+        text,
+        cwd,
+        name,
+        repo_name,
+        inline,
+    })
+}
+
+/// Write inline goal text to jmux's data dir; returns the file path.
+fn write_inline_goal(slug: &str, text: &str) -> Result<PathBuf, String> {
+    let dir = goal_text_dir();
+    std::fs::create_dir_all(&dir).map_err(|e| format!("cannot create {dir:?}: {e}"))?;
+    let path = dir.join(format!("{slug}-{}.md", epoch_now()));
+    std::fs::write(&path, format!("{}\n", text.trim_end()))
+        .map_err(|e| format!("cannot write goal file: {e}"))?;
+    Ok(path)
+}
+
+/// Resolve a run reference to a workspace id. `target` is a workspace UUID
+/// (scripts) or a goal name — `<graph>/<node>` for graph nodes, and a bare
+/// node id when it is unambiguous. With no target the caller's own workspace
+/// wins (`hint`), else the sole non-terminal run.
+pub fn resolve_run(
+    goals: &GoalRegistry,
+    target: Option<&str>,
+    hint: Option<Uuid>,
+) -> Result<Uuid, String> {
+    if let Some(t) = target.map(str::trim).filter(|s| !s.is_empty()) {
+        if let Ok(id) = Uuid::parse_str(t) {
+            return if goals.contains_key(&id) {
+                Ok(id)
+            } else {
+                Err(format!("no goal run for workspace {id}"))
+            };
+        }
+        let mut hits: Vec<(&Uuid, &GoalRun)> =
+            goals.iter().filter(|(_, r)| r.goal_name == t).collect();
+        if hits.is_empty() {
+            hits = goals
+                .iter()
+                .filter(|(_, r)| r.goal_name.rsplit('/').next() == Some(t))
+                .collect();
+        }
+        // A relaunched name matches its finished predecessor too — the live
+        // run is what the human means.
+        if hits.len() > 1 {
+            let live: Vec<(&Uuid, &GoalRun)> = hits
+                .iter()
+                .copied()
+                .filter(|(_, r)| !r.status.is_terminal())
+                .collect();
+            if live.len() == 1 {
+                hits = live;
+            }
+        }
+        return match hits.len() {
+            0 => Err(format!(
+                "no goal run named '{t}'{}",
+                candidate_list(goals.values())
+            )),
+            1 => Ok(*hits[0].0),
+            _ => Err(format!(
+                "'{t}' matches several runs — name one exactly:{}",
+                candidate_list(hits.iter().map(|(_, r)| *r))
+            )),
+        };
+    }
+    if let Some(h) = hint {
+        if goals.contains_key(&h) {
+            return Ok(h);
+        }
+    }
+    let live: Vec<(&Uuid, &GoalRun)> = goals
+        .iter()
+        .filter(|(_, r)| !r.status.is_terminal())
+        .collect();
+    match live.len() {
+        0 => Err("no active goal runs (jmux goal status lists everything)".into()),
+        1 => Ok(*live[0].0),
+        _ => Err(format!(
+            "several goal runs are active — name one:{}",
+            candidate_list(live.iter().map(|(_, r)| *r))
+        )),
+    }
+}
+
+/// "\n  - <name> (<status>)" per run, sorted (registry order is a HashMap's).
+fn candidate_list<'a>(runs: impl Iterator<Item = &'a GoalRun>) -> String {
+    let mut lines: Vec<String> = runs
+        .map(|r| format!("\n  - {} ({})", r.goal_name, r.status.as_str()))
+        .collect();
+    lines.sort();
+    lines.concat()
+}
+
+/// Human stop: mark the run Blocked so the driver stops driving it. The
+/// workspace stays open on purpose — the agent's context is still there.
+pub fn stop_run(shared: &Arc<SharedState>, ws_id: Uuid) -> Result<serde_json::Value, String> {
+    let mut goals = lock_or_recover(&shared.goals);
+    let run = goals
+        .get_mut(&ws_id)
+        .ok_or_else(|| "no goal registered for that workspace".to_string())?;
+    run.status = GoalStatus::Blocked("stopped by user".into());
+    Ok(serde_json::json!({
+        "workspace_id": ws_id.to_string(),
+        "goal": run.goal_name,
+        "iteration": run.iteration,
+        "status": "blocked",
+        "detail": "stopped by user",
+    }))
 }
 
 /// Next iteration number: one past the highest existing
@@ -398,8 +779,38 @@ fn tick(state: &Rc<AppState>) {
     }
     let settings = crate::settings::load().goal;
     for ws_id in goal_ids {
+        ensure_agent_spawned(state, ws_id);
         drive_one(state, ws_id, &settings);
     }
+}
+
+/// Start a run's agent without showing its workspace.
+///
+/// A goal workspace launched in the background is never mapped, so its terminal
+/// would never get the allocation that normally spawns the command. This starts
+/// the pty + agent directly (see `AppState::spawn_panel_headless`); it is cheap
+/// and idempotent once the child is running, and retries on the next tick while
+/// no window is realized yet (app startup, restored session).
+fn ensure_agent_spawned(state: &Rc<AppState>, ws_id: Uuid) {
+    let Some(panel_id) = lock_or_recover(&state.shared.goals)
+        .get(&ws_id)
+        .map(|run| run.panel_id)
+    else {
+        return;
+    };
+    // A paused run stays paused: never (re)start a child the human froze.
+    if state.shared.is_hibernated(&panel_id) {
+        return;
+    }
+    if state
+        .terminal_cache
+        .borrow()
+        .get(&panel_id)
+        .is_some_and(|s| s.has_spawned())
+    {
+        return;
+    }
+    state.spawn_panel_headless(panel_id);
 }
 
 /// Advance one goal run by one tick.
@@ -430,9 +841,10 @@ fn drive_one(state: &Rc<AppState>, ws_id: Uuid, settings: &crate::settings::Goal
             escalate(
                 state,
                 ws_id,
-                GoalStatus::NeedsAttention("iteration file missing front-matter status".into()),
+                GoalStatus::NeedsAttention("iteration report has no status line".into()),
                 &format!(
-                    "goal '{}': {} exists but has no `status:` front matter",
+                    "the agent for '{}' wrote {} without the `status: done|blocked` \
+                     line jmux waits for — open its workspace",
                     run.goal_name,
                     run.output_rel(run.iteration)
                 ),
@@ -456,9 +868,10 @@ fn drive_one(state: &Rc<AppState>, ws_id: Uuid, settings: &crate::settings::Goal
         escalate(
             state,
             ws_id,
-            GoalStatus::Blocked("timeout".into()),
+            GoalStatus::Blocked("ran out of time".into()),
             &format!(
-                "goal '{}' hit its {}-minute wall clock without an iteration file",
+                "'{}' ran for {} minutes without finishing — jmux stopped driving it; \
+                 open its workspace to take over",
                 run.goal_name, run.wall_clock_minutes
             ),
         );
@@ -476,19 +889,32 @@ fn drive_one(state: &Rc<AppState>, ws_id: Uuid, settings: &crate::settings::Goal
             .get(&run.panel_id)
             .and_then(|s| s.read_screen_text());
         let Some(text) = text else {
-            // Surface not spawned/ready yet — don't count this as idle, but
-            // watchdog it: surfaces only spawn once mapped and visible, so a
-            // workspace created while the window is hidden never starts.
+            // No terminal to read: the run's surface does not exist. Runs are
+            // spawned headlessly by `ensure_agent_spawned` (visibility is not
+            // required), so this is now a genuine fault, not the normal
+            // background case — but keep it as a safety net rather than a panic,
+            // and give it a full minute in case a window is still coming up.
             let ticks = run.no_text_ticks + 1;
             set_run(state, ws_id, |r| r.no_text_ticks = ticks);
             if ticks == 30 {
+                // The pty may be running even if the terminal is unreadable —
+                // process liveness (a /proc walk keyed on JMUX_PANEL_ID) tells
+                // "failed to start" apart from "started, can't read it".
+                let agent_alive = crate::session::claude_resume::all_local_claude_cwds()
+                    .contains_key(&run.panel_id);
+                let detail = if agent_alive {
+                    "running but its terminal cannot be read"
+                } else {
+                    "failed to start"
+                };
                 escalate(
                     state,
                     ws_id,
-                    GoalStatus::NeedsAttention("agent surface never spawned".into()),
+                    GoalStatus::NeedsAttention(detail.into()),
                     &format!(
-                        "goal '{}' has not started — open its workspace (terminals \
-                         only spawn once visible)",
+                        "'{}' {detail} — jmux could not start or read its terminal, \
+                         which should not happen; open its workspace and check the \
+                         jmux log for the spawn error",
                         run.goal_name
                     ),
                 );
@@ -519,9 +945,10 @@ fn drive_one(state: &Rc<AppState>, ws_id: Uuid, settings: &crate::settings::Goal
         escalate(
             state,
             ws_id,
-            GoalStatus::NeedsAttention("selection menu on screen".into()),
+            GoalStatus::NeedsAttention("waiting on a prompt".into()),
             &format!(
-                "goal '{}' is waiting on a selection menu — open the workspace to answer it",
+                "the agent for '{}' is waiting for you to answer a prompt — \
+                 open its workspace",
                 run.goal_name
             ),
         );
@@ -553,9 +980,10 @@ fn drive_one(state: &Rc<AppState>, ws_id: Uuid, settings: &crate::settings::Goal
                 escalate(
                     state,
                     ws_id,
-                    GoalStatus::Blocked("agent process exited".into()),
+                    GoalStatus::Blocked("the agent exited".into()),
                     &format!(
-                        "goal '{}': the agent process exited without writing {}",
+                        "the agent for '{}' exited before writing its iteration \
+                         report ({})",
                         run.goal_name,
                         run.output_rel(run.iteration)
                     ),
@@ -567,11 +995,12 @@ fn drive_one(state: &Rc<AppState>, ws_id: Uuid, settings: &crate::settings::Goal
                     state,
                     ws_id,
                     GoalStatus::NeedsAttention(format!(
-                        "idle after {} nudges",
+                        "stalled after {} reminders",
                         run.nudges_sent
                     )),
                     &format!(
-                        "goal '{}' is idle after {} nudges — it may be stuck",
+                        "the agent for '{}' stalled {} times — it may be stuck; \
+                         open its workspace",
                         run.goal_name, run.nudges_sent
                     ),
                 );
@@ -603,9 +1032,9 @@ fn on_iteration_file(
             notify(
                 state,
                 ws_id,
-                "Goal complete",
+                "Goal finished",
                 &format!(
-                    "'{}' finished: {}",
+                    "'{}' is done — read {}",
                     run.goal_name,
                     run.output_rel(run.iteration)
                 ),
@@ -624,8 +1053,12 @@ fn on_iteration_file(
                 Ok(next) => notify(
                     state,
                     ws_id,
-                    "Goal iterating",
-                    &format!("'{}' starting iteration {next}", run.goal_name),
+                    "Goal working",
+                    &format!(
+                        "'{}' could not finish yet — starting iteration {next} of {}",
+                        run.goal_name,
+                        run.started_iteration_cap()
+                    ),
                     false,
                 ),
                 Err(e) => tracing::warn!(goal = %run.goal_name, "auto-iteration failed: {e}"),
@@ -635,9 +1068,10 @@ fn on_iteration_file(
             escalate(
                 state,
                 ws_id,
-                GoalStatus::Blocked("agent reported blocked".into()),
+                GoalStatus::Blocked("the agent could not finish".into()),
                 &format!(
-                    "goal '{}' is blocked — see {} section 4",
+                    "'{}' stopped — the agent could not finish; its reasons are in \
+                     section 4 of {}",
                     run.goal_name,
                     run.output_rel(run.iteration)
                 ),
@@ -647,9 +1081,10 @@ fn on_iteration_file(
             escalate(
                 state,
                 ws_id,
-                GoalStatus::NeedsAttention(format!("unknown status '{other}'")),
+                GoalStatus::NeedsAttention(format!("unrecognised status '{other}'")),
                 &format!(
-                    "goal '{}' wrote an unknown status '{other}' in {}",
+                    "'{}' wrote an unrecognised status '{other}' in {} — expected \
+                     done or blocked",
                     run.goal_name,
                     run.output_rel(run.iteration)
                 ),
@@ -672,9 +1107,16 @@ fn set_run(state: &Rc<AppState>, ws_id: Uuid, f: impl FnOnce(&mut GoalRun)) {
     }
 }
 
-/// Set a status and send a (rate-limited) escalation notification.
+/// Set a status and send a (rate-limited) escalation notification. The
+/// notification is plain language; the precise state name goes to the log.
 fn escalate(state: &Rc<AppState>, ws_id: Uuid, status: GoalStatus, message: &str) {
     let now = epoch_now();
+    tracing::info!(
+        workspace = %ws_id,
+        state = status.as_str(),
+        detail = status.detail().unwrap_or(""),
+        "goal escalation"
+    );
     let mut should_notify = false;
     {
         let mut goals = lock_or_recover(&state.shared.goals);
@@ -695,7 +1137,7 @@ fn escalate(state: &Rc<AppState>, ws_id: Uuid, status: GoalStatus, message: &str
         }
     }
     if should_notify {
-        notify(state, ws_id, "Goal needs attention", message, true);
+        notify(state, ws_id, "Goal needs you", message, true);
     }
 }
 
@@ -795,6 +1237,11 @@ pub struct LaunchSpec {
     pub graph: Option<GraphLink>,
     /// Sidebar group the workspace joins (graph nodes).
     pub group_id: Option<Uuid>,
+    /// Switch the user's view to the new workspace. True when a human just
+    /// asked for this run (`jmux goal run`) and expects to land in it; false for
+    /// scheduler-launched graph nodes, which start their agent headlessly and
+    /// must not steal focus.
+    pub select: bool,
 }
 
 /// Create the workspace, launch the runner, and register the run.
@@ -864,10 +1311,15 @@ pub fn launch_goal(
     {
         let mut tm = lock_or_recover(&shared.tab_manager);
         let placement = crate::settings::load().new_workspace_placement;
-        // Selected on creation: surfaces spawn their command on first
-        // visible allocation, so a background workspace would never start
-        // (headless spawn is future work — see the design doc).
-        tm.add_workspace_with_placement(ws, placement);
+        if spec.select {
+            tm.add_workspace_with_placement(ws, placement);
+        } else {
+            // Background run: the workspace takes its configured place in the
+            // sidebar but the user stays where they are. Its agent is started by
+            // the driver's headless spawn (`AppState::spawn_panel_headless`) —
+            // it does not need to be visible.
+            tm.add_workspace_keep_selection(ws, placement);
+        }
     }
     shared.notify_ui_refresh();
 
@@ -951,6 +1403,88 @@ mod tests {
     }
 
     #[test]
+    fn launch_command_allowed_tools_are_quoted_and_never_eat_the_seed() {
+        let runner = GoalRunner {
+            allowed_tools: vec![
+                "Bash(cargo test:*)".into(),
+                "  ".into(), // blank entries are dropped, not quoted
+                "Bash(git commit -m 'wip':*)".into(),
+                " Read ".into(),
+            ],
+            ..Default::default()
+        };
+        let cmd = launch_command(&runner, "abc", "do it", Path::new("/tmp/s.md"), "acceptEdits");
+        // `--allowedTools` is variadic: it must be terminated by a flag,
+        // never by the trailing seed argument.
+        assert!(
+            cmd.starts_with(
+                "claude --allowedTools 'Bash(cargo test:*)' 'Bash(git commit -m '\\''wip'\\'':*)' \
+                 'Read' --session-id abc"
+            ),
+            "{cmd}"
+        );
+        assert!(cmd.ends_with("\"$(cat '/tmp/s.md')\""), "{cmd}");
+        assert!(!cmd.contains('\n'));
+        // No allowlist configured = no flag at all.
+        let bare = launch_command(
+            &GoalRunner::default(),
+            "abc",
+            "do it",
+            Path::new("/tmp/s.md"),
+            "acceptEdits",
+        );
+        assert!(!bare.contains("--allowedTools"), "{bare}");
+    }
+
+    #[test]
+    fn permission_mode_precedence_and_bypass_containment() {
+        let plain = GoalRunner::default();
+        let mut settings = crate::settings::GoalSettings::default();
+        assert_eq!(settings.permission_mode, "acceptEdits");
+
+        // Nothing configured anywhere → the default.
+        assert_eq!(resolve_permission_mode(None, &plain, &settings), "acceptEdits");
+
+        // Settings < runner < per-invocation request.
+        settings.permission_mode = "plan".into();
+        assert_eq!(resolve_permission_mode(None, &plain, &settings), "plan");
+        let runner = GoalRunner {
+            permission_mode: "acceptEdits".into(),
+            ..Default::default()
+        };
+        assert_eq!(resolve_permission_mode(None, &runner, &settings), "acceptEdits");
+        assert_eq!(
+            resolve_permission_mode(Some("supervised"), &runner, &settings),
+            "supervised"
+        );
+        // An empty request is "no flag given", not a mode.
+        assert_eq!(resolve_permission_mode(Some(""), &runner, &settings), "acceptEdits");
+
+        // Bypass: allowed per invocation, refused from every ambient source.
+        assert_eq!(
+            resolve_permission_mode(Some("bypassPermissions"), &plain, &settings),
+            "bypassPermissions"
+        );
+        let bypass_runner = GoalRunner {
+            permission_mode: "bypassPermissions".into(),
+            ..Default::default()
+        };
+        assert_eq!(resolve_permission_mode(None, &bypass_runner, &settings), "plan");
+        settings.permission_mode = "bypassPermissions".into();
+        assert_eq!(
+            resolve_permission_mode(None, &bypass_runner, &settings),
+            "acceptEdits"
+        );
+        assert!(validate_permission_mode("bypassPermissions", false).is_err());
+        assert!(validate_permission_mode("bypassPermissions", true).is_ok());
+
+        // Unknown values are ignored (with a warning), falling through.
+        settings.permission_mode = "yolo".into();
+        assert_eq!(resolve_permission_mode(Some("nope"), &plain, &settings), "acceptEdits");
+        assert!(validate_permission_mode("acceptedits", false).is_err());
+    }
+
+    #[test]
     fn launch_command_custom_template() {
         let runner = GoalRunner {
             agent: "custom".into(),
@@ -981,6 +1515,166 @@ mod tests {
         assert!(parse_iteration_file(&p).unwrap().is_none());
         assert!(parse_iteration_file(&dir.join("missing.md")).is_none());
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn slugify_takes_the_first_words() {
+        assert_eq!(
+            slugify_goal("Add a --version flag to the CLI, with a test"),
+            "add-a-version-flag-to-the"
+        );
+        assert_eq!(slugify_goal("  "), "goal");
+        assert_eq!(slugify_goal("!!! ???"), "goal");
+        let long = slugify_goal(
+            "supercalifragilistic expialidocious enumeration of everything imaginable",
+        );
+        assert!(long.len() <= 48, "{long}");
+        assert!(!long.ends_with('-'));
+    }
+
+    fn test_run(name: &str, status: GoalStatus) -> GoalRun {
+        GoalRun {
+            workspace_id: Uuid::new_v4(),
+            panel_id: Uuid::new_v4(),
+            session_id: String::new(),
+            goal_name: name.to_string(),
+            goal_path: String::new(),
+            cwd: "/tmp".into(),
+            output_dir_rel: "docs/roadmap".into(),
+            iteration: 1,
+            max_iterations: 1,
+            runner_name: "claude".into(),
+            runner: GoalRunner::default(),
+            status,
+            nudges_sent: 0,
+            idle_ticks: 0,
+            no_text_ticks: 0,
+            started_epoch: 0,
+            wall_clock_minutes: 0,
+            last_escalation_epoch: 0,
+            graph: None,
+        }
+    }
+
+    fn registry(runs: Vec<GoalRun>) -> GoalRegistry {
+        runs.into_iter().map(|r| (r.workspace_id, r)).collect()
+    }
+
+    #[test]
+    fn resolve_run_by_name_uuid_and_sole_run() {
+        let a = test_run("mapsite/map-core", GoalStatus::Running);
+        let a_id = a.workspace_id;
+        let reg = registry(vec![a]);
+        // Exact name, bare node id, and UUID all land on the same run.
+        assert_eq!(resolve_run(&reg, Some("mapsite/map-core"), None).unwrap(), a_id);
+        assert_eq!(resolve_run(&reg, Some("map-core"), None).unwrap(), a_id);
+        assert_eq!(
+            resolve_run(&reg, Some(&a_id.to_string()), None).unwrap(),
+            a_id
+        );
+        // No target: the only non-terminal run.
+        assert_eq!(resolve_run(&reg, None, None).unwrap(), a_id);
+        // Unknown name lists the candidates.
+        let err = resolve_run(&reg, Some("nope"), None).unwrap_err();
+        assert!(err.contains("mapsite/map-core"), "{err}");
+        let err = resolve_run(&reg, Some(&Uuid::new_v4().to_string()), None).unwrap_err();
+        assert!(err.contains("no goal run for workspace"), "{err}");
+    }
+
+    #[test]
+    fn resolve_run_ambiguity_and_hint() {
+        let a = test_run("g/one", GoalStatus::Running);
+        let b = test_run("g/two", GoalStatus::Running);
+        let (a_id, b_id) = (a.workspace_id, b.workspace_id);
+        let reg = registry(vec![a, b]);
+        let err = resolve_run(&reg, None, None).unwrap_err();
+        assert!(err.contains("several goal runs are active"), "{err}");
+        assert!(err.contains("g/one") && err.contains("g/two"), "{err}");
+        // The caller's own workspace decides when nothing was named.
+        assert_eq!(resolve_run(&reg, None, Some(b_id)).unwrap(), b_id);
+        // A hint that isn't a goal run falls through to the ambiguity error.
+        assert!(resolve_run(&reg, None, Some(Uuid::new_v4())).is_err());
+        // A finished run loses to its live namesake.
+        let done = test_run("g/one", GoalStatus::Done);
+        let reg = registry(vec![
+            test_run("g/two", GoalStatus::Running),
+            done,
+            {
+                let mut r = test_run("g/one", GoalStatus::Running);
+                r.workspace_id = a_id;
+                r
+            },
+        ]);
+        assert_eq!(resolve_run(&reg, Some("g/one"), None).unwrap(), a_id);
+    }
+
+    #[test]
+    fn goal_source_file_vs_inline_text() {
+        let dir = std::env::temp_dir().join(format!("jmux-goal-src-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("goal.md");
+        std::fs::write(&file, "Build a thing.").unwrap();
+
+        let src = resolve_goal_source(&serde_json::json!({
+            "goal": file.to_string_lossy(),
+        }))
+        .unwrap();
+        assert!(!src.inline);
+        assert_eq!(src.text, "Build a thing.");
+        // Stem "goal" → the parent directory names the run.
+        assert!(src.name.starts_with("jmux-goal-src-"), "{}", src.name);
+        assert_eq!(src.cwd, dir);
+
+        let src = resolve_goal_source(&serde_json::json!({
+            "goal_text": "Add a --version flag to the CLI",
+            "client_cwd": dir.to_string_lossy(),
+        }))
+        .unwrap();
+        assert!(src.inline);
+        assert_eq!(src.name, "add-a-version-flag-to-the");
+        // The goal file jmux wrote lives outside the working directory.
+        assert!(src.path.starts_with(goal_text_dir()), "{:?}", src.path);
+        assert!(!src.path.starts_with(&dir));
+        assert_eq!(std::fs::read_to_string(&src.path).unwrap().trim(), src.text);
+        let _ = std::fs::remove_file(&src.path);
+
+        // Relative file path and a missing goal are both rejected.
+        assert_eq!(
+            resolve_goal_source(&serde_json::json!({"goal": "rel/goal.md"}))
+                .unwrap_err()
+                .0,
+            "invalid_params"
+        );
+        assert_eq!(
+            resolve_goal_source(&serde_json::json!({})).unwrap_err().0,
+            "invalid_params"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn output_dir_must_stay_inside_the_repo() {
+        assert_eq!(validate_output_dir("docs/roadmap").unwrap(), "docs/roadmap");
+        assert_eq!(validate_output_dir(" .jmux/goals/ ").unwrap(), ".jmux/goals");
+        assert_eq!(validate_output_dir("./docs/roadmap").unwrap(), "docs/roadmap");
+        for bad in ["/tmp/out", "/", "../out", "docs/../../out", "", "  ", "."] {
+            assert!(validate_output_dir(bad).is_err(), "accepted {bad:?}");
+        }
+    }
+
+    #[test]
+    fn output_dir_setting_falls_back_when_unusable() {
+        let mut settings = crate::settings::GoalSettings::default();
+        assert_eq!(output_dir_rel(&settings), "docs/roadmap");
+        settings.output_dir = ".jmux/goals".into();
+        assert_eq!(output_dir_rel(&settings), ".jmux/goals");
+        settings.output_dir = "/etc".into();
+        assert_eq!(output_dir_rel(&settings), "docs/roadmap");
+    }
+
+    #[test]
+    fn bare_goals_iterate_three_times_by_default() {
+        assert_eq!(crate::settings::GoalSettings::default().max_iterations, 3);
     }
 
     #[test]

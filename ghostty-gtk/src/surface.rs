@@ -66,11 +66,62 @@ mod gl_raw {
 }
 
 // -----------------------------------------------------------------------
+// Spawn-once guard
+// -----------------------------------------------------------------------
+
+/// Which of the two paths that can start a terminal's child process owns the
+/// spawn: the first visible allocation (`ensure_spawned`, the normal case) or
+/// `spawn_headless` (a workspace that is never mapped).
+///
+/// Exactly one may call `ghostty_surface_new` — doing it twice would fork a
+/// second pty and child and orphan the first — but a *failed* attempt must not
+/// lock the surface out for good: a background spawn that could not get a GL
+/// context has to be retryable by the allocation path, which is why failure
+/// returns to `Idle` rather than sticking at `Spawning`.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+enum SpawnState {
+    /// Nothing has tried yet.
+    #[default]
+    Idle,
+    /// An attempt is in flight (re-entrant calls must not start a second one).
+    Spawning,
+    /// The `ghostty_surface_t` exists: pty open, child running.
+    Spawned,
+}
+
+impl SpawnState {
+    /// May the caller start a spawn attempt now?
+    fn may_start(self) -> bool {
+        matches!(self, SpawnState::Idle)
+    }
+
+    /// State after an attempt that did (or did not) create the surface.
+    fn settled(created: bool) -> Self {
+        if created {
+            SpawnState::Spawned
+        } else {
+            SpawnState::Idle
+        }
+    }
+}
+
+// -----------------------------------------------------------------------
 // GObject subclass for the GL surface widget
 // -----------------------------------------------------------------------
 
 mod imp {
     use super::*;
+
+    /// Everything needed to spawn the terminal's pty + child, captured by
+    /// `initialize_with_env` and consumed by whichever path starts the child
+    /// first: the first visible allocation (normal) or `spawn_headless`
+    /// (background workspaces, which are never mapped or allocated).
+    pub(super) struct SpawnConfig {
+        pub app: ghostty_app_t,
+        pub working_directory: Option<String>,
+        pub command: Option<String>,
+        pub env: Vec<(String, String)>,
+    }
 
     #[derive(Default)]
     pub struct GhosttyGlSurface {
@@ -106,6 +157,15 @@ mod imp {
         /// Backing storage for the `ghostty_env_var_s` array referenced by
         /// `config.env_vars` (same lifetime concern as `config_cstrings`).
         pub(super) config_env_array: RefCell<Vec<ghostty_env_var_s>>,
+        /// What to spawn, once. `None` until `initialize_with_env` runs.
+        pub(super) pending_spawn: RefCell<Option<SpawnConfig>>,
+        /// Spawn-once guard shared by the allocation path and the headless path
+        /// (see `SpawnState`): a successful headless spawn is never repeated when
+        /// the widget is finally mapped.
+        pub(super) spawn: Cell<super::SpawnState>,
+        /// True once the widget has had its first non-empty allocation, so the
+        /// one-shot focus grab that rides it happens exactly once.
+        pub(super) first_allocation: Cell<bool>,
     }
 
     #[glib::object_subclass]
@@ -315,6 +375,138 @@ impl GhosttyGlSurface {
         !self.imp().app.get().is_null()
     }
 
+    /// True once the `ghostty_surface_t` exists — i.e. the pty is open and the
+    /// child (shell or `command=`) has been spawned.
+    pub fn has_spawned(&self) -> bool {
+        !self.imp().surface.get().is_null()
+    }
+
+    /// Spawn the pty + child now, without waiting for a visible allocation.
+    ///
+    /// A GtkGLArea only gets an allocation when it is mapped, and a workspace
+    /// that was created in the background is never mapped — so the agent of a
+    /// background goal/graph node would never start. This starts it anyway:
+    ///
+    /// 1. GTK realizes on *map*, not on parenting, so an unmapped widget has no
+    ///    GL context. `realize()` forces one (it walks up and realizes the
+    ///    ancestors) without mapping or allocating anything, which is what
+    ///    `ghostty_surface_new` needs — libghostty's OpenGL backend loads GLAD
+    ///    from the *current* context in `surfaceInit`.
+    /// 2. `ghostty_surface_new` opens the pty and spawns the child.
+    /// 3. The size that a first allocation would have delivered is applied by
+    ///    hand (`width_px`/`height_px`), so the child sees a sane grid instead
+    ///    of ghostty's 800×600 fallback.
+    ///
+    /// Idempotent, and mutually exclusive with the allocation path: the
+    /// spawn-once guard means a later real allocation resizes the terminal
+    /// (normal ghostty resize) but never spawns a second child.
+    ///
+    /// Requires the widget to already be in a realized window (park it in an
+    /// unmapped container first). Returns false — having changed nothing — when
+    /// the surface cannot be created, so the caller can fall back to making the
+    /// workspace visible.
+    pub fn spawn_headless(&self, width_px: u32, height_px: u32) -> bool {
+        let imp = self.imp();
+        if self.has_spawned() {
+            return true;
+        }
+        if imp.pending_spawn.borrow().is_none() {
+            tracing::warn!(
+                "spawn_headless before initialize_with_env — nothing to spawn"
+            );
+            return false;
+        }
+        if self.root().is_none() {
+            tracing::debug!(
+                "spawn_headless: surface is not in a window yet — deferring"
+            );
+            return false;
+        }
+        if !self.is_realized() {
+            self.realize();
+        }
+        if !self.is_realized() || self.context().is_none() {
+            tracing::warn!(
+                realized = self.is_realized(),
+                has_context = self.context().is_some(),
+                error = ?self.error().map(|e| e.to_string()),
+                "spawn_headless: no GL context — cannot create the ghostty surface"
+            );
+            return false;
+        }
+        // Never call into libghostty's renderer without a current context: a
+        // failed GLAD load would unload the *global* function-pointer table and
+        // take every other surface's rendering down with it.
+        self.make_current();
+        if let Some(err) = self.error() {
+            tracing::warn!(error = %err, "spawn_headless: make_current failed");
+            return false;
+        }
+
+        if !imp.spawn.get().may_start() {
+            tracing::debug!("spawn_headless: a spawn is already in flight");
+            return false;
+        }
+        imp.spawn.set(SpawnState::Spawning);
+        self.spawn_from_pending();
+        imp.spawn.set(SpawnState::settled(self.has_spawned()));
+        if !self.has_spawned() {
+            // Creation failed — the guard is back to Idle so a real allocation
+            // can retry the normal way.
+            return false;
+        }
+
+        // No allocation will ever arrive while unmapped, so hand ghostty the
+        // synthetic geometry the pty should start with. The `resize` vfunc
+        // replaces it with the real one if the widget is ever mapped.
+        #[cfg(feature = "link-ghostty")]
+        {
+            let surface = imp.surface.get();
+            let scale = self.scale_factor() as f64;
+            unsafe {
+                ghostty_surface_set_content_scale(surface, scale, scale);
+                ghostty_surface_set_size(surface, width_px, height_px);
+            }
+        }
+        tracing::info!(
+            width_px,
+            height_px,
+            "spawned terminal headlessly (no visible allocation)"
+        );
+        true
+    }
+
+    /// Spawn the child if it hasn't started yet. Called by the first-allocation
+    /// path; `spawn_headless` is the background equivalent.
+    fn ensure_spawned(&self) {
+        let imp = self.imp();
+        if !imp.spawn.get().may_start() || self.has_spawned() {
+            return;
+        }
+        imp.spawn.set(SpawnState::Spawning);
+        self.spawn_from_pending();
+        imp.spawn.set(SpawnState::settled(self.has_spawned()));
+    }
+
+    /// Create the ghostty surface from the stashed spawn config.
+    fn spawn_from_pending(&self) {
+        let pending = self.imp().pending_spawn.borrow();
+        let Some(cfg) = pending.as_ref() else {
+            tracing::warn!("spawn requested before initialize_with_env");
+            return;
+        };
+        let (app, wd, cmd) = (
+            cfg.app,
+            cfg.working_directory.clone(),
+            cfg.command.clone(),
+        );
+        let env = cfg.env.clone();
+        // `create_surface` runs GTK/ghostty callbacks that can re-enter this
+        // widget, so the borrow must be released first.
+        drop(pending);
+        self.create_surface(app, wd.as_deref(), cmd.as_deref(), &env);
+    }
+
     /// Initialize the ghostty surface with the given app.
     ///
     /// This creates the underlying `ghostty_surface_t` and connects all
@@ -342,28 +534,36 @@ impl GhosttyGlSurface {
         imp.app.set(app);
         self.setup_event_controllers();
 
-        // Create the surface on the first resize — that's when GTK has
-        // allocated real pixel dimensions. We pass those as
-        // initial_width/initial_height so the PTY starts at the correct size.
-        let created = Rc::new(Cell::new(false));
-        let wd = working_directory.map(|s| s.to_string());
-        let cmd = command.map(|s| s.to_string());
-        let env: Vec<(String, String)> = env_vars
-            .iter()
-            .map(|(k, v)| (k.to_string(), v.to_string()))
-            .collect();
+        // Stash what to spawn. Normally the child starts on the first resize —
+        // that's when GTK has allocated real pixel dimensions, which the
+        // `resize` vfunc then hands to ghostty. A surface that will never be
+        // mapped (a background workspace) is started by `spawn_headless`
+        // instead; both go through `ensure_spawned`, which spawns once.
+        *imp.pending_spawn.borrow_mut() = Some(imp::SpawnConfig {
+            app,
+            working_directory: working_directory.map(|s| s.to_string()),
+            command: command.map(|s| s.to_string()),
+            env: env_vars
+                .iter()
+                .map(|(k, v)| (k.to_string(), v.to_string()))
+                .collect(),
+        });
         // Weak ref: the widget owns this signal handler, so a strong `self`
         // clone here would be a permanent reference cycle (see setup_event_controllers).
         self.connect_resize(glib::clone!(
             #[weak(rename_to = widget)]
             self,
             move |_w, width, height| {
-                tracing::debug!(width, height, created = created.get(), "GLArea resize");
-                if !created.get() && width > 0 && height > 0 {
-                    created.set(true);
-                    widget.create_surface(app, wd.as_deref(), cmd.as_deref(), &env);
-                    widget.grab_focus();
+                let imp = widget.imp();
+                tracing::debug!(width, height, spawn = ?imp.spawn.get(), "GLArea resize");
+                if width <= 0 || height <= 0 || imp.first_allocation.get() {
+                    return;
                 }
+                imp.first_allocation.set(true);
+                // No-op when the child already spawned headlessly; the
+                // `resize` vfunc delivers this real size to ghostty either way.
+                widget.ensure_spawned();
+                widget.grab_focus();
             }
         ));
 
@@ -375,7 +575,9 @@ impl GhosttyGlSurface {
         let weak = self.downgrade();
         glib::timeout_add_local_once(std::time::Duration::from_secs(3), move || {
             let Some(widget) = weak.upgrade() else { return };
-            if widget.imp().surface.get().is_null() {
+            // A surface parked for headless spawn is deliberately unmapped and
+            // unallocated; only complain when GTK owes us an allocation.
+            if widget.imp().surface.get().is_null() && widget.is_mapped() {
                 tracing::warn!(
                     mapped = widget.is_mapped(),
                     realized = widget.is_realized(),
@@ -432,6 +634,10 @@ impl GhosttyGlSurface {
             };
             config.scale_factor = self.scale_factor() as f64;
             config.context = ghostty_surface_context_e::GHOSTTY_SURFACE_CONTEXT_SPLIT;
+            // Explicit even though zeroed: EXEC is what opens the pty and
+            // spawns the child. (MANUAL would make the embedder pump bytes and
+            // ghostty would call `io_write_cb` — see the config struct notes.)
+            config.io_mode = ghostty_surface_io_mode_e::GHOSTTY_SURFACE_IO_EXEC;
             config.userdata =
                 (&*callback_userdata as *const crate::callbacks::SurfaceUserdata) as *mut c_void;
 
@@ -466,15 +672,11 @@ impl GhosttyGlSurface {
                 config.env_var_count = env_vars_c.len();
             }
 
-            // Pass initial pixel dimensions so the PTY starts with the
-            // correct size instead of the 800×600 default.
-            let scale = self.scale_factor() as f64;
-            let w = self.width();
-            let h = self.height();
-            if w > 0 && h > 0 {
-                config.initial_width = (w as f64 * scale) as u32;
-                config.initial_height = (h as f64 * scale) as u32;
-            }
+            // The initial pty size is NOT part of the surface config (libghostty
+            // has no such field — it starts at 800×600 and is resized). When
+            // this runs from the first-allocation path, the `resize` vfunc fires
+            // right after us with the real pixel size; the headless path calls
+            // `ghostty_surface_set_size` itself.
 
             // Keep the config C strings alive for the surface's lifetime.
             // Ghostty spawns the command lazily (after this call returns), so
@@ -1669,6 +1871,7 @@ fn parse_hex_color(hex: &str) -> Option<(f32, f32, f32)> {
 #[cfg(test)]
 mod tests {
     use super::cstring_input;
+    use super::SpawnState;
 
     #[test]
     fn cstring_input_accepts_valid_text() {
@@ -1678,6 +1881,38 @@ mod tests {
     #[test]
     fn cstring_input_rejects_interior_nul() {
         assert!(cstring_input("hel\0lo", "test").is_none());
+    }
+
+    // ── spawn-once guard ────────────────────────────────────────────────
+    // The two spawn paths (first visible allocation / `spawn_headless`) share
+    // this guard; double-spawning would fork a second pty + agent process.
+
+    #[test]
+    fn a_fresh_surface_may_spawn() {
+        assert!(SpawnState::default().may_start());
+    }
+
+    #[test]
+    fn an_in_flight_spawn_blocks_a_second_one() {
+        assert!(!SpawnState::Spawning.may_start());
+    }
+
+    #[test]
+    fn a_spawned_surface_never_spawns_again() {
+        // The headless path spawned the agent; the widget is mapped later and
+        // its first allocation must resize only.
+        let after_headless = SpawnState::settled(true);
+        assert_eq!(after_headless, SpawnState::Spawned);
+        assert!(!after_headless.may_start());
+    }
+
+    #[test]
+    fn a_failed_spawn_is_retryable() {
+        // No GL context (no window yet): the allocation path must still be able
+        // to start the child when the workspace is eventually shown.
+        let after_failure = SpawnState::settled(false);
+        assert_eq!(after_failure, SpawnState::Idle);
+        assert!(after_failure.may_start());
     }
 }
 

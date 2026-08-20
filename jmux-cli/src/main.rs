@@ -862,14 +862,83 @@ fn main() -> anyhow::Result<()> {
     Ok(())
 }
 
+/// Exit 1 with the response's error message unless the call succeeded.
+fn require_ok(response: &serde_json::Value, what: &str) {
+    if response.get("ok").and_then(|v| v.as_bool()) == Some(true) {
+        return;
+    }
+    eprintln!(
+        "{what} failed: {}",
+        response
+            .get("error")
+            .and_then(|e| e.get("message"))
+            .and_then(|m| m.as_str())
+            .unwrap_or("unknown error")
+    );
+    std::process::exit(1);
+}
+
+/// An existing file → its absolute path; anything else is literal goal text.
+fn goal_file_path(arg: &str) -> Option<std::path::PathBuf> {
+    let p = std::path::Path::new(arg);
+    if !p.is_file() {
+        return None;
+    }
+    std::fs::canonicalize(p).ok()
+}
+
+/// Insert the goal source of a launch request: an existing file stays a path,
+/// anything else is goal text jmux writes to a file itself (outside the repo).
+/// `client_cwd` is what the app derives the git root from for inline text.
+fn insert_goal_source(obj: &mut serde_json::Map<String, serde_json::Value>, arg: &str) {
+    match goal_file_path(arg) {
+        Some(abs) => {
+            obj.insert("goal".into(), serde_json::json!(abs.to_string_lossy()));
+        }
+        None => {
+            obj.insert("goal_text".into(), serde_json::json!(arg));
+        }
+    }
+    if let Ok(cwd) = std::env::current_dir() {
+        obj.insert(
+            "client_cwd".into(),
+            serde_json::json!(cwd.to_string_lossy()),
+        );
+    }
+}
+
+/// The permission mode a per-invocation flag asks for, if any. `None` means
+/// neither flag was given, and the app picks the mode: the runner's
+/// `permission_mode`, else `goal.permission_mode` (default `acceptEdits`).
+/// `bypassPermissions` is reachable only from here — the app refuses it as a
+/// configured default.
+fn permission_mode_flag(full_auto: bool, supervised: bool) -> Option<&'static str> {
+    match (full_auto, supervised) {
+        (true, _) => Some("bypassPermissions"),
+        (_, true) => Some("supervised"),
+        _ => None,
+    }
+}
+
+/// Friendly `graph.create` output — shared by `jmux graph` and `jmux goal --plan`.
+fn print_graph_created(result: &serde_json::Value) {
+    let name = result["graph"].as_str().unwrap_or("?");
+    println!("graph '{name}' created — an agent is turning your goal into a plan.");
+    println!("  watch it in the new workspace; the plan appears in the graph panel");
+    println!("  when it lands: review it there (or edit proposal.json), then Approve & Run");
+    println!("  watch: jmux graph status {name}");
+}
+
 /// `jmux graph …` — DAG orchestration of goal workspaces.
 fn run_graph(cli: &Cli) -> anyhow::Result<()> {
     let Commands::Graph {
         command,
-        name,
+        goal_or_name,
         goal,
+        name,
         max_concurrency,
         max_iterations,
+        no_worktrees,
         no_review,
         review_iterations,
         runner,
@@ -890,30 +959,56 @@ fn run_graph(cli: &Cli) -> anyhow::Result<()> {
             GraphCommands::Pause { name } => ("graph.pause", serde_json::json!({"name": name})),
             GraphCommands::Resume { name } => ("graph.resume", serde_json::json!({"name": name})),
             GraphCommands::Stop { name } => ("graph.stop", serde_json::json!({"name": name})),
+            // Node verdicts are goal verbs addressed by "<graph>/<node>".
+            GraphCommands::Continue { name, node, note } => {
+                let mut params = serde_json::json!({"workspace": format!("{name}/{node}")});
+                if let Some(n) = note {
+                    params["note"] = serde_json::json!(n);
+                }
+                return run_goal_verb(cli, "goal.continue", params);
+            }
+            GraphCommands::Accept { name, node } => {
+                return run_goal_verb(
+                    cli,
+                    "goal.accept",
+                    serde_json::json!({"workspace": format!("{name}/{node}")}),
+                );
+            }
         }
     } else {
-        let (Some(name), Some(goal)) = (name, goal) else {
-            eprintln!("usage: jmux graph <name> --goal <top.md> [--max-concurrency K] …");
-            eprintln!("       jmux graph approve|revise|status|pause|resume|stop <name>");
-            std::process::exit(2);
-        };
-        let abs = std::fs::canonicalize(goal)
-            .map_err(|e| anyhow::anyhow!("cannot resolve goal file '{goal}': {e}"))?;
-        let permission_mode = if *full_auto {
-            "bypassPermissions"
-        } else if *supervised {
-            "supervised"
-        } else {
-            "acceptEdits"
+        // Launch. New form: `jmux graph <goal.md|"goal text">` (name derived
+        // by the app). Compatibility form: `jmux graph <name> --goal <top.md>`.
+        let (source, explicit_name) = match (goal, goal_or_name) {
+            (Some(path), positional) => {
+                if goal_file_path(path).is_none() {
+                    anyhow::bail!("cannot resolve goal file '{path}'");
+                }
+                (path.clone(), name.clone().or_else(|| positional.clone()))
+            }
+            (None, Some(arg)) => (arg.clone(), name.clone()),
+            (None, None) => {
+                eprintln!(
+                    "usage: jmux graph <top.md|\"goal text\"> [--name NAME] [--max-concurrency K] …"
+                );
+                eprintln!("       jmux graph approve|revise|status|pause|resume|stop <name>");
+                eprintln!("       jmux graph continue|accept <name> <node>");
+                std::process::exit(2);
+            }
         };
         let mut params = serde_json::json!({
-            "name": name,
-            "goal": abs.to_string_lossy(),
             "review": !*no_review,
             "review_iterations": *review_iterations,
-            "permission_mode": permission_mode,
+            "use_worktrees": !*no_worktrees,
         });
         let obj = params.as_object_mut().expect("params is an object");
+        // Only a flag overrides the configured mode (see run_goal).
+        if let Some(mode) = permission_mode_flag(*full_auto, *supervised) {
+            obj.insert("permission_mode".into(), serde_json::json!(mode));
+        }
+        insert_goal_source(obj, &source);
+        if let Some(v) = explicit_name {
+            obj.insert("name".into(), serde_json::json!(v));
+        }
         if let Some(v) = max_concurrency {
             obj.insert("max_concurrency".into(), serde_json::json!(v));
         }
@@ -927,18 +1022,7 @@ fn run_graph(cli: &Cli) -> anyhow::Result<()> {
     };
 
     let response = rpc::send_request(&cli.socket, method, params, cli.window.as_deref())?;
-    let ok = response.get("ok").and_then(|v| v.as_bool()) == Some(true);
-    if !ok {
-        eprintln!(
-            "error: {}",
-            response
-                .get("error")
-                .and_then(|e| e.get("message"))
-                .and_then(|m| m.as_str())
-                .unwrap_or("unknown error")
-        );
-        std::process::exit(1);
-    }
+    require_ok(&response, &method.replace('.', " "));
     if cli.json {
         println!("{}", serde_json::to_string_pretty(&response)?);
         return Ok(());
@@ -946,26 +1030,53 @@ fn run_graph(cli: &Cli) -> anyhow::Result<()> {
     let r = &response["result"];
     match method {
         "graph.status" => print_graph_status(&response),
-        "graph.create" => {
-            println!(
-                "graph '{}' created — the orchestrator is decomposing your goal.",
-                r["graph"].as_str().unwrap_or("?")
-            );
-            println!("  watch it in the new workspace; the proposed plan appears in the graph panel");
-            println!("  when ready: review there (or edit proposal.json), then Approve & Run");
-        }
+        "graph.create" => print_graph_created(r),
         "graph.approve" => println!(
-            "graph '{}' approved — {} nodes running",
+            "graph '{}' approved — {} nodes will run",
             r["graph"].as_str().unwrap_or("?"),
             r["nodes"].as_u64().unwrap_or(0)
         ),
-        "graph.revise" => println!("revision sent to the orchestrator — a new proposal will follow"),
+        "graph.revise" => println!("asked for a new plan — it will appear for review"),
         "graph.pause" => println!("graph paused — running nodes finish, nothing new launches"),
         "graph.resume" => println!("graph resumed"),
         "graph.stop" => println!("graph stopped"),
         _ => println!("{}", serde_json::to_string_pretty(&response)?),
     }
     Ok(())
+}
+
+/// Plain-language labels for the serialized state names. `--json` keeps the
+/// identifiers; only these human-readable lines are reworded.
+fn goal_state_label(s: &str) -> &str {
+    match s {
+        "running" => "working",
+        "needs-attention" => "needs you",
+        "done" => "finished",
+        "blocked" => "stopped",
+        other => other,
+    }
+}
+
+fn node_state_label(s: &str) -> &str {
+    match s {
+        "pending" => "waiting its turn",
+        "running" => "working",
+        "review" => "waiting for your review",
+        "done" => "finished",
+        "blocked" => "needs you",
+        "interrupted" => "interrupted by a restart",
+        other => other,
+    }
+}
+
+fn graph_state_label(s: &str) -> &str {
+    match s {
+        "proposing" => "planning",
+        "proposed" => "plan review",
+        "running" => "working",
+        "complete" => "finished",
+        other => other,
+    }
 }
 
 /// Human-friendly `graph status` rendering.
@@ -987,7 +1098,7 @@ fn print_graph_status(response: &serde_json::Value) {
         println!(
             "graph {} — {} (concurrency {}, iterations/node {})",
             g["name"].as_str().unwrap_or("?"),
-            g["status"].as_str().unwrap_or("?"),
+            graph_state_label(g["status"].as_str().unwrap_or("?")),
             g["max_concurrency"].as_u64().unwrap_or(1),
             g["max_iterations"].as_u64().unwrap_or(1),
         );
@@ -1003,7 +1114,7 @@ fn print_graph_status(response: &serde_json::Value) {
                 .unwrap_or_default();
             println!(
                 "  [{}] {}{}{}",
-                n["status"].as_str().unwrap_or("?"),
+                node_state_label(n["status"].as_str().unwrap_or("?")),
                 n["id"].as_str().unwrap_or("?"),
                 if deps.is_empty() {
                     String::new()
@@ -1019,12 +1130,163 @@ fn print_graph_status(response: &serde_json::Value) {
     }
 }
 
+/// Human-friendly `goal status` rendering (one block per run).
+fn print_goal_status(result: &serde_json::Value) {
+    let mut runs: Vec<&serde_json::Value> = if let Some(rs) = result["goals"].as_array() {
+        rs.iter().collect()
+    } else if result.is_object() && result.get("goal").is_some() {
+        vec![result]
+    } else {
+        Vec::new()
+    };
+    if runs.is_empty() {
+        println!("no goal runs");
+        return;
+    }
+    runs.sort_by_key(|r| r["goal"].as_str().unwrap_or("").to_string());
+    for r in runs {
+        println!(
+            "goal {} — {}{}  (iteration {}/{}, runner {})",
+            r["goal"].as_str().unwrap_or("?"),
+            goal_state_label(r["status"].as_str().unwrap_or("?")),
+            r["detail"]
+                .as_str()
+                .map(|d| format!(" ({d})"))
+                .unwrap_or_default(),
+            r["iteration"].as_u64().unwrap_or(0),
+            r["max_iterations"].as_u64().unwrap_or(1),
+            r["runner"].as_str().unwrap_or("?"),
+        );
+        println!("  output:    {}", r["output"].as_str().unwrap_or("?"));
+        println!(
+            "  workspace: {}",
+            r["workspace_id"].as_str().unwrap_or("?")
+        );
+    }
+}
+
+/// Send one run-addressed goal verb (`goal.complete|continue|accept|stop`)
+/// and print a single confirmation line.
+fn run_goal_verb(cli: &Cli, method: &str, params: serde_json::Value) -> anyhow::Result<()> {
+    let response = rpc::send_request(&cli.socket, method, params, cli.window.as_deref())?;
+    if cli.json {
+        println!("{}", serde_json::to_string_pretty(&response)?);
+        if response.get("ok").and_then(|v| v.as_bool()) != Some(true) {
+            std::process::exit(1);
+        }
+        return Ok(());
+    }
+    require_ok(&response, &method.replace('.', " "));
+    let r = &response["result"];
+    let name = r["goal"].as_str().unwrap_or("?");
+    let iteration = r["iteration"].as_u64().unwrap_or(0);
+    match method {
+        "goal.complete" => println!(
+            "goal '{name}' iteration {iteration} recorded as {}",
+            r["status"].as_str().unwrap_or("?")
+        ),
+        "goal.continue" => println!("goal '{name}' — iteration {iteration} started"),
+        "goal.accept" => println!("goal '{name}' accepted — iteration {iteration} is final"),
+        "goal.stop" => {
+            println!("goal '{name}' stopped — jmux stops driving it (workspace kept)")
+        }
+        _ => println!("{}", serde_json::to_string_pretty(&response)?),
+    }
+    Ok(())
+}
+
+/// `jmux goal status|continue|accept|stop|report` — a run is addressed by name
+/// (or UUID); with no argument the app falls back to this pane's run, else the
+/// only active run.
+fn run_goal_command(cli: &Cli, cmd: &GoalCommands) -> anyhow::Result<()> {
+    // This pane's workspace is a hint, not the answer — the app resolves it.
+    let hint = std::env::var("JMUX_WORKSPACE_ID").ok();
+    let addressed = |target: &Option<String>, workspace: &Option<String>| -> serde_json::Value {
+        let mut p = serde_json::Map::new();
+        if let Some(v) = target.clone().or_else(|| workspace.clone()) {
+            p.insert("workspace".into(), serde_json::json!(v));
+        }
+        if let Some(h) = &hint {
+            p.insert("hint_workspace".into(), serde_json::json!(h));
+        }
+        serde_json::Value::Object(p)
+    };
+    match cmd {
+        GoalCommands::Status { target, workspace } => {
+            let mut params = serde_json::Map::new();
+            if let Some(v) = target.clone().or_else(|| workspace.clone()) {
+                params.insert("workspace".into(), serde_json::json!(v));
+            }
+            let one_run = !params.is_empty();
+            let response = rpc::send_request(
+                &cli.socket,
+                "goal.status",
+                serde_json::Value::Object(params),
+                cli.window.as_deref(),
+            )?;
+            if cli.json {
+                println!("{}", serde_json::to_string_pretty(&response)?);
+                if response.get("ok").and_then(|v| v.as_bool()) != Some(true) {
+                    std::process::exit(1);
+                }
+                return Ok(());
+            }
+            require_ok(&response, "goal status");
+            print_goal_status(&response["result"]);
+            if !one_run {
+                // "What is running right now?" is goals AND graphs.
+                if let Ok(graphs) = rpc::send_request(
+                    &cli.socket,
+                    "graph.status",
+                    serde_json::json!({}),
+                    cli.window.as_deref(),
+                ) {
+                    if graphs.get("ok").and_then(|v| v.as_bool()) == Some(true) {
+                        print_graph_status(&graphs);
+                    }
+                }
+            }
+            Ok(())
+        }
+        GoalCommands::Report {
+            target,
+            status,
+            workspace,
+        } => {
+            let mut params = addressed(target, workspace);
+            if let Some(s) = status {
+                params["status"] = serde_json::json!(s);
+            }
+            run_goal_verb(cli, "goal.complete", params)
+        }
+        GoalCommands::Continue {
+            target,
+            note,
+            workspace,
+        } => {
+            let mut params = addressed(target, workspace);
+            if let Some(n) = note {
+                params["note"] = serde_json::json!(n);
+            }
+            run_goal_verb(cli, "goal.continue", params)
+        }
+        GoalCommands::Accept { target, workspace } => {
+            run_goal_verb(cli, "goal.accept", addressed(target, workspace))
+        }
+        GoalCommands::Stop { target, workspace } => {
+            run_goal_verb(cli, "goal.stop", addressed(target, workspace))
+        }
+    }
+}
+
 /// `jmux goal …` — launch / track goal-driven agent workspaces
 /// (docs/roadmap/DESIGN-goal-graph.md).
 fn run_goal(cli: &Cli) -> anyhow::Result<()> {
     let Commands::Goal {
         command,
-        path,
+        goal,
+        plan,
+        name,
         wait,
         cwd,
         runner,
@@ -1041,122 +1303,95 @@ fn run_goal(cli: &Cli) -> anyhow::Result<()> {
     };
 
     if let Some(cmd) = command {
-        let (method, params) = match cmd {
-            GoalCommands::Complete { status, workspace } => {
-                let ws = workspace
-                    .clone()
-                    .or_else(|| std::env::var("JMUX_WORKSPACE_ID").ok());
-                let Some(ws) = ws else {
-                    eprintln!(
-                        "goal complete: no workspace — pass --workspace or run inside a jmux pane"
-                    );
-                    std::process::exit(1);
-                };
-                (
-                    "goal.complete",
-                    serde_json::json!({"workspace": ws, "status": status}),
-                )
-            }
-            GoalCommands::Status { workspace } => {
-                ("goal.status", serde_json::json!({"workspace": workspace}))
-            }
-            GoalCommands::Continue { workspace } => {
-                let ws = workspace
-                    .clone()
-                    .or_else(|| std::env::var("JMUX_WORKSPACE_ID").ok());
-                let Some(ws) = ws else {
-                    eprintln!("goal continue: no workspace — pass one or run inside a jmux pane");
-                    std::process::exit(1);
-                };
-                ("goal.continue", serde_json::json!({"workspace": ws}))
-            }
-            GoalCommands::Accept { workspace } => {
-                let ws = workspace
-                    .clone()
-                    .or_else(|| std::env::var("JMUX_WORKSPACE_ID").ok());
-                let Some(ws) = ws else {
-                    eprintln!("goal accept: no workspace — pass one or run inside a jmux pane");
-                    std::process::exit(1);
-                };
-                ("goal.accept", serde_json::json!({"workspace": ws}))
-            }
-        };
-        let response = rpc::send_request(&cli.socket, method, params, cli.window.as_deref())?;
-        println!("{}", serde_json::to_string_pretty(&response)?);
-        if response.get("ok").and_then(|v| v.as_bool()) != Some(true) {
-            std::process::exit(1);
+        return run_goal_command(cli, cmd);
+    }
+
+    let Some(goal) = goal else {
+        eprintln!(
+            "usage: jmux goal <goal.md|\"goal text\"> [--plan] [--wait] \
+             [--runner NAME | --agent/--model/--effort]"
+        );
+        eprintln!("       jmux goal status|continue|accept|stop|report [NAME]");
+        std::process::exit(2);
+    };
+
+    let mut params = serde_json::json!({});
+    {
+        let obj = params.as_object_mut().expect("params is an object");
+        // Sent only when a flag asked for it: no flag means the app resolves
+        // the runner's permission_mode, else goal.permission_mode.
+        if let Some(mode) = permission_mode_flag(*full_auto, *supervised) {
+            obj.insert("permission_mode".into(), serde_json::json!(mode));
         }
+        insert_goal_source(obj, goal);
+        if let Some(v) = cwd {
+            obj.insert("cwd".into(), serde_json::json!(v));
+        }
+        if let Some(v) = name {
+            obj.insert("name".into(), serde_json::json!(v));
+        }
+        if let Some(v) = runner {
+            obj.insert("runner".into(), serde_json::json!(v));
+        }
+        if let Some(v) = max_iterations {
+            obj.insert("max_iterations".into(), serde_json::json!(v));
+        }
+        if *plan {
+            obj.insert("review".into(), serde_json::json!(true));
+        } else {
+            if let Some(v) = agent {
+                obj.insert("agent".into(), serde_json::json!(v));
+            }
+            if let Some(v) = model {
+                obj.insert("model".into(), serde_json::json!(v));
+            }
+            if let Some(v) = effort {
+                obj.insert("effort".into(), serde_json::json!(v));
+            }
+            if let Some(v) = title {
+                obj.insert("title".into(), serde_json::json!(v));
+            }
+        }
+    }
+
+    // --plan: the same launch, decomposed into a DAG first. `jmux graph` is
+    // the management surface from there on.
+    if *plan {
+        if agent.is_some() || model.is_some() || effort.is_some() || title.is_some() {
+            eprintln!(
+                "note: --agent/--model/--effort/--title apply to single-goal runs; \
+                 --plan takes its runner from --runner"
+            );
+        }
+        let response =
+            rpc::send_request(&cli.socket, "graph.create", params, cli.window.as_deref())?;
+        require_ok(&response, "plan");
+        if cli.json {
+            println!("{}", serde_json::to_string_pretty(&response)?);
+            return Ok(());
+        }
+        print_graph_created(&response["result"]);
         return Ok(());
     }
 
-    let Some(path) = path else {
-        eprintln!("usage: jmux goal <goal.md> [--wait] [--runner NAME | --agent/--model/--effort]");
-        std::process::exit(2);
-    };
-    let abs = std::fs::canonicalize(path)
-        .map_err(|e| anyhow::anyhow!("cannot resolve goal file '{path}': {e}"))?;
-
-    let permission_mode = if *full_auto {
-        "bypassPermissions"
-    } else if *supervised {
-        "supervised"
-    } else {
-        "acceptEdits"
-    };
-    let mut params = serde_json::json!({
-        "goal": abs.to_string_lossy(),
-        "permission_mode": permission_mode,
-    });
-    let obj = params.as_object_mut().expect("params is an object");
-    if let Some(v) = cwd {
-        obj.insert("cwd".into(), serde_json::json!(v));
-    }
-    if let Some(v) = runner {
-        obj.insert("runner".into(), serde_json::json!(v));
-    }
-    if let Some(v) = agent {
-        obj.insert("agent".into(), serde_json::json!(v));
-    }
-    if let Some(v) = model {
-        obj.insert("model".into(), serde_json::json!(v));
-    }
-    if let Some(v) = effort {
-        obj.insert("effort".into(), serde_json::json!(v));
-    }
-    if let Some(v) = max_iterations {
-        obj.insert("max_iterations".into(), serde_json::json!(v));
-    }
-    if let Some(v) = title {
-        obj.insert("title".into(), serde_json::json!(v));
-    }
-
     let response = rpc::send_request(&cli.socket, "goal.create", params, cli.window.as_deref())?;
-    if response.get("ok").and_then(|v| v.as_bool()) != Some(true) {
-        eprintln!(
-            "goal launch failed: {}",
-            response
-                .get("error")
-                .and_then(|e| e.get("message"))
-                .and_then(|m| m.as_str())
-                .unwrap_or("unknown error")
-        );
-        std::process::exit(1);
-    }
+    require_ok(&response, "goal launch");
     let result = &response["result"];
     let workspace_id = result["workspace_id"].as_str().unwrap_or("").to_string();
     if cli.json && !*wait {
         println!("{}", serde_json::to_string_pretty(&response)?);
         return Ok(());
     }
+    let goal_name = result["goal"].as_str().unwrap_or("?");
     println!(
-        "goal '{}' launched (runner {}, iteration {})",
-        result["goal"].as_str().unwrap_or("?"),
+        "goal '{goal_name}' launched (runner {}, iteration {})",
         result["runner"].as_str().unwrap_or("?"),
         result["iteration"].as_u64().unwrap_or(1),
     );
     println!("  workspace: {workspace_id}");
     println!("  output:    {}", result["output"].as_str().unwrap_or("?"));
     if !*wait {
+        println!("  watch:     jmux goal status");
         return Ok(());
     }
 
@@ -1212,7 +1447,7 @@ fn run_goal(cli: &Cli) -> anyhow::Result<()> {
             }
             "blocked" => {
                 eprintln!(
-                    "goal blocked ({detail}): see {}",
+                    "goal stopped ({detail}): see {}",
                     r["output"].as_str().unwrap_or("?")
                 );
                 std::process::exit(2);
@@ -1220,7 +1455,7 @@ fn run_goal(cli: &Cli) -> anyhow::Result<()> {
             _ => {
                 if line != last_printed {
                     if status == "needs-attention" {
-                        eprintln!("goal needs attention: {detail}");
+                        eprintln!("goal needs you: {detail}");
                     }
                     last_printed = line;
                 }
@@ -1343,5 +1578,194 @@ fn trunc(s: &str, max: usize) -> &str {
             end -= 1;
         }
         &s[..end]
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn parse(args: &[&str]) -> Cli {
+        Cli::try_parse_from(args).expect("parses")
+    }
+
+    #[test]
+    fn permission_mode_is_sent_only_when_a_flag_asks() {
+        // No flag = no param: the app resolves runner / settings.
+        assert_eq!(permission_mode_flag(false, false), None);
+        assert_eq!(permission_mode_flag(true, false), Some("bypassPermissions"));
+        assert_eq!(permission_mode_flag(false, true), Some("supervised"));
+    }
+
+    #[test]
+    fn goal_subcommand_names_beat_inline_text() {
+        // `jmux goal status` must hit the subcommand, not become goal text.
+        let Commands::Goal { command, goal, .. } = parse(&["jmux", "goal", "status"]).command else {
+            panic!("not a goal command")
+        };
+        assert!(goal.is_none());
+        assert!(matches!(command, Some(GoalCommands::Status { .. })));
+
+        // Anything that isn't a subcommand name is goal text.
+        let Commands::Goal { command, goal, .. } =
+            parse(&["jmux", "goal", "status report on the tests"]).command
+        else {
+            panic!("not a goal command")
+        };
+        assert!(command.is_none());
+        assert_eq!(goal.as_deref(), Some("status report on the tests"));
+    }
+
+    #[test]
+    fn goal_complete_is_a_hidden_alias_for_report() {
+        for spelling in ["complete", "report"] {
+            let Commands::Goal { command, .. } = parse(&["jmux", "goal", spelling]).command else {
+                panic!("not a goal command")
+            };
+            assert!(matches!(command, Some(GoalCommands::Report { .. })), "{spelling}");
+        }
+        // The old `--workspace` spelling still parses.
+        let Commands::Goal { command, .. } = parse(&[
+            "jmux", "goal", "complete", "--status", "done", "--workspace", "abc",
+        ])
+        .command
+        else {
+            panic!("not a goal command")
+        };
+        let Some(GoalCommands::Report { status, workspace, target }) = command else {
+            panic!("not report")
+        };
+        assert_eq!(status.as_deref(), Some("done"));
+        assert_eq!(workspace.as_deref(), Some("abc"));
+        assert!(target.is_none());
+    }
+
+    #[test]
+    fn goal_verbs_take_a_name_and_a_note() {
+        let Commands::Goal { command, .. } = parse(&[
+            "jmux", "goal", "continue", "mapsite/map-core", "--note", "use MapLibre",
+        ])
+        .command
+        else {
+            panic!("not a goal command")
+        };
+        let Some(GoalCommands::Continue { target, note, .. }) = command else {
+            panic!("not continue")
+        };
+        assert_eq!(target.as_deref(), Some("mapsite/map-core"));
+        assert_eq!(note.as_deref(), Some("use MapLibre"));
+
+        let Commands::Goal { command, .. } = parse(&["jmux", "goal", "stop"]).command else {
+            panic!("not a goal command")
+        };
+        assert!(matches!(command, Some(GoalCommands::Stop { target: None, .. })));
+    }
+
+    #[test]
+    fn goal_plan_flag_takes_inline_text() {
+        let Commands::Goal { command, goal, plan, .. } =
+            parse(&["jmux", "goal", "--plan", "build a trail map site"]).command
+        else {
+            panic!("not a goal command")
+        };
+        assert!(command.is_none());
+        assert!(plan);
+        assert_eq!(goal.as_deref(), Some("build a trail map site"));
+    }
+
+    #[test]
+    fn graph_positional_is_the_goal_unless_goal_flag_is_used() {
+        // New form: the positional is the goal itself.
+        let Commands::Graph { goal_or_name, goal, name, .. } =
+            parse(&["jmux", "graph", "build a trail map site"]).command
+        else {
+            panic!("not a graph command")
+        };
+        assert_eq!(goal_or_name.as_deref(), Some("build a trail map site"));
+        assert!(goal.is_none() && name.is_none());
+
+        // Compatibility form: `graph <name> --goal <file>`.
+        let Commands::Graph { goal_or_name, goal, .. } =
+            parse(&["jmux", "graph", "mapsite", "--goal", "/tmp/top.md"]).command
+        else {
+            panic!("not a graph command")
+        };
+        assert_eq!(goal_or_name.as_deref(), Some("mapsite"));
+        assert_eq!(goal.as_deref(), Some("/tmp/top.md"));
+
+        // Node verdicts.
+        let Commands::Graph { command, .. } =
+            parse(&["jmux", "graph", "accept", "mapsite", "map-core"]).command
+        else {
+            panic!("not a graph command")
+        };
+        let Some(GraphCommands::Accept { name, node }) = command else {
+            panic!("not accept")
+        };
+        assert_eq!((name.as_str(), node.as_str()), ("mapsite", "map-core"));
+    }
+
+    #[test]
+    fn graph_worktrees_are_on_unless_opted_out() {
+        let Commands::Graph { no_worktrees, .. } =
+            parse(&["jmux", "graph", "build a trail map site"]).command
+        else {
+            panic!("not a graph command")
+        };
+        assert!(!no_worktrees);
+
+        let Commands::Graph { no_worktrees, .. } = parse(&[
+            "jmux",
+            "graph",
+            "build a trail map site",
+            "--no-worktrees",
+        ])
+        .command
+        else {
+            panic!("not a graph command")
+        };
+        assert!(no_worktrees);
+    }
+
+    #[test]
+    fn state_labels_are_plain_words() {
+        assert_eq!(goal_state_label("needs-attention"), "needs you");
+        assert_eq!(goal_state_label("running"), "working");
+        assert_eq!(node_state_label("review"), "waiting for your review");
+        assert_eq!(graph_state_label("proposed"), "plan review");
+        // Anything unmapped passes through unchanged.
+        assert_eq!(goal_state_label("paused"), "paused");
+    }
+
+    #[test]
+    fn goal_source_is_a_path_only_when_the_file_exists() {
+        let dir = std::env::temp_dir().join(format!("jmux-cli-src-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("goal.md");
+        std::fs::write(&file, "Build a thing.").unwrap();
+
+        let mut obj = serde_json::Map::new();
+        insert_goal_source(&mut obj, file.to_str().unwrap());
+        assert_eq!(
+            obj.get("goal").and_then(|v| v.as_str()),
+            Some(std::fs::canonicalize(&file).unwrap().to_str().unwrap())
+        );
+        assert!(obj.get("goal_text").is_none());
+        assert!(obj.contains_key("client_cwd"));
+
+        let mut obj = serde_json::Map::new();
+        insert_goal_source(&mut obj, "add a --version flag, with a test");
+        assert_eq!(
+            obj.get("goal_text").and_then(|v| v.as_str()),
+            Some("add a --version flag, with a test")
+        );
+        assert!(obj.get("goal").is_none());
+
+        // A path that doesn't exist is goal text, not an error.
+        let mut obj = serde_json::Map::new();
+        insert_goal_source(&mut obj, "/nonexistent/goal.md");
+        assert!(obj.contains_key("goal_text"));
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

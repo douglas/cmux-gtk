@@ -946,6 +946,17 @@ pub struct GoalRunner {
     pub effort: String,
     /// Extra args appended to the claude command line.
     pub extra_args: Vec<String>,
+    /// Permission mode for goals run by this runner. Overridden by the
+    /// per-invocation flag (`--full-auto`/`--supervised`), overrides
+    /// `goal.permission_mode`. Empty = unset. `bypassPermissions` is
+    /// rejected here: bypass is per-invocation opt-in only.
+    pub permission_mode: String,
+    /// Tool patterns pre-approved for this runner, in Claude Code's
+    /// `--allowedTools` syntax (`Bash(cargo test:*)`, `Read`, `Edit`).
+    /// Claude adapter only — a custom runner's `command_template` owns its
+    /// own command line. This is how the default `acceptEdits` mode runs
+    /// unattended without granting blanket bypass.
+    pub allowed_tools: Vec<String>,
     /// For `agent = "custom"`: the full launch command. Placeholders:
     /// `{sid}`, `{model}`, `{effort}`, `{seed}` (shell-quoted seed text),
     /// `{seed_file}` (shell-quoted path to a file containing the seed).
@@ -972,7 +983,26 @@ pub struct GoalSettings {
     pub nudge_budget: u32,
     /// Per-goal wall-clock cap in minutes (0 = uncapped).
     pub wall_clock_minutes: u32,
+    /// Iterations a bare goal auto-continues through while the agent keeps
+    /// reporting `blocked` (graphs carry their own per-node cap).
+    pub max_iterations: u32,
+    /// Repo-relative directory holding iteration reports and graph state.
+    /// Rejected (and replaced by the default) if absolute or containing
+    /// `..` — everything jmux writes here lands inside the user's repo.
+    pub output_dir: String,
+    /// Permission mode used when neither the invocation nor the runner sets
+    /// one. `bypassPermissions` is rejected here (warn + fall back): bypass
+    /// stays a per-invocation `--full-auto` opt-in, never an ambient
+    /// default. See `goal::resolve_permission_mode`.
+    pub permission_mode: String,
 }
+
+/// Compatibility default for `goal.output_dir`.
+pub const DEFAULT_GOAL_OUTPUT_DIR: &str = "docs/roadmap";
+
+/// Default for `goal.permission_mode` — edits applied without prompting,
+/// everything else still asks (and an unanswered ask escalates to you).
+pub const DEFAULT_GOAL_PERMISSION_MODE: &str = "acceptEdits";
 
 impl Default for GoalSettings {
     fn default() -> Self {
@@ -982,6 +1012,9 @@ impl Default for GoalSettings {
             idle_ticks_before_nudge: 5,
             nudge_budget: 3,
             wall_clock_minutes: 120,
+            max_iterations: 3,
+            output_dir: DEFAULT_GOAL_OUTPUT_DIR.to_string(),
+            permission_mode: DEFAULT_GOAL_PERMISSION_MODE.to_string(),
         }
     }
 }
@@ -1214,6 +1247,19 @@ mod tests {
         let json = serde_json::to_string_pretty(&settings).unwrap();
         let parsed: AppSettings = serde_json::from_str(&json).unwrap();
         assert_eq!(parsed.theme, settings.theme);
+    }
+
+    #[test]
+    fn goal_permission_keys_are_optional() {
+        // A settings file written before per-runner permissions existed.
+        let json = r#"{"goal": {"runners": {"opus": {"agent": "claude",
+                       "model": "opus", "effort": "high"}},
+                       "output_dir": ".jmux"}}"#;
+        let parsed: AppSettings = serde_json::from_str(json).unwrap();
+        assert_eq!(parsed.goal.permission_mode, DEFAULT_GOAL_PERMISSION_MODE);
+        let runner = &parsed.goal.runners["opus"];
+        assert!(runner.permission_mode.is_empty());
+        assert!(runner.allowed_tools.is_empty());
     }
 
     #[test]

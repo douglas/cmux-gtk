@@ -1,6 +1,5 @@
 //! `graph.*` socket methods — thin wrappers over `goal::graph` operations.
 
-use std::path::Path;
 use std::sync::Arc;
 
 use serde_json::Value;
@@ -26,17 +25,21 @@ fn wrap(id: Value, result: Result<serde_json::Value, String>) -> Response {
 }
 
 pub(super) fn handle_graph_create(id: Value, params: &Value, state: &Arc<SharedState>) -> Response {
-    let Ok(name) = name_param(params) else {
-        return Response::error(id, "invalid_params", "Missing graph name");
+    // `goal` (a .md file) or `goal_text` (inline) — see resolve_goal_source.
+    let source = match crate::goal::resolve_goal_source(params) {
+        Ok(s) => s,
+        Err((code, msg)) => return Response::error(id, code, &msg),
     };
-    let Some(goal_path) = params.get("goal").and_then(|v| v.as_str()) else {
-        return Response::error(id, "invalid_params", "Missing 'goal' (path to a goal .md file)");
-    };
-    let goal_path = Path::new(goal_path);
-    if !goal_path.is_absolute() {
-        return Response::error(id, "invalid_params", "'goal' must be an absolute path");
-    }
-    wrap(id, graph::create_graph(state, name, goal_path, params))
+    // Name: explicit, else the repo directory (goal file) or a slug of the
+    // goal text (inline).
+    let name = name_param(params).map(str::to_string).unwrap_or_else(|_| {
+        if source.inline {
+            source.name.clone()
+        } else {
+            source.repo_name.clone()
+        }
+    });
+    wrap(id, graph::create_graph(state, &name, &source, params))
 }
 
 pub(super) fn handle_graph_approve(id: Value, params: &Value, state: &Arc<SharedState>) -> Response {

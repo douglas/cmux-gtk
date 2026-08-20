@@ -540,6 +540,27 @@ pub enum ghostty_surface_context_e {
     GHOSTTY_SURFACE_CONTEXT_SPLIT = 2,
 }
 
+/// How the surface drives its terminal I/O. `EXEC` spawns a pty + child
+/// process (every jmux surface); `MANUAL` makes the embedder pump bytes.
+#[repr(C)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ghostty_surface_io_mode_e {
+    GHOSTTY_SURFACE_IO_EXEC = 0,
+    GHOSTTY_SURFACE_IO_MANUAL = 1,
+}
+
+pub type ghostty_io_write_cb =
+    Option<unsafe extern "C" fn(*mut c_void, *const c_char, usize)>;
+
+/// Mirrors `ghostty_surface_config_s` in ghostty/include/ghostty.h **exactly**.
+///
+/// The tail matters: this used to end with two invented `initial_width` /
+/// `initial_height` fields that libghostty has never had. `initial_width`
+/// therefore aliased `io_mode` (so every surface passed its pixel width as an
+/// I/O mode — harmless only because 800…3000 is neither EXEC nor MANUAL), and
+/// the struct was 8 bytes short of the C one, so ghostty read `io_write_cb` /
+/// `io_write_userdata` off the end of our stack allocation. The initial pty
+/// size is set right after creation instead (`ghostty_surface_set_size`).
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub struct ghostty_surface_config_s {
@@ -555,8 +576,9 @@ pub struct ghostty_surface_config_s {
     pub initial_input: *const c_char,
     pub wait_after_command: bool,
     pub context: ghostty_surface_context_e,
-    pub initial_width: u32,
-    pub initial_height: u32,
+    pub io_mode: ghostty_surface_io_mode_e,
+    pub io_write_cb: ghostty_io_write_cb,
+    pub io_write_userdata: *mut c_void,
 }
 
 #[repr(C)]

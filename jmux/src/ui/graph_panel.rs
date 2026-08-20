@@ -4,8 +4,9 @@
 //! grouped by dependency depth. Clicking a chip selects the node and opens a
 //! **detail card** below the DAG: live status, per-iteration monitoring
 //! (every `iteration-N.md` opens in the notes editor), an editable goal
-//! text, jump-to-workspace, and the Gate 2 verdicts. Gate 1 actions
-//! (Open proposal / Approve & Run / Revise) live in the header row.
+//! text, jump-to-workspace, and the iteration-review verdicts (Gate 2).
+//! Plan-review actions (Gate 1: Open proposal / Approve & Run / Revise)
+//! live in the header row.
 //!
 //! Rebuilt on a 2 s tick — the same cadence as the scheduler that mutates
 //! the registry. The tick skips rebuilds while a TextView inside the panel
@@ -633,7 +634,11 @@ fn detail_card(
     let status_text = if proposal_mode {
         "proposed".to_string()
     } else {
-        format!("{} {:?}", glyph(node.status), node.status)
+        format!(
+            "{} {}",
+            glyph(node.status),
+            goal::graph::node_state_label(node.status)
+        )
     };
     let status = gtk4::Label::new(Some(&status_text));
     status.add_css_class("graph-status");
@@ -670,11 +675,13 @@ fn detail_card(
     }
     if let Some(r) = &run {
         facts.push_str(&format!(
-            " · driver: {}{} · nudges {}",
-            r.status.as_str(),
+            " · agent: {}{}",
+            run_status_label(&r.status),
             r.status.detail().map(|d| format!(" ({d})")).unwrap_or_default(),
-            r.nudges_sent,
         ));
+        if r.nudges_sent > 0 {
+            facts.push_str(&format!(" · {} reminders sent", r.nudges_sent));
+        }
     }
     let facts_label = gtk4::Label::new(Some(&facts));
     facts_label.add_css_class("dim-label");
@@ -704,7 +711,7 @@ fn detail_card(
         btn.set_tooltip_text(Some(if is_paused {
             "Wake the node's agent process (SIGCONT)"
         } else {
-            "Freeze the node's agent process (SIGSTOP) — the driver stops nudging it too"
+            "Freeze the node's agent process (SIGSTOP) — jmux stops reminding it too"
         }));
         let state_c = state.clone();
         btn.connect_clicked(move |_| {
@@ -994,13 +1001,17 @@ fn toast(state: &Rc<AppState>, msg: &str) {
 }
 
 fn status_text(s: GraphState) -> &'static str {
+    goal::graph::graph_state_label(s)
+}
+
+/// Plain-language label for a goal run's state (display only — `as_str()`
+/// stays the serialized identifier).
+fn run_status_label(s: &GoalStatus) -> &'static str {
     match s {
-        GraphState::Proposing => "proposing…",
-        GraphState::Proposed => "review gate",
-        GraphState::Running => "running",
-        GraphState::Complete => "complete",
-        GraphState::Paused => "paused",
-        GraphState::Stopped => "stopped",
+        GoalStatus::Running => "working",
+        GoalStatus::NeedsAttention(_) => "needs you",
+        GoalStatus::Done => "finished",
+        GoalStatus::Blocked(_) => "stopped",
     }
 }
 

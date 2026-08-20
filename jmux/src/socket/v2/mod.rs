@@ -251,6 +251,7 @@ pub fn dispatch(json_line: &str, state: &Arc<SharedState>) -> Response {
         "goal.complete" => goal::handle_goal_complete(id, &req.params, state),
         "goal.continue" => goal::handle_goal_continue(id, &req.params, state),
         "goal.accept" => goal::handle_goal_accept(id, &req.params, state),
+        "goal.stop" => goal::handle_goal_stop(id, &req.params, state),
 
         // Graph commands (DAG orchestration)
         "graph.create" => graph::handle_graph_create(id, &req.params, state),

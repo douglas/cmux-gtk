@@ -1,7 +1,6 @@
 //! `goal.*` socket methods — launch and track goal-driven agent workspaces.
 //! See docs/roadmap/DESIGN-goal-graph.md.
 
-use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use serde_json::Value;
@@ -55,36 +54,12 @@ fn resolve_runner(
 }
 
 pub(super) fn handle_goal_create(id: Value, params: &Value, state: &Arc<SharedState>) -> Response {
-    let Some(goal_path) = params.get("goal").and_then(|v| v.as_str()) else {
-        return Response::error(id, "invalid_params", "Missing 'goal' (path to a goal .md file)");
+    // `goal` (a .md file) or `goal_text` (inline) — see resolve_goal_source.
+    let source = match goal::resolve_goal_source(params) {
+        Ok(s) => s,
+        Err((code, msg)) => return Response::error(id, code, &msg),
     };
-    let goal_path = Path::new(goal_path);
-    if !goal_path.is_absolute() {
-        return Response::error(id, "invalid_params", "'goal' must be an absolute path");
-    }
-    let goal_text = match std::fs::read_to_string(goal_path) {
-        Ok(t) => t,
-        Err(e) => {
-            return Response::error(id, "not_found", &format!("Cannot read goal file: {e}"));
-        }
-    };
-    if goal_text.len() > 256 * 1024 {
-        return Response::error(id, "invalid_params", "Goal file is too large (256 KiB max)");
-    }
-
-    // cwd: explicit param, else nearest git root above the goal file, else
-    // the goal file's directory.
-    let cwd: PathBuf = match params.get("cwd").and_then(|v| v.as_str()) {
-        Some(c) => PathBuf::from(c),
-        None => {
-            let parent = goal_path.parent().unwrap_or(Path::new("/"));
-            goal::find_git_root(parent).unwrap_or_else(|| parent.to_path_buf())
-        }
-    };
-    if !cwd.is_dir() {
-        return Response::error(id, "invalid_params", "Resolved cwd is not a directory");
-    }
-    let cwd_str = cwd.to_string_lossy().to_string();
+    let cwd_str = source.cwd.to_string_lossy().to_string();
 
     let settings = crate::settings::load().goal;
     let (runner_name, runner) = match resolve_runner(params, &settings) {
@@ -92,43 +67,36 @@ pub(super) fn handle_goal_create(id: Value, params: &Value, state: &Arc<SharedSt
         Err(e) => return Response::error(id, "invalid_params", &e),
     };
 
+    // Unset means the settings default (3), not 1: iterating on `blocked` is
+    // the point of the loop.
     let max_iterations = params
         .get("max_iterations")
         .and_then(|v| v.as_u64())
         .map(|n| (n as u32).clamp(1, 50))
-        .unwrap_or(1);
-    let permission_mode = params
-        .get("permission_mode")
-        .and_then(|v| v.as_str())
-        .unwrap_or("acceptEdits")
-        .to_string();
+        .unwrap_or_else(|| settings.max_iterations.clamp(1, 50));
+    // Absent = no per-invocation flag: the runner's mode, else the setting.
+    let permission_mode = goal::resolve_permission_mode(
+        params.get("permission_mode").and_then(|v| v.as_str()),
+        &runner,
+        &settings,
+    );
 
-    // Goal name: the file stem, or the parent directory when the stem is the
-    // generic "goal".
-    let goal_name = {
-        let stem = goal_path
-            .file_stem()
-            .and_then(|s| s.to_str())
-            .unwrap_or("goal")
-            .to_string();
-        if stem == "goal" {
-            goal_path
-                .parent()
-                .and_then(|p| p.file_name())
-                .and_then(|s| s.to_str())
-                .map(str::to_string)
-                .unwrap_or(stem)
-        } else {
-            stem
-        }
-    };
+    // Name: explicit override, else derived from the source (file stem or a
+    // slug of the inline text).
+    let goal_name = params
+        .get("name")
+        .and_then(|v| v.as_str())
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_string)
+        .unwrap_or_else(|| source.name.clone());
 
     let spec = goal::LaunchSpec {
         goal_name,
-        goal_path: goal_path.to_string_lossy().to_string(),
-        goal_text,
+        goal_path: source.path.to_string_lossy().to_string(),
+        goal_text: source.text,
         cwd: cwd_str,
-        output_dir_rel: "docs/roadmap".into(),
+        output_dir_rel: goal::output_dir_rel(&settings),
         upstream_refs: Vec::new(),
         runner_name,
         runner,
@@ -141,6 +109,8 @@ pub(super) fn handle_goal_create(id: Value, params: &Value, state: &Arc<SharedSt
             .map(str::to_string),
         graph: None,
         group_id: None,
+        // A human just asked for this run — land them in it.
+        select: true,
     };
     match goal::launch_goal(state, spec) {
         Ok(result) => Response::success(id, result),
@@ -148,28 +118,43 @@ pub(super) fn handle_goal_create(id: Value, params: &Value, state: &Arc<SharedSt
     }
 }
 
-/// Parse an optional workspace UUID out of `workspace`/`workspace_id`.
-fn workspace_param(params: &Value) -> Result<Option<Uuid>, ()> {
-    match params
-        .get("workspace")
-        .or_else(|| params.get("workspace_id"))
+/// The run a `goal.*` call addresses: a workspace UUID (scripts) or a goal
+/// name, from `workspace` (legacy), `workspace_id`, `name` or `goal`.
+fn target_param(params: &Value) -> Option<&str> {
+    ["workspace", "workspace_id", "name", "goal"]
+        .iter()
+        .filter_map(|k| params.get(*k))
+        .find_map(|v| v.as_str())
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+}
+
+/// The caller's own workspace — used only when nothing was named.
+fn hint_param(params: &Value) -> Option<Uuid> {
+    params
+        .get("hint_workspace")
         .and_then(|v| v.as_str())
-    {
-        Some(s) => Uuid::parse_str(s).map(Some).map_err(|_| ()),
-        None => Ok(None),
-    }
+        .and_then(|s| Uuid::parse_str(s).ok())
+}
+
+/// Resolve the addressed run (name, UUID, this pane, or the sole active run).
+fn resolve_target(params: &Value, state: &Arc<SharedState>) -> Result<Uuid, String> {
+    let goals = lock_or_recover(&state.goals);
+    goal::resolve_run(&goals, target_param(params), hint_param(params))
 }
 
 pub(super) fn handle_goal_status(id: Value, params: &Value, state: &Arc<SharedState>) -> Response {
-    let ws_filter = match workspace_param(params) {
-        Ok(v) => v,
-        Err(()) => return Response::error(id, "invalid_params", "Invalid workspace UUID"),
-    };
+    // No target lists everything — the hint deliberately does not narrow it
+    // (`jmux goal status` inside a goal pane still answers "what's running?").
+    let target = target_param(params).map(str::to_string);
     let goals = lock_or_recover(&state.goals);
-    match ws_filter {
-        Some(ws_id) => match goals.get(&ws_id) {
-            Some(run) => Response::success(id, run.to_json()),
-            None => Response::error(id, "not_found", "No goal registered for that workspace"),
+    match target {
+        Some(t) => match goal::resolve_run(&goals, Some(&t), None) {
+            Ok(ws_id) => match goals.get(&ws_id) {
+                Some(run) => Response::success(id, run.to_json()),
+                None => Response::error(id, "not_found", "No goal registered for that workspace"),
+            },
+            Err(e) => Response::error(id, "not_found", &e),
         },
         None => {
             let all: Vec<_> = goals.values().map(GoalRun::to_json).collect();
@@ -179,16 +164,9 @@ pub(super) fn handle_goal_status(id: Value, params: &Value, state: &Arc<SharedSt
 }
 
 pub(super) fn handle_goal_complete(id: Value, params: &Value, state: &Arc<SharedState>) -> Response {
-    let ws_id = match workspace_param(params) {
-        Ok(Some(v)) => v,
-        Ok(None) => {
-            return Response::error(
-                id,
-                "invalid_params",
-                "Missing workspace (pass --workspace or run inside a jmux pane)",
-            )
-        }
-        Err(()) => return Response::error(id, "invalid_params", "Invalid workspace UUID"),
+    let ws_id = match resolve_target(params, state) {
+        Ok(v) => v,
+        Err(e) => return Response::error(id, "not_found", &e),
     };
 
     let Some(run) = lock_or_recover(&state.goals).get(&ws_id).cloned() else {
@@ -208,7 +186,7 @@ pub(super) fn handle_goal_complete(id: Value, params: &Value, state: &Arc<Shared
 
     let new_status = match effective.as_str() {
         "done" => GoalStatus::Done,
-        "blocked" => GoalStatus::Blocked("agent reported blocked".into()),
+        "blocked" => GoalStatus::Blocked("the agent could not finish".into()),
         _ => {
             return Response::error(
                 id,
@@ -232,8 +210,8 @@ pub(super) fn handle_goal_complete(id: Value, params: &Value, state: &Arc<Shared
         }
         let mut notifications = lock_or_recover(&state.notifications);
         notifications.add(
-            "Goal complete",
-            &format!("'{}' finished: {}", run.goal_name, run.output_rel(run.iteration)),
+            "Goal finished",
+            &format!("'{}' is done — read {}", run.goal_name, run.output_rel(run.iteration)),
             Some(ws_id),
             None,
             true,
@@ -246,31 +224,62 @@ pub(super) fn handle_goal_complete(id: Value, params: &Value, state: &Arc<Shared
         id,
         serde_json::json!({
             "workspace_id": ws_id.to_string(),
+            "goal": run.goal_name,
             "status": if is_done { "done" } else { "blocked" },
             "iteration": run.iteration,
         }),
     )
 }
 
+/// A steering note is pasted into the next-iteration prompt, which is typed
+/// into the pane as ONE line — control characters (a bare newline submits the
+/// prompt early) must never reach it.
+fn sanitize_note(note: &str) -> String {
+    let flat: String = note
+        .chars()
+        .map(|c| if c.is_control() { ' ' } else { c })
+        .collect();
+    flat.split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .chars()
+        .take(500)
+        .collect()
+}
+
 /// Human verdict: run another iteration, seeded with the (possibly
-/// human-edited) feedback section of the current iteration file.
+/// human-edited) feedback section of the current iteration file. An optional
+/// `note` steers it without editing the file.
 pub(super) fn handle_goal_continue(id: Value, params: &Value, state: &Arc<SharedState>) -> Response {
-    let ws_id = match workspace_param(params) {
-        Ok(Some(v)) => v,
-        Ok(None) => return Response::error(id, "invalid_params", "Missing workspace"),
-        Err(()) => return Response::error(id, "invalid_params", "Invalid workspace UUID"),
+    let ws_id = match resolve_target(params, state) {
+        Ok(v) => v,
+        Err(e) => return Response::error(id, "not_found", &e),
     };
-    match goal::advance_iteration(
-        state,
-        ws_id,
-        "The reviewer asked for another iteration.",
-    ) {
+    let note = params
+        .get("note")
+        .and_then(|v| v.as_str())
+        .map(sanitize_note)
+        .unwrap_or_default();
+    let reason = if note.is_empty() {
+        "The reviewer asked for another iteration.".to_string()
+    } else {
+        format!("The reviewer asked for another iteration, with this note: {note}")
+    };
+    match goal::advance_iteration(state, ws_id, &reason) {
         Ok(next) => {
             // Graph nodes in Review go back to Running.
             goal::graph::continue_node(state, ws_id);
+            let name = lock_or_recover(&state.goals)
+                .get(&ws_id)
+                .map(|r| r.goal_name.clone())
+                .unwrap_or_default();
             Response::success(
                 id,
-                serde_json::json!({"workspace_id": ws_id.to_string(), "iteration": next}),
+                serde_json::json!({
+                    "workspace_id": ws_id.to_string(),
+                    "goal": name,
+                    "iteration": next,
+                }),
             )
         }
         Err(e) => Response::error(id, "not_found", &e),
@@ -280,10 +289,9 @@ pub(super) fn handle_goal_continue(id: Value, params: &Value, state: &Arc<Shared
 /// Human verdict: accept the current iteration as final — mark the run Done
 /// (the graph scheduler then merges/unblocks dependents).
 pub(super) fn handle_goal_accept(id: Value, params: &Value, state: &Arc<SharedState>) -> Response {
-    let ws_id = match workspace_param(params) {
-        Ok(Some(v)) => v,
-        Ok(None) => return Response::error(id, "invalid_params", "Missing workspace"),
-        Err(()) => return Response::error(id, "invalid_params", "Invalid workspace UUID"),
+    let ws_id = match resolve_target(params, state) {
+        Ok(v) => v,
+        Err(e) => return Response::error(id, "not_found", &e),
     };
     let mut goals = lock_or_recover(&state.goals);
     let Some(run) = goals.get_mut(&ws_id) else {
@@ -291,6 +299,7 @@ pub(super) fn handle_goal_accept(id: Value, params: &Value, state: &Arc<SharedSt
     };
     run.status = GoalStatus::Done;
     let iteration = run.iteration;
+    let name = run.goal_name.clone();
     drop(goals);
     // Graph nodes: finish immediately (merge + unblock dependents).
     if let Err(e) = goal::graph::accept_node(state, ws_id) {
@@ -298,6 +307,23 @@ pub(super) fn handle_goal_accept(id: Value, params: &Value, state: &Arc<SharedSt
     }
     Response::success(
         id,
-        serde_json::json!({"workspace_id": ws_id.to_string(), "iteration": iteration, "status": "done"}),
+        serde_json::json!({
+            "workspace_id": ws_id.to_string(),
+            "goal": name,
+            "iteration": iteration,
+            "status": "done",
+        }),
     )
+}
+
+/// Human stop: the driver stops driving this run. The workspace stays open.
+pub(super) fn handle_goal_stop(id: Value, params: &Value, state: &Arc<SharedState>) -> Response {
+    let ws_id = match resolve_target(params, state) {
+        Ok(v) => v,
+        Err(e) => return Response::error(id, "not_found", &e),
+    };
+    match goal::stop_run(state, ws_id) {
+        Ok(v) => Response::success(id, v),
+        Err(e) => Response::error(id, "not_found", &e),
+    }
 }

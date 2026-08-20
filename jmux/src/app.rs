@@ -49,6 +49,33 @@ pub struct AppState {
     _callbacks: RefCell<Option<ghostty_gtk::callbacks::RuntimeCallbacks>>,
 }
 
+/// Release a dead panel's terminal surface: unparent it from its `GtkBox` (a
+/// layout pane, or the spawn nursery, which holds background surfaces that no
+/// page has claimed yet) so the last reference goes away and `dispose` frees the
+/// ghostty surface.
+///
+/// Deferred to an idle callback on purpose. The caller may be running inside
+/// ghostty's own close callback (the child exited), and dropping the final
+/// reference there would call `ghostty_surface_free` while libghostty is still
+/// executing inside that surface.
+fn release_surface(surface: ghostty_gtk::surface::GhosttyGlSurface) {
+    glib::idle_add_local_once(move || {
+        if let Some(parent) = surface.parent() {
+            if let Ok(parent_box) = parent.downcast::<gtk4::Box>() {
+                parent_box.remove(&surface);
+            }
+        }
+    });
+}
+
+/// Synthetic pty geometry for a headless spawn, in physical pixels. The child
+/// has to start with a usable grid — a TUI agent reads `$COLUMNS`/`$LINES` from
+/// the pty at startup — and no allocation will ever tell us the real one. At a
+/// typical 9×19 cell this is ~106×31 cells (the design doc asks for at least
+/// 80×24); the first real allocation resizes it like any window resize.
+const HEADLESS_SPAWN_WIDTH_PX: u32 = 960;
+const HEADLESS_SPAWN_HEIGHT_PX: u32 = 600;
+
 impl AppState {
     pub fn new(shared: Arc<SharedState>) -> Self {
         Self {
@@ -262,7 +289,9 @@ impl AppState {
             }
         }
 
-        self.terminal_cache.borrow_mut().remove(&panel_id);
+        if let Some(surface) = self.terminal_cache.borrow_mut().remove(&panel_id) {
+            release_surface(surface);
+        }
         crate::ui::terminal_panel::unregister_vim_badge(&panel_id);
         crate::ui::textbox::unregister(&panel_id);
         lock_or_recover(&self.shared.hibernated_panels).remove(&panel_id);
@@ -282,9 +311,23 @@ impl AppState {
                 .collect()
         };
 
-        self.terminal_cache
-            .borrow_mut()
-            .retain(|panel_id, _| live_panels.contains(panel_id));
+        // Dropping the cache entry is not enough for a surface parked in the
+        // spawn nursery: the nursery still parents it, so the widget (and its
+        // ghostty surface + pty) would never be disposed. Unparent it so the
+        // last reference goes away with the cache entry.
+        {
+            let mut cache = self.terminal_cache.borrow_mut();
+            let dead: Vec<Uuid> = cache
+                .keys()
+                .filter(|id| !live_panels.contains(id))
+                .copied()
+                .collect();
+            for id in dead {
+                if let Some(surface) = cache.remove(&id) {
+                    release_surface(surface);
+                }
+            }
+        }
         self.browser_cache
             .borrow_mut()
             .retain(|panel_id, _| live_panels.contains(panel_id));
@@ -294,6 +337,77 @@ impl AppState {
         // a dozen sibling maps that never removed closed panels.
         #[cfg(feature = "webkit")]
         crate::ui::browser_panel::prune_browser_panels(&live_panels);
+    }
+
+    /// Start a terminal panel's pty + child process without waiting for its
+    /// workspace to be shown.
+    ///
+    /// Terminal surfaces normally spawn on their first visible allocation, so a
+    /// workspace created in the background (a goal/graph node launched by the
+    /// scheduler) would run nothing until someone selected it. This creates the
+    /// surface up front — parking it in the window's never-mapped spawn nursery
+    /// when no page holds it yet — and has ghostty open the pty at a synthetic
+    /// size. The workspace's page is built normally later and the surface is
+    /// reparented into it; its first real allocation only *resizes* the running
+    /// terminal.
+    ///
+    /// Also covers a *selected* workspace inside a window that is not mapped
+    /// (the quake drop-down at rest): selected is not the same as allocated.
+    ///
+    /// Returns true when the pty is running. False means "not yet" — the surface
+    /// is about to be allocated anyway, no window is realized, or GL/ghostty
+    /// refused — and it is always safe to call again.
+    pub fn spawn_panel_headless(&self, panel_id: Uuid) -> bool {
+        if let Some(surface) = self.terminal_cache.borrow().get(&panel_id) {
+            if surface.has_spawned() {
+                return true;
+            }
+            // Mapped: GTK will allocate it on the next frame and the normal path
+            // spawns with the real size. Don't race that with a synthetic one.
+            if surface.is_mapped() {
+                return false;
+            }
+        }
+
+        let (directory, command) = {
+            let tab_manager = lock_or_recover(&self.shared.tab_manager);
+            let Some(workspace) = tab_manager.find_workspace_with_panel(panel_id) else {
+                return false;
+            };
+            let Some(panel) = workspace.panel(panel_id) else {
+                return false;
+            };
+            if panel.panel_type != crate::model::PanelType::Terminal {
+                return false;
+            }
+            (panel.directory.clone(), panel.command.clone())
+        };
+
+        let surface =
+            self.terminal_surface_for(panel_id, directory.as_deref(), command.as_deref());
+        if surface.has_spawned() {
+            return true;
+        }
+        if surface.is_mapped() {
+            return false;
+        }
+        // Unparented surfaces need a home inside a realized window to get a GL
+        // context; one already sitting in an unmapped page can spawn in place.
+        if surface.parent().is_none() {
+            let Some(nursery) = crate::ui::window::spawn_nursery() else {
+                tracing::debug!(
+                    %panel_id,
+                    "headless spawn deferred — no realized window to park the surface in"
+                );
+                return false;
+            };
+            nursery.append(&surface);
+        }
+        let spawned = surface.spawn_headless(HEADLESS_SPAWN_WIDTH_PX, HEADLESS_SPAWN_HEIGHT_PX);
+        if !spawned {
+            tracing::warn!(%panel_id, "headless spawn failed — terminal will start when shown");
+        }
+        spawned
     }
 
     /// Look up a cached browser widget by panel ID.
