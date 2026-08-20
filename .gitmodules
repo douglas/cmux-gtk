@@ -1,3 +1,4 @@
 [submodule "ghostty"]
 	path = ghostty
 	url = https://github.com/douglas/ghostty.git
+	ignore = dirty
