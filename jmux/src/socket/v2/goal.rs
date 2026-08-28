@@ -54,18 +54,66 @@ fn resolve_runner(
 }
 
 pub(super) fn handle_goal_create(id: Value, params: &Value, state: &Arc<SharedState>) -> Response {
+    // `goal.confirm_before_run` turns every CLI goal into a dialog. Graph
+    // nodes do not come through here (the scheduler calls `launch_goal`
+    // directly), so a running graph is never interrupted by it.
+    if crate::settings::load().goal.confirm_before_run {
+        return handle_goal_configure(id, params, state);
+    }
+    match create_goal(state, params) {
+        Ok(result) => Response::success(id, result),
+        Err((code, msg)) => Response::error(id, code, &msg),
+    }
+}
+
+/// `goal.configure` — open the roles dialog in the app instead of starting a
+/// run. `jmux goal --configure "..."` lands here, and so does `goal.create`
+/// when `goal.confirm_before_run` is on.
+pub(super) fn handle_goal_configure(
+    id: Value,
+    params: &Value,
+    state: &Arc<SharedState>,
+) -> Response {
+    let prefill = params
+        .get("goal_text")
+        .and_then(|v| v.as_str())
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_string);
+    if !state
+        .send_ui_event(crate::app::UiEvent::OpenGoalDialog { prefill })
+    {
+        return Response::error(
+            id,
+            "internal",
+            "No jmux window is open to show the dialog in",
+        );
+    }
+    Response::success(
+        id,
+        serde_json::json!({
+            "opened": true,
+            "message": "Opened the Run goal dialog in jmux",
+        }),
+    )
+}
+
+/// Launch one goal run from the same parameters the socket accepts.
+///
+/// Shared by `goal.create` and the in-app roles dialog
+/// (`ui::goal_dialog`) so both resolve the runner, iteration cap and
+/// permission mode by exactly one set of rules.
+pub(crate) fn create_goal(
+    state: &Arc<SharedState>,
+    params: &Value,
+) -> Result<Value, (&'static str, String)> {
     // `goal` (a .md file) or `goal_text` (inline) — see resolve_goal_source.
-    let source = match goal::resolve_goal_source(params) {
-        Ok(s) => s,
-        Err((code, msg)) => return Response::error(id, code, &msg),
-    };
+    let source = goal::resolve_goal_source(params)?;
     let cwd_str = source.cwd.to_string_lossy().to_string();
 
     let settings = crate::settings::load().goal;
-    let (runner_name, runner) = match resolve_runner(params, &settings) {
-        Ok(r) => r,
-        Err(e) => return Response::error(id, "invalid_params", &e),
-    };
+    let (runner_name, runner) =
+        resolve_runner(params, &settings).map_err(|e| ("invalid_params", e))?;
 
     // Unset means the settings default (3), not 1: iterating on `blocked` is
     // the point of the loop.
@@ -112,10 +160,7 @@ pub(super) fn handle_goal_create(id: Value, params: &Value, state: &Arc<SharedSt
         // A human just asked for this run — land them in it.
         select: true,
     };
-    match goal::launch_goal(state, spec) {
-        Ok(result) => Response::success(id, result),
-        Err(e) => Response::error(id, "internal", &e),
-    }
+    goal::launch_goal(state, spec).map_err(|e| ("internal", e))
 }
 
 /// The run a `goal.*` call addresses: a workspace UUID (scripts) or a goal

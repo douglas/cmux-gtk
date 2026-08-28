@@ -138,6 +138,10 @@ pub enum Commands {
         /// Workspace title (default: "goal: <name>")
         #[arg(long)]
         title: Option<String>,
+        /// Open the Run goal dialog in jmux instead of starting the run, so
+        /// you can set the roles, models and instructions first
+        #[arg(long)]
+        configure: bool,
     },
 
     /// DAG orchestration: decompose a goal into parallel goal workspaces

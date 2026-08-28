@@ -1297,6 +1297,7 @@ fn run_goal(cli: &Cli) -> anyhow::Result<()> {
         full_auto,
         supervised,
         title,
+        configure,
     } = &cli.command
     else {
         unreachable!()
@@ -1306,9 +1307,31 @@ fn run_goal(cli: &Cli) -> anyhow::Result<()> {
         return run_goal_command(cli, cmd);
     }
 
+    // --configure with no goal still opens the dialog: an empty goal box is
+    // a reasonable place to start typing.
+    if *configure {
+        let mut params = serde_json::json!({});
+        let obj = params.as_object_mut().expect("params is an object");
+        if let Some(g) = goal {
+            insert_goal_source(obj, g);
+        }
+        if let Some(v) = cwd {
+            obj.insert("cwd".into(), serde_json::json!(v));
+        }
+        let response =
+            rpc::send_request(&cli.socket, "goal.configure", params, cli.window.as_deref())?;
+        require_ok(&response, "open the dialog");
+        if cli.json {
+            println!("{}", serde_json::to_string_pretty(&response)?);
+        } else {
+            println!("Opened the Run goal dialog in jmux.");
+        }
+        return Ok(());
+    }
+
     let Some(goal) = goal else {
         eprintln!(
-            "usage: jmux goal <goal.md|\"goal text\"> [--plan] [--wait] \
+            "usage: jmux goal <goal.md|\"goal text\"> [--plan] [--wait] [--configure] \
              [--runner NAME | --agent/--model/--effort]"
         );
         eprintln!("       jmux goal status|continue|accept|stop|report [NAME]");

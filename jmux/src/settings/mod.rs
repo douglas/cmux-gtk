@@ -994,6 +994,10 @@ pub struct GoalSettings {
     /// stays a per-invocation `--full-auto` opt-in, never an ambient
     /// default. See `goal::resolve_permission_mode`.
     pub permission_mode: String,
+    /// Open the roles dialog before every goal instead of starting at once.
+    /// Off by default: typing a goal runs it, and `--configure` (or the
+    /// palette entry) opens the dialog when you want it.
+    pub confirm_before_run: bool,
 }
 
 /// Compatibility default for `goal.output_dir`.
@@ -1014,6 +1018,7 @@ impl Default for GoalSettings {
             max_iterations: 3,
             output_dir: DEFAULT_GOAL_OUTPUT_DIR.to_string(),
             permission_mode: DEFAULT_GOAL_PERMISSION_MODE.to_string(),
+            confirm_before_run: false,
         }
     }
 }

@@ -33,7 +33,7 @@ const ESCALATION_MIN_SECS: u64 = 60;
 /// What the driver types into an idle master to keep it working. Sent with a
 /// trailing carriage return only after a live claude process is verified on
 /// the panel — an idle *shell* must never receive this.
-const NUDGE_TEXT: &str = "Continue working toward the goal. When it is complete (or you cannot proceed), write the iteration file exactly as instructed, then run: jmux goal complete";
+const NUDGE_TEXT: &str = "Continue working toward the goal. When it is complete (or you cannot proceed), write the iteration file exactly as instructed, then run: jmux goal report";
 
 const DEFAULT_GUIDANCE: &str = include_str!("guidance_default.md");
 
@@ -262,16 +262,101 @@ pub fn shell_quote(s: &str) -> String {
     format!("'{}'", s.replace('\'', r"'\''"))
 }
 
-/// The guidance template: user override at
-/// `~/.config/jmux/goal-guidance.md`, else the shipped default.
-fn guidance_template() -> String {
-    if let Some(cfg) = dirs::config_dir() {
-        let p = cfg.join("jmux/goal-guidance.md");
-        if let Ok(s) = std::fs::read_to_string(&p) {
-            return s;
+/// One of the two instruction documents jmux sends to an agent. Each ships
+/// with a default compiled into the binary and can be replaced by a file in
+/// the user's config directory; deleting that file restores the default.
+///
+/// The user-facing word is "role" — the settings file calls the same thing a
+/// runner, and the two names have to keep matching.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Guidance {
+    /// The agent that does the work and writes the iteration report.
+    Worker,
+    /// The agent that splits a graph goal into nodes and then stops.
+    Orchestrator,
+}
+
+impl Guidance {
+    /// What the dialog calls this role.
+    pub fn label(self) -> &'static str {
+        match self {
+            Guidance::Worker => "Worker",
+            Guidance::Orchestrator => "Orchestrator",
         }
     }
-    DEFAULT_GUIDANCE.to_string()
+
+    /// One line saying what this role does, for the row under the name.
+    pub fn blurb(self) -> &'static str {
+        match self {
+            Guidance::Worker => "Does the work and writes the report",
+            Guidance::Orchestrator => "Splits the goal into a plan you approve",
+        }
+    }
+
+    /// The instructions as shipped.
+    pub fn default_text(self) -> &'static str {
+        match self {
+            Guidance::Worker => DEFAULT_GUIDANCE,
+            Guidance::Orchestrator => graph::DEFAULT_DECOMPOSE_GUIDANCE,
+        }
+    }
+
+    /// Where an edited copy lives. `None` only if there is no config dir.
+    pub fn override_path(self) -> Option<PathBuf> {
+        let name = match self {
+            Guidance::Worker => "goal-guidance.md",
+            Guidance::Orchestrator => "graph-guidance.md",
+        };
+        dirs::config_dir().map(|c| c.join("jmux").join(name))
+    }
+
+    /// True when an edited copy exists and is being used instead of the
+    /// default.
+    pub fn is_edited(self) -> bool {
+        self.override_path().is_some_and(|p| p.is_file())
+    }
+
+    /// The text actually sent to the agent: the edited copy if there is one,
+    /// else the default.
+    pub fn text(self) -> String {
+        self.override_path()
+            .and_then(|p| std::fs::read_to_string(p).ok())
+            .unwrap_or_else(|| self.default_text().to_string())
+    }
+
+    /// Save an edited copy. Saving text equal to the default removes the
+    /// copy instead, so the row stops claiming an edit that changes nothing.
+    pub fn save(self, text: &str) -> Result<(), String> {
+        if text.trim() == self.default_text().trim() {
+            return self.reset();
+        }
+        let path = self
+            .override_path()
+            .ok_or_else(|| "no config directory to save into".to_string())?;
+        if let Some(dir) = path.parent() {
+            std::fs::create_dir_all(dir)
+                .map_err(|e| format!("cannot create {}: {e}", dir.display()))?;
+        }
+        std::fs::write(&path, text).map_err(|e| format!("cannot write {}: {e}", path.display()))
+    }
+
+    /// Go back to the shipped instructions by deleting the edited copy.
+    pub fn reset(self) -> Result<(), String> {
+        let Some(path) = self.override_path() else {
+            return Ok(());
+        };
+        match std::fs::remove_file(&path) {
+            Ok(()) => Ok(()),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+            Err(e) => Err(format!("cannot delete {}: {e}", path.display())),
+        }
+    }
+}
+
+/// The worker's instructions: the edited copy if there is one, else the
+/// shipped default.
+fn guidance_template() -> String {
+    Guidance::Worker.text()
 }
 
 /// Compose the master agent's seed prompt for one iteration.
@@ -1366,6 +1451,59 @@ mod tests {
     fn shell_quote_escapes_single_quotes() {
         assert_eq!(shell_quote("a'b"), r"'a'\''b'");
         assert_eq!(shell_quote("plain"), "'plain'");
+    }
+
+    #[test]
+    #[test]
+    fn shipped_guidance_keeps_every_placeholder_the_composer_fills() {
+        // A dropped placeholder is silent: the seed still renders, the agent
+        // just never learns the goal or where to write its report.
+        for needle in [
+            "{goal_name}",
+            "{iteration}",
+            "{output_path}",
+            "{feedback}",
+            "{upstream}",
+            "{goal_text}",
+        ] {
+            assert!(
+                Guidance::Worker.default_text().contains(needle),
+                "worker guidance lost {needle}"
+            );
+        }
+        for needle in [
+            "{graph_name}",
+            "{proposal_path}",
+            "{proposal_md_path}",
+            "{max_concurrency}",
+            "{runners}",
+            "{goal_text}",
+        ] {
+            assert!(
+                Guidance::Orchestrator.default_text().contains(needle),
+                "orchestrator guidance lost {needle}"
+            );
+        }
+    }
+
+    #[test]
+    fn both_roles_carry_the_house_style() {
+        for role in [Guidance::Worker, Guidance::Orchestrator] {
+            let text = role.default_text();
+            assert!(text.contains("## House style"), "{} lost it", role.label());
+            assert!(text.contains("Use the active voice."));
+            assert!(text.contains("Cut every word you can cut."));
+        }
+    }
+
+    #[test]
+    fn the_two_roles_do_not_share_an_override_file() {
+        // Same file for both would mean editing the worker silently rewrote
+        // the orchestrator.
+        let worker = Guidance::Worker.override_path();
+        let orch = Guidance::Orchestrator.override_path();
+        assert!(worker.is_some() && orch.is_some());
+        assert_ne!(worker, orch);
     }
 
     #[test]

@@ -447,6 +447,11 @@ pub enum UiEvent {
     StartSearch,
     EndSearch,
     OpenSettings,
+    /// Open the "Run goal" dialog, optionally with the goal box filled in
+    /// (`jmux goal --configure "..."`).
+    OpenGoalDialog {
+        prefill: Option<String>,
+    },
     TriggerFlash {
         panel_id: Uuid,
     },
@@ -779,8 +784,16 @@ pub fn run() -> i32 {
     // the CLI socket; a second `jmux-app` launch is forwarded here (activate →
     // new window, open → route the jmux:// URI into the running instance)
     // instead of starting a rival process that can't bind the socket.
+    // `JMUX_APP_ID` gives a build its own identity, so a test instance runs
+    // beside the one you use all day instead of just activating its window.
+    // Pair it with `XDG_RUNTIME_DIR` (its own CLI socket) and
+    // `JMUX_DISABLE_SESSION_RESTORE=1` (its own empty session).
+    let app_id = std::env::var("JMUX_APP_ID")
+        .ok()
+        .filter(|id| !id.trim().is_empty())
+        .unwrap_or_else(|| "com.jacobbriggs.jmux".to_string());
     let app = adw::Application::builder()
-        .application_id("com.jacobbriggs.jmux")
+        .application_id(&app_id)
         .flags(gio::ApplicationFlags::HANDLES_OPEN)
         .build();
 

@@ -11,8 +11,8 @@
 //! ```
 
 mod file;
-mod goal;
-mod graph;
+pub(crate) mod goal;
+pub(crate) mod graph;
 mod group;
 mod helpers;
 mod markdown;
@@ -247,6 +247,7 @@ pub fn dispatch(json_line: &str, state: &Arc<SharedState>) -> Response {
 
         // Goal commands (autonomous loop — docs/roadmap/DESIGN-goal-graph.md)
         "goal.create" => goal::handle_goal_create(id, &req.params, state),
+        "goal.configure" => goal::handle_goal_configure(id, &req.params, state),
         "goal.status" => goal::handle_goal_status(id, &req.params, state),
         "goal.complete" => goal::handle_goal_complete(id, &req.params, state),
         "goal.continue" => goal::handle_goal_continue(id, &req.params, state),

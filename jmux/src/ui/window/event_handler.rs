@@ -587,6 +587,11 @@ pub(super) fn bind_shared_state_updates(
                         // Sidebar badge update only — no layout change needed.
                         needs_metadata_refresh = true;
                     }
+                    UiEvent::OpenGoalDialog { prefill } => {
+                        if let Some(window) = window_weak.upgrade() {
+                            crate::ui::goal_dialog::show_goal_dialog(&window, &state, prefill);
+                        }
+                    }
                     UiEvent::OpenSshDialog => {
                         if let Some(window) = window_weak.upgrade() {
                             super::dialogs::show_ssh_dialog(&window, &state);

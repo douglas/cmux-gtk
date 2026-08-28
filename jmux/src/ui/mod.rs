@@ -10,6 +10,7 @@ pub mod diff_panel;
 pub mod dock;
 pub mod dock_editor;
 pub mod file_preview_panel;
+pub mod goal_dialog;
 pub mod graph_panel;
 pub mod history_panel;
 #[cfg(feature = "webkit")]

@@ -28,7 +28,10 @@ use crate::model::Workspace;
 
 use super::{GoalStatus, GraphLink};
 
-const DECOMPOSE_GUIDANCE: &str = include_str!("decompose_guidance.md");
+/// The orchestrator's instructions as shipped. Read through
+/// `super::Guidance::Orchestrator`, which prefers the user's edited copy at
+/// `~/.config/jmux/graph-guidance.md`.
+pub(super) const DEFAULT_DECOMPOSE_GUIDANCE: &str = include_str!("decompose_guidance.md");
 
 /// Ticks (2 s each) the scheduler waits for an orchestrator proposal before
 /// escalating (it keeps polling afterwards).
@@ -564,7 +567,8 @@ pub fn create_graph(
 
     // Orchestrator workspace.
     let runners: Vec<String> = settings.runners.keys().cloned().collect();
-    let seed = DECOMPOSE_GUIDANCE
+    let seed = super::Guidance::Orchestrator
+        .text()
         .replace("{graph_name}", name)
         .replace(
             "{proposal_path}",

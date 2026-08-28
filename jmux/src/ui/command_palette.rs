@@ -279,6 +279,7 @@ fn build_actions(state: &Rc<AppState>) -> Rc<Vec<PaletteAction>> {
         cmd("task_manager.open", "Open Task Manager"),
         cmd("settings.ghostty", "Ghostty Settings"),
         cmd("settings.jmux", "jmux Settings"),
+        cmd("goal.run", "Run Goal..."),
     ];
 
     // Add SSH workspace command if enabled in settings
@@ -1005,6 +1006,13 @@ fn execute_action(name: &str, state: &Rc<AppState>, on_refresh: &Rc<dyn Fn()>) {
                 .shared
                 .send_ui_event(crate::app::UiEvent::OpenFolderAsWorkspace);
             return; // UiEvent handled
+        }
+        "goal.run" => {
+            // Same route as the SSH dialog: the palette closes itself first,
+            // then the window opens the dialog off the UI event.
+            state
+                .shared
+                .send_ui_event(crate::app::UiEvent::OpenGoalDialog { prefill: None });
         }
         "workspace.new_ssh" => {
             // Handled by the command palette UI layer — dispatch via custom event.
