@@ -258,14 +258,15 @@ impl SessionWorkspaceLayoutSnapshot {
 ///   restored tab reopens straight into its session after a crash/restart)
 /// - Codex CLI:       `codex`
 /// - OpenCode:        `opencode --resume`
-/// - Gemini CLI:      `gemini`  (stateless; no explicit resume flag)
 /// - Rovo Dev:        `rovo dev`
 /// - Cursor:          `cursor`  (stateless IDE, just relaunch)
 /// - Grok Build CLI:  `grok`
 /// - Amp:             `amp`     (matched as whole word to avoid false positives)
 /// - Pi Vault:        `pi`      (matched when combined with "vault" or "ai")
 /// - Hermes:          `hermes`
-/// - Antigravity:     `antigravity`
+/// - Antigravity:     `agy`     (Google's replacement for the retired
+///   Gemini CLI; matched on either name, and on `agy` as a whole word so
+///   it cannot fire inside an unrelated title)
 pub fn detect_agent_resume_command(
     title: Option<&str>,
     command: Option<&str>,
@@ -302,16 +303,19 @@ pub fn detect_agent_resume_command(
         Some("opencode --resume".to_string())
     } else if haystack.contains("codex") {
         Some("codex".to_string())
-    } else if haystack.contains("gemini") {
-        Some("gemini".to_string())
     } else if haystack.contains("rovo") {
         Some("rovo dev".to_string())
     } else if haystack.contains("cursor") {
         Some("cursor".to_string())
     } else if haystack.contains("grok") {
         Some("grok".to_string())
-    } else if haystack.contains("antigravity") {
-        Some("antigravity".to_string())
+    } else if haystack.contains("antigravity")
+        || haystack.contains("gemini")
+        || is_word_match(&haystack, "agy")
+    {
+        // Antigravity took over from the Gemini CLI, so a saved session that
+        // still says "gemini" comes back as Antigravity rather than not at all.
+        Some("agy".to_string())
     } else if haystack.contains("hermes") {
         Some("hermes".to_string())
     } else if haystack.contains("pi vault")
@@ -472,11 +476,23 @@ mod tests {
     }
 
     #[test]
-    fn test_detect_agent_resume_gemini() {
-        assert_eq!(
-            detect_agent_resume_command(Some("gemini"), None),
-            Some("gemini".to_string())
-        );
+    fn antigravity_resumes_under_its_own_binary_and_geminis_old_name() {
+        // Antigravity replaced the Gemini CLI. Its binary is `agy`, and a
+        // session saved back when it was called gemini still comes back.
+        for title in ["agy", "antigravity", "gemini"] {
+            assert_eq!(
+                detect_agent_resume_command(Some(title), None),
+                Some("agy".to_string()),
+                "{title}"
+            );
+        }
+    }
+
+    #[test]
+    fn agy_does_not_match_inside_another_word() {
+        // Substring matching on three letters would fire on any title that
+        // happens to contain them.
+        assert_eq!(detect_agent_resume_command(Some("magyar notes"), None), None);
     }
 
     #[test]
@@ -538,7 +554,7 @@ mod tests {
     fn test_detect_agent_resume_antigravity() {
         assert_eq!(
             detect_agent_resume_command(Some("antigravity"), None),
-            Some("antigravity".to_string())
+            Some("agy".to_string())
         );
     }
 

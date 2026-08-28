@@ -223,7 +223,7 @@ Fuzzy command palette and workspace switcher. Define your own entries in `jmux.j
 ### AI agent workflow
 - **Sidebar Claude-state octopus** — animated sprite on each workspace row (hammering = working, sparkler = needs input, laptop = background task); classified from pane title + terminal text, most-urgent pane wins, hibernated agents excluded
 - **Stream Deck Plus companion** — **deck** (coming soon to a public mirror) shows workspaces as keys with the live octopus state; press to focus, dials + touchscreen to pick Claude tabs and answer questions
-- **Agent integrations** — `jmux claude-teams` & `jmux omo` open teammates/subagents as native panes via a tmux shim; `terminal-notifier` → `jmux notify`. Turnkey status/notification hooks: `jmux claude-hook` / `codex-hook` / `kiro-hook` / `cursor-hook` / `gemini-hook` (or generic `jmux agent hook … --cli <name>`)
+- **Agent integrations** — `jmux claude-teams` & `jmux omo` open teammates/subagents as native panes via a tmux shim; `terminal-notifier` → `jmux notify`. Turnkey status/notification hooks: `jmux claude-hook` / `codex-hook` / `kiro-hook` / `cursor-hook` / `agy-hook` (or generic `jmux agent hook … --cli <name>`)
 - **AI workspace auto-naming** — opt-in: name an untitled workspace from its agent transcript when the agent finishes (`jmux ai-name`, or auto via Settings; uses `ANTHROPIC_API_KEY`)
 - **Task Manager** — `jmux top` CPU/RAM monitor (also `jmux ps` for JSON)
 - **TextBox** — multi-line prompt composer below terminals (opt-in)

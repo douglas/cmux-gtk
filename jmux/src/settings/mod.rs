@@ -737,8 +737,6 @@ pub struct AgentRestoreSettings {
     pub codex: bool,
     /// Restore OpenCode sessions on launch (`opencode --resume`).
     pub opencode: bool,
-    /// Restore Gemini CLI sessions on launch (`gemini`).
-    pub gemini: bool,
     /// Restore Rovo Dev sessions on launch (`rovo dev`).
     pub rovo_dev: bool,
     /// Restore Cursor sessions on launch (`cursor`).
@@ -756,8 +754,9 @@ pub struct AgentRestoreSettings {
     /// Restore Hermes sessions on launch (`hermes`).
     #[serde(default)]
     pub hermes: bool,
-    /// Restore Antigravity sessions on launch (`antigravity`).
-    #[serde(default)]
+    /// Restore Antigravity sessions on launch (`agy`). Also covers sessions
+    /// saved as Gemini, which Antigravity replaced.
+    #[serde(default = "default_true", alias = "gemini")]
     pub antigravity: bool,
 }
 
@@ -767,7 +766,6 @@ impl Default for AgentRestoreSettings {
             claude_code: true,
             codex: true,
             opencode: true,
-            gemini: true,
             rovo_dev: true,
             cursor: true,
             grok: true,
@@ -789,8 +787,6 @@ impl AgentRestoreSettings {
             self.opencode
         } else if resume_cmd.starts_with("codex") {
             self.codex
-        } else if resume_cmd.starts_with("gemini") {
-            self.gemini
         } else if resume_cmd.starts_with("rovo") {
             self.rovo_dev
         } else if resume_cmd.starts_with("cursor") {
@@ -803,7 +799,10 @@ impl AgentRestoreSettings {
             self.pi
         } else if resume_cmd.starts_with("hermes") {
             self.hermes
-        } else if resume_cmd.starts_with("antigravity") {
+        } else if resume_cmd.starts_with("agy")
+            || resume_cmd.starts_with("antigravity")
+            || resume_cmd.starts_with("gemini")
+        {
             self.antigravity
         } else {
             false
@@ -885,7 +884,7 @@ fn default_resume_command_approvals() -> Vec<String> {
         "claude --continue".to_string(),
         "codex".to_string(),
         "opencode --resume".to_string(),
-        "gemini".to_string(),
+        "agy".to_string(),
         "rovo dev".to_string(),
     ]
 }

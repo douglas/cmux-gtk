@@ -1230,12 +1230,6 @@ pub fn show_settings(
     agent_codex_row.set_active(current_settings.agent_restore.codex);
     agents_group.add(&agent_codex_row);
 
-    let agent_gemini_row = adw::SwitchRow::new();
-    agent_gemini_row.set_title("Gemini CLI");
-    agent_gemini_row.set_subtitle("Resume with `gemini`");
-    agent_gemini_row.set_active(current_settings.agent_restore.gemini);
-    agents_group.add(&agent_gemini_row);
-
     let agent_rovo_row = adw::SwitchRow::new();
     agent_rovo_row.set_title("Rovo Dev");
     agent_rovo_row.set_subtitle("Resume with `rovo dev`");
@@ -1274,7 +1268,7 @@ pub fn show_settings(
 
     let agent_antigravity_row = adw::SwitchRow::new();
     agent_antigravity_row.set_title("Antigravity");
-    agent_antigravity_row.set_subtitle("Resume with `antigravity`");
+    agent_antigravity_row.set_subtitle("Resume with `agy`");
     agent_antigravity_row.set_active(current_settings.agent_restore.antigravity);
     agents_group.add(&agent_antigravity_row);
 
@@ -1348,14 +1342,13 @@ pub fn show_settings(
         let agent_claude_row = agent_claude_row.clone();
         let agent_opencode_row = agent_opencode_row.clone();
         let agent_codex_row = agent_codex_row.clone();
-        let agent_gemini_row = agent_gemini_row.clone();
+        let agent_antigravity_row = agent_antigravity_row.clone();
         let agent_rovo_row = agent_rovo_row.clone();
         let agent_cursor_row = agent_cursor_row.clone();
         let agent_grok_row = agent_grok_row.clone();
         let agent_amp_row = agent_amp_row.clone();
         let agent_pi_row = agent_pi_row.clone();
         let agent_hermes_row = agent_hermes_row.clone();
-        let agent_antigravity_row = agent_antigravity_row.clone();
         window.connect_closed(move |_| {
             let theme = match theme_row.selected() {
                 1 => ThemeMode::Light,
@@ -1475,7 +1468,6 @@ pub fn show_settings(
                     claude_code: agent_claude_row.is_active(),
                     opencode: agent_opencode_row.is_active(),
                     codex: agent_codex_row.is_active(),
-                    gemini: agent_gemini_row.is_active(),
                     rovo_dev: agent_rovo_row.is_active(),
                     cursor: agent_cursor_row.is_active(),
                     grok: agent_grok_row.is_active(),
