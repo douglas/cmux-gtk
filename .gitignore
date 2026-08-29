@@ -5,3 +5,8 @@
 .DS_Store
 /daemon/remote/jmuxd-remote
 parity-audit.md
+
+# wayland-scanner output. make-gifs.sh regenerates both headers from the
+# .xml protocol files beside them, which are tracked; committing these would
+# be committing build output that can drift from its source.
+docs/capture-tools/*-client-protocol.h
